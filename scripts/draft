@@ -1,0 +1,725 @@
+package entry
+
+import (
+	"context"
+	"encoding/binary"
+	"encoding/json"
+	"io"
+	defs "mica-shim/definitions"
+	log "mica-shim/logger"
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/containerd/containerd/api/events"
+	taskAPI "github.com/containerd/containerd/api/runtime/task/v2"
+	apitypes "github.com/containerd/containerd/api/types"
+	"github.com/containerd/containerd/namespaces"
+	"github.com/containerd/containerd/pkg/shutdown"
+	"github.com/containerd/containerd/v2/pkg/shim"
+	"github.com/containerd/containerd/v2/plugins"
+	"github.com/containerd/errdefs"
+	"github.com/containerd/plugin"
+
+	"github.com/containerd/plugin/registry"
+	ptypes "github.com/gogo/protobuf/types"
+	"github.com/pkg/errors"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+
+const (
+	bufferSize     = 512
+	defaultTimeout = 5 * time.Second
+	micaOK = defs.MicaSuccess
+	micaFailed = defs.MicaFailed
+	micaSocketDir = defs.MicaSocketDir
+)
+
+type MicaTaskService struct {}
+type MicaCreateMsg struct {
+	CPU     uint32
+	Name    [32]byte
+	Path    [128]byte
+	Ped     [32]byte
+	PedCfg  [128]byte
+	Debug   bool
+}
+
+
+func init() {
+	registry.Register(&plugin.Registration{
+		Type: plugins.TTRPCPlugin,
+		ID:   "task",
+		Requires: []plugin.Type{
+			plugins.EventPlugin,
+			plugins.InternalPlugin,
+		},
+		InitFn: func(ic *plugin.InitContext) (interface{}, error) {
+			pp, err := ic.GetByID(plugins.EventPlugin, "publisher")
+			if err != nil {
+				return nil, err
+			}
+			ss, err := ic.GetByID(plugins.InternalPlugin, "shutdown")
+			if err != nil {
+				return nil, err
+			}
+			return newTaskService(ic.Context, pp.(shim.Publisher), ss.(shutdown.Service))
+		},
+	})
+}
+
+type manager struct {
+	name string
+}
+
+func NewManager(name string) shim.Manager {
+	return manager{name: name}
+}
+
+func (m manager) Name() string {
+	return m.name
+}
+
+func (m manager) Start(ctx context.Context, id string, opts shim.StartOpts) (shim.BootstrapParams, error) {
+	return shim.BootstrapParams{}, errdefs.ErrNotImplemented
+}
+
+func (m manager) Stop(ctx context.Context, id string) (shim.StopStatus, error) {
+	return shim.StopStatus{}, errdefs.ErrNotImplemented
+}
+
+func (m manager) Info(ctx context.Context, optionsR io.Reader) (*apitypes.RuntimeInfo, error) {
+	// info := &apitypes.RuntimeInfo{
+	// 	Name: "io.containerd.example.v1",
+	// 	Version: &apitypes.RuntimeVersion{
+	// 		Version: "v1.0.0",
+	// 	},
+	// }
+	info := &apitypes.RuntimeInfo{
+		Name: "io.containerd.example.v1",
+		Version: &apitypes.RuntimeVersion{
+			Version: "v1.0.0",
+		},
+	}
+	return info, nil
+}
+
+func newTaskService(ctx context.Context, publisher shim.Publisher, shutdown shutdown.Service) (*taskAPI.TaskService, error) {
+	return &MicaTaskService{}, nil
+}
+
+func (m *MicaCreateMsg) Pack() []byte {
+	buf := make([]byte, 4+32+128+32+128+1) // uint32 + 4 strings + bool
+	
+	binary.LittleEndian.PutUint32(buf[0:4], m.CPU)
+	copy(buf[4:36], m.Name[:])
+	copy(buf[36:164], m.Path[:])
+	copy(buf[164:196], m.Ped[:])
+	copy(buf[196:324], m.PedCfg[:])
+	
+	if m.Debug {
+		buf[324] = 1
+	} else {
+		buf[324] = 0
+	}
+	
+	return buf
+}
+
+type MicaSocket struct {
+	socketPath string
+	conn       net.Conn
+}
+
+func NewMicaSocket(socketPath string) *MicaSocket {
+	return &MicaSocket{socketPath: socketPath}
+}
+
+func (ms *MicaSocket) Connect() error {
+	conn, err := net.Dial("unix", ms.socketPath)
+	if err != nil {
+		return errors.Wrapf(err, "failed to connect to %s", ms.socketPath)
+	}
+	ms.conn = conn
+	return nil
+}
+
+func (ms *MicaSocket) Close() error {
+	if ms.conn != nil {
+		return ms.conn.Close()
+	}
+	return nil
+}
+
+func (ms *MicaSocket) SendMessage(msg []byte) (string, error) {
+	if ms.conn == nil {
+		return "", errors.New("connection not established")
+	}
+	
+	_, err := ms.conn.Write(msg)
+	if err != nil {
+		return "", errors.Wrap(err, "failed to send message")
+	}
+	
+	ms.conn.SetReadDeadline(time.Now().Add(defaultTimeout))
+	
+	responseBuffer := ""
+	buf := make([]byte, bufferSize)
+	
+	for {
+		n, err := ms.conn.Read(buf)
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				return "", errors.New("timeout while waiting for MICA daemon response")
+			}
+			return "", errors.Wrap(err, "failed to read response")
+		}
+		
+		responseBuffer += string(buf[:n])
+		
+		if strings.Contains(responseBuffer, defs.MicaFailed) {
+			parts := strings.Split(responseBuffer, defs.MicaFailed)
+			msg := strings.TrimSpace(parts[0])
+			if msg != "" {
+				log.Error("MICA daemon reported error")
+			}
+			return micaFailed, nil
+		} else if strings.Contains(responseBuffer, micaOK) {
+			parts := strings.Split(responseBuffer, micaOK)
+			msg := strings.TrimSpace(parts[0])
+			if msg != "" {
+				log.Debug("MICA daemon response")
+			}
+			return micaOK, nil
+		}
+		
+		if n == 0 {
+			break
+		}
+	}
+	
+	return "", errors.New("unexpected response from MICA daemon")
+}
+
+func (ms *MicaSocket) SendCommand(command string) (string, error) {
+	return ms.SendMessage([]byte(command))
+}
+
+
+type MicaTask struct {
+	id          string
+	bundle      string
+	namespace   string
+	pid         uint32
+	status      taskAPI.Status
+	exitCode    uint32
+	exitedAt    time.Time
+	stdin       string
+	stdout      string
+	stderr      string
+	terminal    bool
+}
+
+// MicaShim implements the containerd shim v2 API for MICA runtime
+type MicaShim struct {
+	taskAPI.UnimplementedTaskServer
+	
+	task      *MicaTask
+	events    chan interface{}
+	cancel    context.CancelFunc
+	namespace string
+	bundle    string
+}
+
+func NewMicaShim(ctx context.Context, id, containerdAddress, containerdTTRPCAddress string) (*MicaShim, error) {
+	ns, err := namespaces.NamespaceRequired(ctx)
+	if err != nil {
+		return nil, err
+	}
+	
+	log.Info("Creating new MICA shim")
+	
+	ctx, cancel := context.WithCancel(ctx)
+	
+	return &MicaShim{
+		events:    make(chan interface{}, 128),
+		cancel:    cancel,
+		namespace: ns,
+	}, nil
+}
+
+// Create implements the Create RPC for containerd shim v2
+func (s *MicaShim) Create(ctx context.Context, req *taskAPI.CreateTaskRequest) (*taskAPI.CreateTaskResponse, error) {
+	log.Info("Creating MICA task")
+	
+	// Check if MICA daemon is running
+	if _, err := os.Stat(micaCreateSocket); os.IsNotExist(err) {
+		return nil, status.Errorf(codes.FailedPrecondition, "MICA daemon is not running")
+	}
+	
+	// Parse OCI bundle to check for MICA annotations
+	configPath := filepath.Join(req.Bundle, "config.json")
+	config, err := s.parseOCIConfig(configPath)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "failed to parse OCI config: %v", err)
+	}
+	
+	// Check for MICA annotations
+	micaConfig := s.extractMicaConfig(config, req.ID)
+	if micaConfig != nil {
+		log.Info("OK, Found OCI image for mica!")
+	}
+	
+	// Create MICA client
+	err = s.createMicaClient(req.ID, micaConfig)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to create MICA client: %v", err)
+	}
+	
+	// Create task representation
+	s.task = &MicaTask{
+		id:        req.ID,
+		bundle:    req.Bundle,
+		namespace: s.namespace,
+		pid:       1, // Placeholder PID
+		status:    taskAPI.Status_CREATED,
+		stdin:     req.Stdin,
+		stdout:    req.Stdout,
+		stderr:    req.Stderr,
+		terminal:  req.Terminal,
+	}
+	
+	s.bundle = req.Bundle
+	
+	log.Info("MICA task created successfully")
+	
+	return &taskAPI.CreateTaskResponse{
+		Pid: s.task.pid,
+	}, nil
+}
+
+// Start implements the Start RPC for containerd shim v2
+func (s *MicaShim) Start(ctx context.Context, req *taskAPI.StartRequest) (*taskAPI.StartResponse, error) {
+	log.Info("Starting MICA task")
+	
+	if s.task == nil {
+		return nil, status.Errorf(codes.NotFound, "task not found")
+	}
+	
+	// Start MICA client
+	err := s.startMicaClient(req.ID)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to start MICA client: %v", err)
+	}
+	
+	s.task.status = taskAPI.Status_RUNNING
+	
+	// Publish task start event
+	s.publishEvent(&events.TaskStart{
+		ContainerID: req.ID,
+		Pid:         s.task.pid,
+	})
+	
+	log.Info("MICA task started successfully")
+	
+	return &taskAPI.StartResponse{
+		Pid: s.task.pid,
+	}, nil
+}
+
+// Delete implements the Delete RPC for containerd shim v2
+func (s *MicaShim) Delete(ctx context.Context, req *taskAPI.DeleteRequest) (*taskAPI.DeleteResponse, error) {
+	log.Info("Deleting MICA task")
+	
+	if s.task == nil {
+		return nil, status.Errorf(codes.NotFound, "task not found")
+	}
+	
+	// Remove MICA client
+	err := s.removeMicaClient(req.ID)
+	if err != nil {
+		log.WithError(err).Warn("Failed to remove MICA client")
+	}
+	
+	s.task.status = taskAPI.Status_STOPPED
+	s.task.exitedAt = time.Now()
+	
+	// Publish task delete event
+	s.publishEvent(&events.TaskDelete{
+		ContainerID: req.ID,
+		Pid:         s.task.pid,
+		ExitStatus:  s.task.exitCode,
+		ExitedAt:    s.task.exitedAt,
+	})
+	
+	log.Info("MICA task deleted successfully")
+	
+	return &taskAPI.DeleteResponse{
+		Pid:        s.task.pid,
+		ExitStatus: s.task.exitCode,
+		ExitedAt:   s.task.exitedAt,
+	}, nil
+}
+
+// Pids implements the Pids RPC for containerd shim v2
+func (s *MicaShim) Pids(ctx context.Context, req *taskAPI.PidsRequest) (*taskAPI.PidsResponse, error) {
+	log.Debug("Getting MICA task PIDs")
+	
+	if s.task == nil {
+		return nil, status.Errorf(codes.NotFound, "task not found")
+	}
+	
+	return &taskAPI.PidsResponse{
+		Processes: []*apitypes.ProcessInfo{
+			{
+				Pid: s.task.pid,
+			},
+		},
+	}, nil
+}
+
+// Pause implements the Pause RPC for containerd shim v2
+func (s *MicaShim) Pause(ctx context.Context, req *taskAPI.PauseRequest) (*ptypes.Empty, error) {
+	log.Info("Pausing MICA task")
+	
+	// MICA doesn't have pause/resume, so we simulate success
+	return &ptypes.Empty{}, nil
+}
+
+// Resume implements the Resume RPC for containerd shim v2
+func (s *MicaShim) Resume(ctx context.Context, req *taskAPI.ResumeRequest) (*ptypes.Empty, error) {
+	log.Info("Resuming MICA task")
+	
+	// MICA doesn't have pause/resume, so we simulate success
+	return &ptypes.Empty{}, nil
+}
+
+// Checkpoint implements the Checkpoint RPC for containerd shim v2
+func (s *MicaShim) Checkpoint(ctx context.Context, req *taskAPI.CheckpointTaskRequest) (*ptypes.Empty, error) {
+	log.Info("Checkpointing MICA task")
+	
+	// MICA doesn't support checkpointing, return success for compatibility
+	return &ptypes.Empty{}, nil
+}
+
+// Kill implements the Kill RPC for containerd shim v2
+func (s *MicaShim) Kill(ctx context.Context, req *taskAPI.KillRequest) (*ptypes.Empty, error) {
+	log.Info("Killing MICA task")
+	
+	if s.task == nil {
+		return nil, status.Errorf(codes.NotFound, "task not found")
+	}
+	
+	// Stop MICA client
+	err := s.stopMicaClient(req.ID)
+	if err != nil {
+		log.WithError(err).Warn("Failed to stop MICA client")
+	}
+	
+	s.task.status = taskAPI.Status_STOPPED
+	s.task.exitCode = 0
+	s.task.exitedAt = time.Now()
+	
+	// Publish task exit event
+	s.publishEvent(&events.TaskExit{
+		ContainerID: req.ID,
+		ID:          req.ID,
+		Pid:         s.task.pid,
+		ExitStatus:  s.task.exitCode,
+		ExitedAt:    s.task.exitedAt,
+	})
+	
+	return &ptypes.Empty{}, nil
+}
+
+// Exec implements the Exec RPC for containerd shim v2
+func (s *MicaShim) Exec(ctx context.Context, req *taskAPI.ExecProcessRequest) (*ptypes.Empty, error) {
+	log.Info("Exec in MICA task")
+	
+	// MICA doesn't support exec, return error
+	return nil, status.Errorf(codes.Unimplemented, "exec not supported in MICA runtime")
+}
+
+// ResizePty implements the ResizePty RPC for containerd shim v2
+func (s *MicaShim) ResizePty(ctx context.Context, req *taskAPI.ResizePtyRequest) (*ptypes.Empty, error) {
+	log.Debug("Resizing PTY for MICA task")
+	
+	// TTY/console interface preserved for future implementation
+	return &ptypes.Empty{}, nil
+}
+
+// CloseIO implements the CloseIO RPC for containerd shim v2
+func (s *MicaShim) CloseIO(ctx context.Context, req *taskAPI.CloseIORequest) (*ptypes.Empty, error) {
+	log.Debug("Closing IO for MICA task")
+	
+	return &ptypes.Empty{}, nil
+}
+
+// Update implements the Update RPC for containerd shim v2
+func (s *MicaShim) Update(ctx context.Context, req *taskAPI.UpdateTaskRequest) (*ptypes.Empty, error) {
+	log.Info("Updating MICA task")
+	
+	// MICA doesn't support runtime updates, return success for compatibility
+	return &ptypes.Empty{}, nil
+}
+
+// Wait implements the Wait RPC for containerd shim v2
+func (s *MicaShim) Wait(ctx context.Context, req *taskAPI.WaitRequest) (*taskAPI.WaitResponse, error) {
+	log.Debug("Waiting for MICA task")
+	
+	if s.task == nil {
+		return nil, status.Errorf(codes.NotFound, "task not found")
+	}
+	
+	// Wait for task to complete (simplified implementation)
+	for s.task.status == taskAPI.Status_RUNNING {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Second):
+			// Check MICA client status
+			status := s.queryMicaStatus(req.ID)
+			if status != micaOK {
+				s.task.status = taskAPI.Status_STOPPED
+				s.task.exitedAt = time.Now()
+			}
+		}
+	}
+	
+	return &taskAPI.WaitResponse{
+		ExitStatus: s.task.exitCode,
+		ExitedAt:   s.task.exitedAt,
+	}, nil
+}
+
+// Stats implements the Stats RPC for containerd shim v2
+func (s *MicaShim) Stats(ctx context.Context, req *taskAPI.StatsRequest) (*taskAPI.StatsResponse, error) {
+	log.Debug("Getting MICA task stats")
+	
+	// Return empty stats (MICA doesn't provide detailed stats)
+	return &taskAPI.StatsResponse{}, nil
+}
+
+// Connect implements the Connect RPC for containerd shim v2
+func (s *MicaShim) Connect(ctx context.Context, req *taskAPI.ConnectRequest) (*taskAPI.ConnectResponse, error) {
+	log.Debug("Connecting to MICA task")
+	
+	return &taskAPI.ConnectResponse{
+		ShimPid: uint32(os.Getpid()),
+		TaskPid: s.task.pid,
+	}, nil
+}
+
+// Shutdown implements the Shutdown RPC for containerd shim v2
+func (s *MicaShim) Shutdown(ctx context.Context, req *taskAPI.ShutdownRequest) (*ptypes.Empty, error) {
+	log.Info("Shutting down MICA shim")
+	
+	s.cancel()
+	return &ptypes.Empty{}, nil
+}
+
+// Helper methods
+
+// parseOCIConfig parses the OCI configuration file
+func (s *MicaShim) parseOCIConfig(configPath string) (map[string]interface{}, error) {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, err
+	}
+	
+	var config map[string]interface{}
+	err = json.Unmarshal(data, &config)
+	if err != nil {
+		return nil, err
+	}
+	
+	return config, nil
+}
+
+// extractMicaConfig extracts MICA configuration from OCI annotations
+func (s *MicaShim) extractMicaConfig(config map[string]interface{}, taskID string) map[string]string {
+	annotations, ok := config["annotations"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	
+	micaConfig := make(map[string]string)
+	hasMicaAnnotation := false
+	
+	for key, value := range annotations {
+		if strings.HasPrefix(key, micaAnnotationPrefix) {
+			hasMicaAnnotation = true
+			if strValue, ok := value.(string); ok {
+				micaConfig[key] = strValue
+			}
+		}
+	}
+	
+	if !hasMicaAnnotation {
+		return nil
+	}
+	
+	return micaConfig
+}
+
+// createMicaClient creates a MICA client via daemon
+func (s *MicaShim) createMicaClient(taskID string, config map[string]string) error {
+	log.Debug("Creating MICA client")
+	
+	// Create default MICA configuration
+	msg := &MicaCreateMsg{
+		CPU:   1, // Default CPU
+		Debug: false,
+	}
+	
+	// Set name (max 32 bytes)
+	name := taskID
+	if len(name) > 31 {
+		name = name[:31]
+	}
+	copy(msg.Name[:], name)
+	
+	// Set path (use bundle path, max 128 bytes)
+	path := s.bundle
+	if len(path) > 127 {
+		path = path[:127]
+	}
+	copy(msg.Path[:], path)
+	
+	// Apply custom configuration if available
+	if config != nil {
+		// Extract configuration from annotations
+		// This is where you'd map OCI annotations to MICA config
+		log.Debug("Applying MICA configuration")
+	}
+	
+	// Connect to MICA daemon
+	socket := NewMicaSocket(micaCreateSocket)
+	err := socket.Connect()
+	if err != nil {
+		return err
+	}
+	defer socket.Close()
+	
+	// Send create message
+	response, err := socket.SendMessage(msg.Pack())
+	if err != nil {
+		return err
+	}
+	
+	if response != micaOK {
+		return errors.New("failed to create MICA client")
+	}
+	
+	return nil
+}
+
+func (s *MicaShim) startMicaClient(taskID string) error {
+	log.Debug("Starting MICA client")
+	
+	clientSocketPath := filepath.Join(micaSocketDir, taskID+".socket")
+	socket := NewMicaSocket(clientSocketPath)
+	
+	err := socket.Connect()
+	if err != nil {
+		return err
+	}
+	defer socket.Close()
+	
+	response, err := socket.SendCommand("start")
+	if err != nil {
+		return err
+	}
+	
+	if response != micaOK {
+		return errors.New("failed to start MICA client")
+	}
+	
+	return nil
+}
+
+// stopMicaClient stops a MICA client
+func (s *MicaShim) stopMicaClient(taskID string) error {
+	log.Debug("Stopping MICA client")
+	
+	clientSocketPath := filepath.Join(micaSocketDir, taskID+".socket")
+	socket := NewMicaSocket(clientSocketPath)
+	
+	err := socket.Connect()
+	if err != nil {
+		return err
+	}
+	defer socket.Close()
+	
+	response, err := socket.SendCommand("stop")
+	if err != nil {
+		return err
+	}
+	
+	if response != micaOK {
+		return errors.New("failed to stop MICA client")
+	}
+	
+	return nil
+}
+
+// removeMicaClient removes a MICA client
+func (s *MicaShim) removeMicaClient(taskID string) error {
+	log.Debug("Removing MICA client")
+	
+	clientSocketPath := filepath.Join(micaSocketDir, taskID+".socket")
+	socket := NewMicaSocket(clientSocketPath)
+	
+	err := socket.Connect()
+	if err != nil {
+		return err
+	}
+	defer socket.Close()
+	
+	response, err := socket.SendCommand("rm")
+	if err != nil {
+		return err
+	}
+	
+	if response != micaOK {
+		return errors.New("failed to remove MICA client")
+	}
+	
+	return nil
+}
+
+// queryMicaStatus queries MICA client status
+func (s *MicaShim) queryMicaStatus(taskID string) string {
+	log.Debug("Querying MICA client status")
+	
+	clientSocketPath := filepath.Join(micaSocketDir, taskID+".socket")
+	socket := NewMicaSocket(clientSocketPath)
+	
+	err := socket.Connect()
+	if err != nil {
+		log.Debug("Failed to connect for status query")
+		return micaFailed
+	}
+	defer socket.Close()
+	
+	response, err := socket.SendCommand("status")
+	if err != nil {
+		log.Debug("Failed to query status")
+		return micaFailed
+	}
+	
+	return response
+}
+
+// publishEvent publishes an event to containerd
+func (s *MicaShim) publishEvent(event interface{}) {
+	select {
+	case s.events <- event:
+	default:
+		log.Warn("Event channel full, dropping event")
+	}
+}

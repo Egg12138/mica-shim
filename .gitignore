@@ -10,6 +10,8 @@
 
 # Test binary, built with `go test -c`
 *.test
+.prompts
+.local_devlog.md
 
 # Code coverage profiles and other test artifacts
 *.out
