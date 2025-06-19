@@ -106,6 +106,10 @@ func Debug(args ...interface{}) {
 	Log.Debug(args...)
 }
 
+func Debugf(format string, args ...interface{}) {
+	Log.Debugf(format, args...)
+}
+
 func Info(args ...interface{}) {
 	Log.Info(args...)
 }
@@ -126,9 +130,9 @@ func Panic(args ...interface{}) {
 	Log.Panic(args...)
 }
 
-func Debugf(format string, args ...interface{}) {
+func LocateDebug(format string, args ...interface{}) {
 	prefix := getDebugInfoPrefix()
-	Log.Debugf(prefix + format + "\n", args...)
+	Debugf(prefix + format + "\n", args...)
 }
 
 func Infof(format string, args ...interface{}) {
