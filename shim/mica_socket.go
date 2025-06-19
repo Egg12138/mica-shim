@@ -12,26 +12,26 @@ const (
 	defaultTimeout   = 5 * time.Second
 )
 
-type micaSocket struct {
+type MicaSocket struct {
 	conn net.Conn
 }
 
-func NewMicaSocket() (*micaSocket, error) {
+func NewMicaSocket() (*MicaSocket, error) {
 	conn, err := net.Dial("unix", micaCreateSocket)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to mica socket: %v", err)
 	}
-	return &micaSocket{conn: conn}, nil
+	return &MicaSocket{conn: conn}, nil
 }
 
-func (s *micaSocket) Close() error {
+func (s *MicaSocket) Close() error {
 	if s.conn != nil {
 		return s.conn.Close()
 	}
 	return nil
 }
 
-func (s *micaSocket) sendCommand(cmd string) error {
+func (s *MicaSocket) sendCommand(cmd string) error {
 	if s.conn == nil {
 		return fmt.Errorf("socket not connected")
 	}
@@ -60,22 +60,22 @@ func (s *micaSocket) sendCommand(cmd string) error {
 // Callers
 
 // TODO: make config a Struct
-func (s *micaSocket) CreateClient(config string) error {
+func (s *MicaSocket) CreateClient(config string) error {
 	return s.sendCommand(fmt.Sprintf("create %s", config))
 }
 
-func (s *micaSocket) StartClient(client string) error {
+func (s *MicaSocket) StartClient(client string) error {
 	return s.sendCommand(fmt.Sprintf("start %s", client))
 }
 
-func (s *micaSocket) StopClient(client string) error {
+func (s *MicaSocket) StopClient(client string) error {
 	return s.sendCommand(fmt.Sprintf("stop %s", client))
 }
 
-func (s *micaSocket) RemoveClient(client string) error {
+func (s *MicaSocket) RemoveClient(client string) error {
 	return s.sendCommand(fmt.Sprintf("rm %s", client))
 }
 
-func (s *micaSocket) GetStatus() error {
+func (s *MicaSocket) GetStatus() error {
 	return s.sendCommand("status")
 }
