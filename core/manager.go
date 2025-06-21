@@ -12,13 +12,13 @@ import (
 	"time"
 
 	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/pkg/schedcore"
 	"github.com/containerd/containerd/runtime/v2/shim"
 )
 
 // containerd-specific environment variables set while invoking the shim's
 // start command.
-// https://github.com/containerd/containerd/tree/v1.7.3/runtime/v2#start
+// https://github.com/containerd/containerd/tree/v1.7.3/runtime/v2#start:
+// The start command may have the following containerd specific environment variables set:
 const (
 	contdShimEnvShedCore = "SCHED_CORE"
 )
@@ -34,7 +34,6 @@ func NewManager(name string) *manager {
 	return &manager{name: name}
 }
 
-
 // manager manages shim processes.
 type manager struct {
 	name string
@@ -47,10 +46,12 @@ func (m *manager) Name() string {
 	return m.name
 }
 
+// NOTICE: `Start` is the start of the shimv2, instead of container or task.
 // Start starts a shim process.
 // It implements the shim's "start" command.
 // https://github.com/containerd/containerd/tree/v1.7.3/runtime/v2#start
 func (*manager) Start(ctx context.Context, containerID string, opts shim.StartOpts) (addr string, retErr error) {
+	// get current shim binary path to run
 	self, err := os.Executable()
 	if err != nil {
 		return "", fmt.Errorf("getting executable of current process: %w", err)
@@ -66,6 +67,11 @@ func (*manager) Start(ctx context.Context, containerID string, opts shim.StartOp
 		args = append(args, "-debug")
 	}
 
+	// TTRPC_ADDRESS the address of containerd's ttrpc API socket
+	// GRPC_ADDRESS the address of containerd's grpc API socket (1.7+)
+	// MAX_SHIM_VERSION the maximum shim version supported by the client, always 2 for shim v2 (1.7+)
+	// SCHED_CORE enable core scheduling if available (1.6+)
+	// NAMESPACE an optional namespace the shim is operating in or inheriting (1.7+)
 	cmdCfg := &shim.CommandConfig{
 		Runtime:      self,
 		Address:      opts.Address,
@@ -75,11 +81,17 @@ func (*manager) Start(ctx context.Context, containerID string, opts shim.StartOp
 		Args:         args,
 	}
 
+	// -namespace the namespace for the container
+	// -address the address of the containerd's main grpc socket
+	// -publish-binary the binary path to publish events back to containerd
+	// -id the id of the container (containerID)
+	// The start command, as well as all binary calls to the shim, has the bundle for the container set as the cwd.
 	cmd, err := shim.Command(ctx, cmdCfg)
 	if err != nil {
 		return "", fmt.Errorf("creating shim command: %w", err)
 	}
 
+	// adding prefix unix://
 	sockAddr, err := shim.SocketAddress(ctx, opts.Address, containerID)
 	if err != nil {
 		return "", fmt.Errorf("getting a socket address: %w", err)
@@ -133,13 +145,14 @@ func (*manager) Start(ctx context.Context, containerID string, opts shim.StartOp
 
 	cmd.ExtraFiles = append(cmd.ExtraFiles, sockF)
 
-	runtime.LockOSThread()
+	// LEARN:
+	// runtime.LockOSThread()
 
-	if cmdCfg.SchedCore {
-		if err := schedcore.Create(schedcore.ProcessGroup); err != nil {
-			return "", fmt.Errorf("enabling sched core support: %w", err)
-		}
-	}
+	// if cmdCfg.SchedCore {
+	// 	if err := schedcore.Create(schedcore.ProcessGroup); err != nil {
+	// 		return "", fmt.Errorf("enabling sched core support: %w", err)
+	// 	}
+	// }
 
 	if err := cmd.Start(); err != nil {
 		sockF.Close()
@@ -156,6 +169,7 @@ func (*manager) Start(ctx context.Context, containerID string, opts shim.StartOp
 		}
 	}()
 
+	// NOTICE: cmd.Process is the process of the shim, which we should handle properly
 	go func() {
 		if err := cmd.Wait(); err != nil {
 			if _, ok := err.(*exec.ExitError); !ok {

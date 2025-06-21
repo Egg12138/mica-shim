@@ -22,7 +22,6 @@ import (
 	"context"
 	"fmt"
 	"mica-shim/io"
-	"mica-shim/libmica"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -43,7 +42,7 @@ import (
 )
 
 var (
-	_ shim.TTRPCService  = (*micaTaskService)(nil)
+	_ shim.TTRPCService   = (*micaTaskService)(nil)
 	_ taskAPI.TaskService = (*micaTaskService)(nil)
 )
 
@@ -52,23 +51,23 @@ var (
 // }
 
 type MicaService struct {
-	mu								sync.Mutex
-	cs 								map[string]*MicaContainer
-	event 						chan *events.Envelope
+	mu    sync.Mutex
+	cs    map[string]*MicaContainer
+	event chan *events.Envelope
 }
 
 type MicaContainer struct {
-	ID          string
-	Bundle      string
-	Pid         uint32
-	Status      uint8
-	ExitStatus  uint32
-	Stdin       string
-	Stdout      string
-	Stderr      string
-	Terminal    bool
-	Checkpoint  string
-	m          	sync.RWMutex
+	ID         string
+	Bundle     string
+	Pid        uint32
+	Status     uint8
+	ExitStatus uint32
+	Stdin      string
+	Stdout     string
+	Stderr     string
+	Terminal   bool
+	Checkpoint string
+	m          sync.RWMutex
 }
 
 // Containerd shim functions with command:
@@ -80,7 +79,6 @@ type MicaContainer struct {
 
 // Cleanup is a binary call that cleans up any resources used by the shim when the service crashes
 // func (s *MicaService) Cleanup(ctx context.Context) (*taskAPI.DeleteResponse, error) {
-
 
 // Start the primary user process inside the container
 // func (s *MicaService) Start(ctx context.Context, r *taskAPI.StartRequest) (*taskAPI.StartResponse, error) {
@@ -132,7 +130,7 @@ type MicaContainer struct {
 
 // Create creates a new task and runs its init process.
 func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) (_ *taskAPI.CreateTaskResponse, retErr error) {
-	log.Debugf("create id:%s", r.ID)
+	log.LocateDebugf("create id:%s", r.ID)
 
 	s.m.Lock()
 	defer s.m.Unlock()
@@ -145,6 +143,7 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 		return nil, fmt.Errorf("getting current working directory: %w", err)
 	}
 
+	// TODO: replace to mica sender
 	cmd := exec.CommandContext(ctx, "sh", "-c",
 		"while date --rfc-3339=seconds; do "+
 			"sleep 5; "+
@@ -171,9 +170,11 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 	defer func() {
 		if retErr != nil {
 			if err := pio.Close(); err != nil {
+				log.LocateDebugf("pid = %v, err = %v", cmd.Process.Pid, err)
 				log.Error("failed to close stdout pipe io")
 			}
 			if err := cmd.Cancel(); err != nil {
+				log.LocateDebugf("pid = %v, err = %v", cmd.Process.Pid, err)
 				log.Error("failed to cancel task init command")
 			}
 		}
@@ -250,7 +251,6 @@ func (s *micaTaskService) Start(ctx context.Context, r *taskAPI.StartRequest) (*
 	s.m.RLock()
 	defer s.m.RUnlock()
 	proc, ok := s.procs[r.ID]
-	libmica.MicaCreateMsg(r.ID)
 	if !ok {
 		return nil, fmt.Errorf("task not created: %w", errdefs.ErrNotFound)
 	}
@@ -450,4 +450,3 @@ func (s *micaTaskService) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*ta
 		ExitedAt:   protobuf.ToTimestamp(proc.exitTime),
 	}, nil
 }
-

@@ -12,7 +12,7 @@ import struct
 
 __version__ = "0.0.1"
 
-MICA_CONFIG_PATH = "/etc/mica"
+MICA_CONFIG_PATH = "/tmp/mica"
 
 class mica_create_msg:
     def __init__(self, cpu, name, path, ped, ped_cfg, debug):
@@ -99,7 +99,7 @@ def send_create_msg(config_file: str) -> None:
             print(f"Configuration file '{config_file}' not found.")
             return
 
-    if not os.path.exists('/run/mica/mica-create.socket'):
+    if not os.path.exists('/tmp/mica/mica-create.socket'):
         print('Error occurred! Please check if micad is running.')
         exit(1)
 
@@ -126,7 +126,7 @@ def send_create_msg(config_file: str) -> None:
     msg = mica_create_msg(cpu, name, path, ped, ped_cfg, debug)
     print(f'Creating {name}...')
 
-    with mica_socket('/run/mica/mica-create.socket') as socket:
+    with mica_socket('/tmp/mica/mica-create.socket') as socket:
         socket.send_msg(msg.pack())
         response = socket.recv()
         if response == 'MICA-SUCCESS':
@@ -137,7 +137,7 @@ def send_create_msg(config_file: str) -> None:
 
     if auto_boot:
         print(f'starting {name}...')
-        ctrl_socket = f'/run/mica/{name}.socket'
+        ctrl_socket = f'/tmp/mica/{name}.socket'
         with mica_socket(ctrl_socket) as socket:
             command = 'start'
             socket.send_msg(command.encode())
@@ -149,13 +149,13 @@ def send_create_msg(config_file: str) -> None:
 
 
 def query_status() -> None:
-    if not os.path.exists('/run/mica/mica-create.socket'):
+    if not os.path.exists('/tmp/mica/mica-create.socket'):
         print('Error occurred! Please check if micad is running.')
         exit(1)
 
     output = f"{'Name':<30}{'Assigned CPU':<20}{'State':<20}{'Service'}"
     print(output)
-    directory = '/run/mica'
+    directory = '/tmp/mica'
     files = os.listdir(directory)
 
     for filename in files:
@@ -172,7 +172,7 @@ def query_status() -> None:
                     print(f'Query {name} status failed!')
 
 def send_ctrl_msg(command: str, client: str) -> None:
-    ctrl_socket = f'/run/mica/{client}.socket'
+    ctrl_socket = f'/tmp/mica/{client}.socket'
     if not os.path.exists(ctrl_socket):
         print(f"Cannot find {client}. Please run 'mica create <config>' to create it.")
         return

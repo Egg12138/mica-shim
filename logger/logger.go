@@ -15,11 +15,10 @@ import (
 const debugFileName = "/var/log/mica/mica.log"
 
 var (
-	// Log is the global logger instance
 	Log = logrus.New()
 )
 
-	// Set default configuration for systemd compatibility
+// Set default configuration for systemd compatibility
 func init() {
 	Log.SetOutput(os.Stderr)
 	Log.SetFormatter(&logrus.TextFormatter{
@@ -42,7 +41,7 @@ type Config struct {
 
 func Init(config *Config) error {
 	if config == nil {
-		return nil 
+		return nil
 	}
 
 	if config.Level != "" {
@@ -130,10 +129,10 @@ func Panic(args ...interface{}) {
 	Log.Panic(args...)
 }
 
-func LocateDebug(format string, args ...interface{}) {
-	prefix := getDebugInfoPrefix()
-	Debugf(prefix + format + "\n", args...)
-}
+// func locatedebugf(format string, args ...interface{}) {
+// 	prefix := getdebuginfoprefix()
+// 	debugf(prefix+format+"\n", args...)
+// }
 
 func Infof(format string, args ...interface{}) {
 	Log.Infof(format, args...)
@@ -162,7 +161,6 @@ func FatalWithCleanup(cleanup func(), args ...interface{}) {
 	}
 	Log.Fatal(args...)
 }
-
 
 func CleanDebugFile() error {
 	f, err := os.OpenFile(debugFileName, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
@@ -199,8 +197,8 @@ func getDebugInfoPrefix() string {
 	return prefix
 }
 
-
-func Fprintf(format string, args ...interface{}) error {
+// func Fprintf(format string, args ...interface{}) error {
+func LocateDebugf(format string, args ...interface{}) error {
 	if _, err := os.Stat(debugFileName); os.IsNotExist(err) {
 		if err := CleanDebugFile(); err != nil {
 			return err
@@ -213,7 +211,7 @@ func Fprintf(format string, args ...interface{}) error {
 	}
 	defer f.Close()
 
-	prefix := getDebugInfoPrefix()	
-	_, err = fmt.Fprintf(f, prefix + format+"\n", args...)
+	prefix := getDebugInfoPrefix()
+	_, err = fmt.Fprintf(f, prefix+format+"\n", args...)
 	return err
 }

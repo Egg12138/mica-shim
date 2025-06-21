@@ -1,18 +1,20 @@
+//go:build !debug
+// +build !debug
+
 package defs
 
 import "time"
 
 const (
-  ShimName = "io.containerd.mica.v2"	
-	ShimSocketPath = "/tmp/mica-shim.sock"
-	RuntimeName = "mica"
+	// ShimName             = "io.containerd.mica.v2"
+	RuntimeName          = "mica"
 	MicaAnnotationPrefix = "org.openeuler.mica"
-	MicaSuccess = "MICA-SUCCESS"
-	MicaFailed  = "MICA-FAILED"
-	MicaConfDir = "/etc/mica"
-	MicaSocketDir = "/run/mica"
-	MicaSocketName = "mica-create.socket"
-	MicaSocketPath = MicaSocketDir + "/" + MicaSocketName
-	MicaSocketBufSize = 512
-	MicaSocketTimout = 5 * time.Second
+	MicaSuccess          = "MICA-SUCCESS"
+	MicaFailed           = "MICA-FAILED"
+	MicaSocketName       = "mica-create.socket"
+	MicaCreatSocketPath  = MicaSocketDir + "/" + MicaSocketName
+	MicaSocketBufSize    = 512
+	MicaSocketTimout     = 5 * time.Second
 )
+
+var ShimName string

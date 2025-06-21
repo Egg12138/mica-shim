@@ -6,7 +6,7 @@ package defs
 import "time"
 
 const (
-	ShimName             = "io.containerd.mica.v2"
+	// ShimName             = "org.openeuler.micashim.v2"
 	RuntimeName          = "mica"
 	MicaAnnotationPrefix = "org.openeuler.mica"
 	MicaSuccess          = "MICA-SUCCESS"
@@ -16,3 +16,5 @@ const (
 	MicaSocketBufSize    = 512
 	MicaSocketTimout     = 5 * time.Second
 )
+
+var ShimName string
