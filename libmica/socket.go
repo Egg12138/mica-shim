@@ -229,33 +229,31 @@ const (
   // dummyConfPath = "/home/egg/source/mica-shim/tests/qemu-zephyr-rproc.conf"
 )
 
-func dummyCreateMsg() micaCreateMsg {
-	return NewMicaCreateMsg(0, "qemu-zephyr",
-	dummyConfPath,
+func dummyCreateMsg(id string) micaCreateMsg {
+	return NewMicaCreateMsg(0, id,
+		dummyConfPath,
 		"", "", false)
 }
 
-func TestCreate() (string, error) {
+func TestCreate(id string) (string, error) {
 	s := newMicaSocket(defs.MicaCreatSocketPath)
 	defer s.close()
 	s.connect()
-	msg := dummyCreateMsg()
+	msg := dummyCreateMsg(id)
 	return s.handleMsg(msg.pack())
 }
 
-func TestStart() (string, error) {
-	client := "qemu-zephyr"
-	return MicaCtl(MStart, client)
+func TestStart(id string) (string, error) {
+	// client := "qemu-zephyr"
+	return MicaCtl(MStart, id)
 }
 
-func TestStop() (string, error) {
-	client := "qemu-zephyr"
-	return MicaCtl(MStop, client)
+func TestStop(id string) (string, error) {
+	return MicaCtl(MStop, id)
 }
 
-func TestRemove() (string, error) {
-	client := "qemu-zephyr"
-	return MicaCtl(MRemove, client)
+func TestRemove(id string) (string, error) {
+	return MicaCtl(MRemove, id)
 }
 
 func TestStatus() (string, error) {

@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"mica-shim/libmica"
+
+	"k8s.io/apimachinery/pkg/util/rand"
 )
 
 func main() {
@@ -105,7 +107,8 @@ func testControlCommands() {
 func testMessagePacking() {
 	fmt.Println("📤 Testing message packing via TestCreate...")
 
-	response, err := libmica.TestCreate()
+	id := rand.String(10)
+	response, err := libmica.TestCreate(id)
 	if err != nil {
 		fmt.Printf("❌ TestCreate failed: %v\n", err)
 		return

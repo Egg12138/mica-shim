@@ -7,6 +7,7 @@ require (
 	github.com/containerd/fifo v1.1.0
 	github.com/containerd/ttrpc v1.2.7
 	github.com/sirupsen/logrus v1.9.3
+	k8s.io/apimachinery v0.26.2
 )
 
 require (

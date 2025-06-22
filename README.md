@@ -13,8 +13,12 @@ TODO
 * package logger 调整
 * replace all Unix process handler ==> rtos process monitor
 
+TYPOS:
+* micad会先响应一个"No such file"?
 BUG
 * fix mock_micad memory leaking...
+
+
 
 
 # FUTURE

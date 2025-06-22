@@ -5,6 +5,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"k8s.io/apimachinery/pkg/util/rand"
 )
 
 func TestMicaCreate(t *testing.T) {
@@ -79,7 +81,8 @@ func TestMicaCtlCommands(t *testing.T) {
 func TestDummyCreateMsg(t *testing.T) {
 	fmt.Println("=== Testing DummyCreateMsg ===")
 
-	response, err := TestCreate()
+	id := rand.String(10)
+	response, err := TestCreate(id)
 	if err != nil {
 		t.Errorf("TestCreate failed: %v", err)
 		return
@@ -142,19 +145,19 @@ func TestAllPublicFunctions(t *testing.T) {
 
 	tests := []struct {
 		name string
-		fn   func() (string, error)
+		fn   func(id string) (string, error)
 	}{
 		{"TestCreate", TestCreate},
 		{"TestStart", TestStart},
 		{"TestStop", TestStop},
 		{"TestRemove", TestRemove},
-		{"TestStatus", TestStatus},
 	}
 
 	for _, test := range tests {
 		fmt.Printf("Running %s...\n", test.name)
 
-		response, err := test.fn()
+		id := rand.String(10)
+		response, err := test.fn(id)
 		if err != nil {
 			// Some tests may fail due to missing client sockets, that's okay
 			fmt.Printf("  %s failed (may be expected): %v\n", test.name, err)
