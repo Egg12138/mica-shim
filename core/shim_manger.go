@@ -17,8 +17,9 @@ import (
 
 // containerd-specific environment variables set while invoking the shim's
 // start command.
-// https://github.com/containerd/containerd/tree/v1.7.3/runtime/v2#start:
+// https://github.com/containerd/containerd/tree/v1.7.1/runtime/v2#start:
 // The start command may have the following containerd specific environment variables set:
+// But for mica case, it can be ignored or not()
 const (
 	contdShimEnvShedCore = "SCHED_CORE"
 )
@@ -145,9 +146,11 @@ func (*manager) Start(ctx context.Context, containerID string, opts shim.StartOp
 
 	cmd.ExtraFiles = append(cmd.ExtraFiles, sockF)
 
-	// LEARN:
-	// runtime.LockOSThread()
+	runtime.LockOSThread()
 
+	// NOTICE: disable SchedCore compeltely? It depends
+	// TALK: is it needed to run an agent process on Linux representing 
+	// the Mica client
 	// if cmdCfg.SchedCore {
 	// 	if err := schedcore.Create(schedcore.ProcessGroup); err != nil {
 	// 		return "", fmt.Errorf("enabling sched core support: %w", err)

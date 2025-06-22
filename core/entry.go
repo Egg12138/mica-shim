@@ -22,6 +22,7 @@ import (
 	"context"
 	"fmt"
 	"mica-shim/io"
+	"mica-shim/libmica"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,10 +42,10 @@ import (
 	"github.com/containerd/containerd/runtime/v2/shim"
 )
 
-var (
-	_ shim.TTRPCService   = (*micaTaskService)(nil)
-	_ taskAPI.TaskService = (*micaTaskService)(nil)
-)
+// var (
+// 	_ shim.TTRPCService   = (*micaTaskService)(nil)
+// 	_ taskAPI.TaskService = (*micaTaskService)(nil)
+// )
 
 // func New(ctx context.Context, id string, publisher shim.Publisher, shutdown func()) (shim.Shim, error) {
 // 	return &MicaService{}, nil
@@ -128,7 +129,7 @@ type MicaContainer struct {
 // Wait for a process to exit
 // func (s *MicaService) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*taskAPI.WaitResponse, error) {
 
-// Create creates a new task and runs its init process.
+// Create creates a new task and **setup rtos Client**
 func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) (_ *taskAPI.CreateTaskResponse, retErr error) {
 	log.LocateDebugf("create id:%s", r.ID)
 
@@ -144,12 +145,19 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 	}
 
 	// TODO: replace to mica sender
+	// config : name <=> container ID ()
+	log.LocateDebugf("running mica create && a 5-time loop")
+	// TODO:  create.go
+	libmica.TestCreate()
+
 	cmd := exec.CommandContext(ctx, "sh", "-c",
-		"while date --rfc-3339=seconds; do "+
-			"sleep 5; "+
+		"for i in {1..5}; do "+
+			"echo \"after creating dummy client, MICA Task Loop $i - $(date --rfc-3339=seconds)\"; "+
+			"sleep 1; "+
 			"done",
 	)
 
+	// TODO: /dev/tty??
 	pio, err := io.NewPipeIO(r.Stdout)
 	if err != nil {
 		return nil, fmt.Errorf("creating pipe io for stdout %s: %w", r.Stdout, err)
@@ -222,6 +230,7 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 		proc.exitStatus = exitStatus
 	}()
 
+	// TODO: add rtos pid file 
 	// If containerd needs to resort to calling the shim's "delete" command to
 	// clean things up, having the process' pid readable from a file is the
 	// only way for it to know what init process is associated with the task.
@@ -250,6 +259,11 @@ func (s *micaTaskService) Start(ctx context.Context, r *taskAPI.StartRequest) (*
 	// return its stored PID
 	s.m.RLock()
 	defer s.m.RUnlock()
+
+	// NOTICE: boot the client rtos 
+	response, err := libmica.MicaCtl(libmica.MStart, r.ID)
+	log.Debugf("start id:%s execid:%s response:%s; mica error: %v", r.ID, r.ExecID, response, err)
+
 	proc, ok := s.procs[r.ID]
 	if !ok {
 		return nil, fmt.Errorf("task not created: %w", errdefs.ErrNotFound)
@@ -266,21 +280,26 @@ func (s *micaTaskService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) 
 
 	s.m.Lock()
 	defer s.m.Unlock()
-	proc, ok := s.procs[r.ID]
+
+	// NOTICE: remove first, then stop the client rtos 
+	response, err := libmica.MicaCtl(libmica.MRemove, r.ID)
+	log.Debugf("delete id:%s execid:%s response:%s; mica error: %v", r.ID, r.ExecID, response, err)
+
+	client, ok := s.procs[r.ID]
 	if !ok {
 		return nil, fmt.Errorf("task not created: %w", errdefs.ErrNotFound)
 	}
 
-	if proc.exitTime.IsZero() {
-		return nil, errdefs.ToGRPCf(errdefs.ErrFailedPrecondition, "init process %d is not done yet", proc.pid)
+	if client.exitTime.IsZero() {
+		return nil, errdefs.ToGRPCf(errdefs.ErrFailedPrecondition, "init process %d is not done yet", client.pid)
 	}
 
 	delete(s.procs, r.ID)
 
 	return &taskAPI.DeleteResponse{
-		Pid:        uint32(proc.pid),
-		ExitStatus: uint32(proc.exitStatus),
-		ExitedAt:   protobuf.ToTimestamp(proc.exitTime),
+		Pid:        uint32(client.pid),
+		ExitStatus: uint32(client.exitStatus),
+		ExitedAt:   protobuf.ToTimestamp(client.exitTime),
 	}, nil
 }
 
@@ -296,7 +315,7 @@ func (*micaTaskService) ResizePty(ctx context.Context, r *taskAPI.ResizePtyReque
 	return nil, errdefs.ErrNotImplemented
 }
 
-// State returns the runtime state of a process.
+// State returns the runtime state of a RTOS task process.
 func (s *micaTaskService) State(ctx context.Context, r *taskAPI.StateRequest) (*taskAPI.StateResponse, error) {
 	log.Debugf("state id:%s execid:%s", r.ID, r.ExecID)
 
@@ -322,13 +341,13 @@ func (s *micaTaskService) State(ctx context.Context, r *taskAPI.StateRequest) (*
 	}, nil
 }
 
-// Pause pauses a task.
+// NOTICE: mica does not provide pause/resume feature
 func (*micaTaskService) Pause(ctx context.Context, r *taskAPI.PauseRequest) (*ptypes.Empty, error) {
 	log.Debugf("pause id:%s", r.ID)
 	return nil, errdefs.ErrNotImplemented
 }
 
-// Resume resumes a task.
+// NOTICE: mica does not provide pause/resume feature
 func (*micaTaskService) Resume(ctx context.Context, r *taskAPI.ResumeRequest) (*ptypes.Empty, error) {
 	log.Debugf("resume id:%s", r.ID)
 	return nil, errdefs.ErrNotImplemented
@@ -340,6 +359,10 @@ func (s *micaTaskService) Kill(ctx context.Context, r *taskAPI.KillRequest) (*pt
 
 	s.m.RLock()
 	defer s.m.RUnlock()
+
+	response, err := libmica.MicaCtl(libmica.MStop, r.ID)
+	log.Debugf("kill id:%s execid:%s response:%s; mica error: %v", r.ID, r.ExecID, response, err)
+
 	proc, ok := s.procs[r.ID]
 	if !ok {
 		return nil, fmt.Errorf("task not created: %w", errdefs.ErrNotFound)
@@ -357,6 +380,7 @@ func (s *micaTaskService) Kill(ctx context.Context, r *taskAPI.KillRequest) (*pt
 		}
 	}
 
+
 	return &ptypes.Empty{}, nil
 }
 
@@ -366,7 +390,7 @@ func (s *micaTaskService) Pids(ctx context.Context, r *taskAPI.PidsRequest) (*ta
 	return nil, errdefs.ErrNotImplemented
 }
 
-// CloseIO closes the I/O of a process.
+// TODO: currently it is just for Linux process
 func (*micaTaskService) CloseIO(ctx context.Context, r *taskAPI.CloseIORequest) (*ptypes.Empty, error) {
 	log.Debugf("closeio id:%s execid:%s", r.ID, r.ExecID)
 	return nil, errdefs.ErrNotImplemented
@@ -403,9 +427,14 @@ func (s *micaTaskService) Shutdown(ctx context.Context, r *taskAPI.ShutdownReque
 	return &ptypes.Empty{}, nil
 }
 
-// Stats returns container level system stats for a task and its processes.
+// Stats returns **container level** system stats for a task and its processes.
 func (*micaTaskService) Stats(ctx context.Context, r *taskAPI.StatsRequest) (*taskAPI.StatsResponse, error) {
 	log.Debugf("stats id:%s", r.ID)
+	_, err := libmica.MicaCtl(libmica.MStatus, r.ID)
+	if err != nil {
+		return nil, err
+	}
+	// micaStatus2TaskStats(response)
 	return nil, errdefs.ErrNotImplemented
 }
 

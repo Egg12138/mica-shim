@@ -17,4 +17,3 @@ const (
 	MicaSocketTimout     = 5 * time.Second
 )
 
-var ShimName string

@@ -4,7 +4,6 @@
 package defs
 
 const (
-	ShimSocketPath = "/tmp/mica-shim.sock"
 	MicaConfDir    = "/tmp/mica"
 	MicaSocketDir  = "/tmp/mica"
 )

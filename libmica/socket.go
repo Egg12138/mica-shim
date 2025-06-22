@@ -20,7 +20,7 @@ const (
 	MCreate MicaCommand = "create"
 	MStart  MicaCommand = "start"
 	MStop   MicaCommand = "stop"
-	MRemove MicaCommand = "remove"
+	MRemove MicaCommand = "rm"
 	MStatus MicaCommand = "status"
 )
 
@@ -221,13 +221,20 @@ func NewMicaCreateMsg(cpu uint32, name string, path string, ped string, pedCfg s
 	return msg
 }
 
+
+// dummy test functions:
+
+const (
+  dummyConfPath = "/lib/firmware/zephyr.elf"
+  // dummyConfPath = "/home/egg/source/mica-shim/tests/qemu-zephyr-rproc.conf"
+)
+
 func dummyCreateMsg() micaCreateMsg {
-	return NewMicaCreateMsg(3, "qemu-zephyr",
-		"/home/egg/source/mica-shim/tests/qemu-zephyr-rproc.conf",
+	return NewMicaCreateMsg(0, "qemu-zephyr",
+	dummyConfPath,
 		"", "", false)
 }
 
-// Public test functions:
 func TestCreate() (string, error) {
 	s := newMicaSocket(defs.MicaCreatSocketPath)
 	defer s.close()

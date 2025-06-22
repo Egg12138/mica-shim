@@ -1,10 +1,10 @@
-.PHONY: all build-prod build test-prod test clean clean-all help run-debug run-prod containerd-client build-containerd-client
+.PHONY: all build-prod build build-arm64 build-prod-arm64 test-prod test clean clean-all help run-debug run-prod containerd-client build-containerd-client install install-arm64 install-prod-arm64 mock-micad mock-micad-py mock-micad-py-quiet
 
-SHIM_NAME := org.openeuler.mica.v2
+SHIM_NAME := org.openeuler.mica.v1
 # containerd shim v2 命名规约转换
 # Runtime name: io.containerd.runc.v2 → Binary: containerd-shim-runc-v2
 # Runtime name: org.openeuler.micashim.v2 → Binary: containerd-shim-micashim-v2
-# 
+# isulad shimv2 Runtime name: io.containerd.{runtime}.{version} -> Binary: containerd-shim-{runtime}-{version}
 # 规则: 
 # 1. 移除域名前缀部分 (io.containerd. 或 org.openeuler. 等)
 # 2. 取最后两个部分作为 {runtime}.{version}
@@ -14,11 +14,14 @@ SHIM_PARTS_COUNT := $(words $(SHIM_PARTS))
 RUNTIME_NAME := $(word $(shell echo $(SHIM_PARTS_COUNT) - 1 | bc),$(SHIM_PARTS))
 RUNTIME_VERSION := $(lastword $(SHIM_PARTS))
 
-BIN := org-openeuler-$(RUNTIME_NAME)-$(RUNTIME_VERSION)
+BIN := containerd-shim-$(RUNTIME_NAME)-$(RUNTIME_VERSION)
 BIN_PROD := $(BIN)
+BIN_ARM64 := $(BIN)-arm64
+BIN_PROD_ARM64 := $(BIN_PROD)-arm64
 
 SHIM_DIR := /usr/local/bin/
-BUILD_FLAGS := -ldflags "-X 'defs.ShimName=${SHIM_NAME}'"
+BUILD_FLAGS := -ldflags "-X 'main.ShimName=${SHIM_NAME}'"
+CROSS_BUILD_FLAGS := $(BUILD_FLAGS) -a -installsuffix cgo
 
 all: build
 
@@ -27,6 +30,8 @@ gitignore:
 	@echo "🔄 Updating .gitignore..."
 	@grep -q "${BIN}" .gitignore || echo "${BIN}" >> .gitignore
 	@grep -q "${BIN_PROD}" .gitignore || echo "${BIN_PROD}" >> .gitignore
+	@grep -q "${BIN_ARM64}" .gitignore || echo "${BIN_ARM64}" >> .gitignore
+	@grep -q "${BIN_PROD_ARM64}" .gitignore || echo "${BIN_PROD_ARM64}" >> .gitignore
 
 build-prod:
 	@echo "🏭 Building production binary..."
@@ -43,6 +48,15 @@ test-prod:
 build:
 	@echo "🐛 Building debug binary..."
 	go build -tags debug ${BUILD_FLAGS} -o ${BIN} ./cmd
+
+# Temp target for amd64 to build arm64 binary
+build-arm64:
+	@echo "🔄 Cross-compiling debug binary for ARM64..."
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -tags debug ${CROSS_BUILD_FLAGS} -o ${BIN_ARM64} ./cmd
+
+build-prod-arm64:
+	@echo "🔄 Cross-compiling production binary for ARM64..."
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build ${CROSS_BUILD_FLAGS} -o ${BIN_PROD_ARM64} ./cmd
 
 run: build
 	@echo "🐛 Running in debug mode..."
@@ -72,6 +86,14 @@ mock-micad:
 	@echo "🎭 Building and running mock_micad..."
 	cd tests/mock_micad && make && ./mock_micad
 
+mock-micad-py:
+	@echo "🐍 Running mock_micad (Python version)..."
+	cd tests/mock_micad && python3 mock_micad.py
+
+mock-micad-py-quiet:
+	@echo "🐍 Running mock_micad (Python version, quiet mode)..."
+	cd tests/mock_micad && python3 mock_micad.py -q
+
 fmt:
 	go fmt ./...
 
@@ -82,17 +104,36 @@ clean-all: clean
 
 clean:
 	@echo "🧹 Cleaning up build artifacts..."
-	rm -f ${BIN} ${BIN_PROD}
+	rm -f ${BIN} ${BIN_PROD} ${BIN_ARM64} ${BIN_PROD_ARM64}
 
 install-prod: build-prod
-	sudo install ${BIN_PROD} ${SHIM_DIR}
-	@echo "✅ Installed ${BIN_PROD} to ${SHIM_DIR}"
+	@echo "🏭 Installing ${BIN_PROD} to ${SHIM_DIR}"
+	sudo install -D -m 755 ${BIN_PROD} ${SHIM_DIR}
 	@echo "pass --runtime ${SHIM_NAME} to use it"
 
 install: build
-	sudo install ${BIN} ${SHIM_DIR}
-	@echo "✅ Installed ${BIN} to ${SHIM_DIR}"
+	@echo "🏭 Installing ${BIN} to ${SHIM_DIR} for debug"
+	sudo install -D -m 755 ${BIN} ${SHIM_DIR}
+	@echo "md5sums:"
+	@echo "Source:      $$(md5sum ${BIN})"
+	@echo "Installed:   $$(md5sum ${SHIM_DIR}${BIN})"
 	@echo "pass --runtime ${SHIM_NAME} to use it"
+
+install-arm64: build-arm64
+	@echo "🔄 Installing ARM64 binary ${BIN_ARM64} to ${SHIM_DIR}"
+	sudo install -D -m 755 ${BIN_ARM64} ${SHIM_DIR}
+	@echo "md5sums:"
+	@echo "Source:      $$(md5sum ${BIN_ARM64})"
+	@echo "Installed:   $$(md5sum ${SHIM_DIR}${BIN_ARM64})"
+	@echo "pass --runtime ${SHIM_NAME} to use it on ARM64 systems"
+
+install-prod-arm64: build-prod-arm64
+	@echo "🔄 Installing ARM64 production binary ${BIN_PROD_ARM64} to ${SHIM_DIR}"
+	sudo install -D -m 755 ${BIN_PROD_ARM64} ${SHIM_DIR}
+	@echo "md5sums:"
+	@echo "Source:      $$(md5sum ${BIN_PROD_ARM64})"
+	@echo "Installed:   $$(md5sum ${SHIM_DIR}${BIN_PROD_ARM64})"
+	@echo "pass --runtime ${SHIM_NAME} to use it on ARM64 systems"
 
 dev-setup:
 	@echo "🔧 Setting up development environment..."
@@ -122,6 +163,12 @@ help:
 	@echo "  make build   - Build debug binary"
 	@echo "  make run     - Run in debug mode"
 	@echo "  make test    - Test in debug mode"
+	@echo ""
+	@echo "Cross-Compilation Commands:"
+	@echo "  make build-arm64      - Cross-compile debug binary for ARM64"
+	@echo "  make build-prod-arm64 - Cross-compile production binary for ARM64"
+	@echo "  make install-arm64    - Install ARM64 debug binary"
+	@echo "  make install-prod-arm64 - Install ARM64 production binary"
 	@echo ""
 	@echo "Testing & Simulations:"
 	@echo "  make test-socket            - Test socket communication (debug)"

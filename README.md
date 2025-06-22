@@ -9,6 +9,12 @@ TODO
 
 * 版本
 *  containerd 1.7是containerd v1的末版本，1.7内部出现了明显的API变动，下一步先调整API到1.7.3之后的API
+* libmica接口暴露调整为 Create, Stop, Rm, Delete ，其他都改为private
+* package logger 调整
+* replace all Unix process handler ==> rtos process monitor
+
+BUG
+* fix mock_micad memory leaking...
 
 
 # FUTURE

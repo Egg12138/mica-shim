@@ -3,8 +3,6 @@ package core
 import (
 	"context"
 	"fmt"
-	defs "mica-shim/definitions"
-	log "mica-shim/logger"
 	"sync"
 	"time"
 
@@ -14,16 +12,6 @@ import (
 	"github.com/containerd/ttrpc"
 )
 
-func rmSockWhenShutdown(sockAddr string) func(context.Context) error {
-	return func(ctx context.Context) error {
-		if err := shim.RemoveSocket(sockAddr); err != nil {
-			log.Errorf("removing shim socket on shutdown")
-			return fmt.Errorf("removing shim socket on shutdown: %w", err)
-		}
-		return nil
-	}
-}
-
 // shutdown.Service is used to facilitate shutdown by through callback
 func newTaskService(ss shutdown.Service) (*micaTaskService, error) {
 	s := &micaTaskService{
@@ -31,12 +19,28 @@ func newTaskService(ss shutdown.Service) (*micaTaskService, error) {
 		ss:    ss,
 	}
 
-	sockAddr, err := shim.ReadAddress(defs.ShimSocketPath)
+	sockAddr, err := shim.ReadAddress("address")
 	if err != nil {
 		return nil, fmt.Errorf("reading socket address from address file: %w", err)
 	}
 
-	ss.RegisterCallback(rmSockWhenShutdown(sockAddr))
+	ss.RegisterCallback(func(context.Context) error {
+		if err := shim.RemoveSocket(sockAddr); err != nil {
+			return fmt.Errorf("removing shim socket on shutdown: %w", err)
+		}
+		return nil
+	})
+
+	// ss.RegisterCallback(func(ctx context.Context) error {
+	// 	if sockAddr, err := shim.ReadAddress("address"); err == nil {
+	// 		if err := shim.RemoveSocket(sockAddr); err != nil {
+	// 			log.Errorf("removing shim socket on shutdown: %v", err)
+	// 			return fmt.Errorf("removing shim socket on shutdown: %w", err)
+	// 		}
+	// 	}
+	// 	// Don't fail shutdown if address file doesn't exist or socket removal fails
+	// 	return nil
+	// })
 
 	return s, nil
 }
@@ -46,8 +50,9 @@ type initProcByTaskID map[string]*initProcess
 
 // initProcess encapsulates information about an init (parent) process.
 // TODO: handle the init process, there it is just a placeholder
+// TALK: init process **represent** the process in RTOS
 type initProcess struct {
-	// IDEA: for one container pod, make agent process(in Linux) as the init process?
+	// TALK: for one container pod, make agent process(in Linux) as the init process?
 	pid        int
 	doneCtx    context.Context
 	exitTime   time.Time
@@ -60,7 +65,6 @@ type initProcess struct {
 type micaTaskService struct {
 	m     sync.RWMutex
 	procs initProcByTaskID
-
 	ss shutdown.Service
 }
 
