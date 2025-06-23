@@ -2,7 +2,8 @@ CC = gcc
 CFLAGS = -Wall -Wextra -g
 LDFLAGS = 
 
-TARGET = mock_micad
+BUILD_DIRS := ../../builds/
+TARGET = $(BUILD_DIRS)mock_micad
 SRCS = mock_micad.c
 OBJS = $(SRCS:.c=.o)
 

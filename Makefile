@@ -14,28 +14,24 @@ SHIM_PARTS_COUNT := $(words $(SHIM_PARTS))
 RUNTIME_NAME := $(word $(shell echo $(SHIM_PARTS_COUNT) - 1 | bc),$(SHIM_PARTS))
 RUNTIME_VERSION := $(lastword $(SHIM_PARTS))
 
-BIN := containerd-shim-$(RUNTIME_NAME)-$(RUNTIME_VERSION)
-BIN_PROD := $(BIN)
-BIN_ARM64 := $(BIN)-arm64
-BIN_PROD_ARM64 := $(BIN_PROD)-arm64
-
+BUILD_DIRS := builds/
 SHIM_DIR := /usr/local/bin/
-BUILD_FLAGS := -ldflags "-X 'main.ShimName=${SHIM_NAME}'"
-CROSS_BUILD_FLAGS := $(BUILD_FLAGS) -a -installsuffix cgo
+BINNAME := containerd-shim-$(RUNTIME_NAME)-$(RUNTIME_VERSION)
+BIN := $(BUILD_DIRS)$(BINNAME)
+BIN_PROD := $(BIN)
+BIN_ARM64 := $(BUILD_DIRS)$(BIN)-arm64
+BIN_PROD_ARM64 := $(BUILD_DIRS)$(BIN_PROD)-arm64
+
+DEV_BUILD_FLAGS := -ldflags "-X 'main.ShimName=${SHIM_NAME}'"
+CROSS_DEV_BUILD_FLAGS := $(DEV_BUILD_FLAGS) -a -installsuffix cgo
+RELEASE_BUILD_FLAGS := -ldflags "-s -w -X 'main.ShimName=${SHIM_NAME}'"
+CROSS_RELEASE_BUILD_FLAGS := $(RELEASE_BUILD_FLAGS) -a -installsuffix cgo
 
 all: build
 
-# update binary name to .gitignore
-gitignore:
-	@echo "🔄 Updating .gitignore..."
-	@grep -q "${BIN}" .gitignore || echo "${BIN}" >> .gitignore
-	@grep -q "${BIN_PROD}" .gitignore || echo "${BIN_PROD}" >> .gitignore
-	@grep -q "${BIN_ARM64}" .gitignore || echo "${BIN_ARM64}" >> .gitignore
-	@grep -q "${BIN_PROD_ARM64}" .gitignore || echo "${BIN_PROD_ARM64}" >> .gitignore
-
 build-prod:
 	@echo "🏭 Building production binary..."
-	go build ${BUILD_FLAGS} -o ${BIN_PROD} ./cmd
+	go build ${DEV_BUILD_FLAGS} -o ${BIN_PROD} ./cmd
 
 run-prod: build-prod
 	@echo "🏭 Running in production mode..."
@@ -47,16 +43,16 @@ test-prod:
 
 build:
 	@echo "🐛 Building debug binary..."
-	go build -tags debug ${BUILD_FLAGS} -o ${BIN} ./cmd
+	go build -tags debug ${DEV_BUILD_FLAGS} -o ${BIN} ./cmd
 
 # Temp target for amd64 to build arm64 binary
 build-arm64:
 	@echo "🔄 Cross-compiling debug binary for ARM64..."
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -tags debug ${CROSS_BUILD_FLAGS} -o ${BIN_ARM64} ./cmd
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -tags debug ${CROSS_DEV_BUILD_FLAGS} -o ${BIN_ARM64} ./cmd
 
 build-prod-arm64:
 	@echo "🔄 Cross-compiling production binary for ARM64..."
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build ${CROSS_BUILD_FLAGS} -o ${BIN_PROD_ARM64} ./cmd
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build ${CROSS_DEV_BUILD_FLAGS} -o ${BIN_PROD_ARM64} ./cmd
 
 run: build
 	@echo "🐛 Running in debug mode..."
@@ -80,7 +76,7 @@ containerd-client: build-containerd-client
 
 build-containerd-client:
 	@echo "🐳 Building containerd client binary..."
-	cd tests/containerd_client && go build -o containerd_client containerd_client.go
+	cd tests/containerd_client && go build -ldflags "-X 'main.customRuntimeName=${SHIM_NAME}'" -o containerd_client containerd_client.go
 
 mock-micad:
 	@echo "🎭 Building and running mock_micad..."
@@ -108,32 +104,16 @@ clean:
 
 install-prod: build-prod
 	@echo "🏭 Installing ${BIN_PROD} to ${SHIM_DIR}"
-	sudo install -D -m 755 ${BIN_PROD} ${SHIM_DIR}
+	sudo install -m 755 ${BIN_PROD} ${SHIM_DIR}${BINNAME}
 	@echo "pass --runtime ${SHIM_NAME} to use it"
 
 install: build
 	@echo "🏭 Installing ${BIN} to ${SHIM_DIR} for debug"
-	sudo install -D -m 755 ${BIN} ${SHIM_DIR}
+	sudo install -m 755 ${BIN} ${SHIM_DIR}${BINNAME}
 	@echo "md5sums:"
 	@echo "Source:      $$(md5sum ${BIN})"
-	@echo "Installed:   $$(md5sum ${SHIM_DIR}${BIN})"
+	@echo "Installed:   $$(md5sum ${SHIM_DIR}${BINNAME})"
 	@echo "pass --runtime ${SHIM_NAME} to use it"
-
-install-arm64: build-arm64
-	@echo "🔄 Installing ARM64 binary ${BIN_ARM64} to ${SHIM_DIR}"
-	sudo install -D -m 755 ${BIN_ARM64} ${SHIM_DIR}
-	@echo "md5sums:"
-	@echo "Source:      $$(md5sum ${BIN_ARM64})"
-	@echo "Installed:   $$(md5sum ${SHIM_DIR}${BIN_ARM64})"
-	@echo "pass --runtime ${SHIM_NAME} to use it on ARM64 systems"
-
-install-prod-arm64: build-prod-arm64
-	@echo "🔄 Installing ARM64 production binary ${BIN_PROD_ARM64} to ${SHIM_DIR}"
-	sudo install -D -m 755 ${BIN_PROD_ARM64} ${SHIM_DIR}
-	@echo "md5sums:"
-	@echo "Source:      $$(md5sum ${BIN_PROD_ARM64})"
-	@echo "Installed:   $$(md5sum ${SHIM_DIR}${BIN_PROD_ARM64})"
-	@echo "pass --runtime ${SHIM_NAME} to use it on ARM64 systems"
 
 dev-setup:
 	@echo "🔧 Setting up development environment..."
