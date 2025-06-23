@@ -51,8 +51,9 @@
 * 最直接关键的问题：**信息 从哪来**：
 1. 从bundle来？那多数都是在image侧静态设定；
 2. create: CPU需要调度选定的, firmware path 是完全可以静态的——runtime告诉micad 在哪里拿就好了——micad要有权限
-3. autoboot：我们需要一个hook，当reboot时,
+3. autoboot：我们需要一个micad hook?
 4. reboot: 对于同一个镜像，同一个task，专门化的reboot代替Stop() + Start()会节省开销吗?
+5. 1:1的一个想法是用对应的init process来监控client OS本身的信息 (N:N:1 , N个容器，N个monitor process, 对应一个micad monitor)
 * kata container runtime: Why Rust? 在已经有一个runtime-golang的情况下为什么要开发runtime-rs? 对我们是否有启发
 * 需要提供请求转发吗？(--runtime=io.containerd.mica.v?，但是不是混部容器的情况)
   > 如果要提供，那么我们转发给谁？（配置）
