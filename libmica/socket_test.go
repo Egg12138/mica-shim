@@ -82,7 +82,7 @@ func TestDummyCreateMsg(t *testing.T) {
 	fmt.Println("=== Testing DummyCreateMsg ===")
 
 	id := rand.String(10)
-	response, err := TestCreate(id)
+	response, err := DummyCreate(id)
 	if err != nil {
 		t.Errorf("TestCreate failed: %v", err)
 		return
@@ -147,16 +147,16 @@ func TestAllPublicFunctions(t *testing.T) {
 		name string
 		fn   func(id string) (string, error)
 	}{
-		{"TestCreate", TestCreate},
-		{"TestStart", TestStart},
-		{"TestStop", TestStop},
-		{"TestRemove", TestRemove},
+		{"TestCreate", DummyCreate},
+		{"TestStart", DummyStart},
+		{"TestStop", DummyStop},
+		{"TestRemove", DummyRemove},
 	}
 
 	for _, test := range tests {
 		fmt.Printf("Running %s...\n", test.name)
 
-		id := rand.String(10)
+		id := fmt.Sprintf("%x", rand.Int63nRange(0, 1000000000000000000))
 		response, err := test.fn(id)
 		if err != nil {
 			// Some tests may fail due to missing client sockets, that's okay

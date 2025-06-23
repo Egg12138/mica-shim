@@ -10,26 +10,22 @@ import (
 	"k8s.io/apimachinery/pkg/util/rand"
 )
 
+// NOTICE: function behavior simulation, not a system test.
 func main() {
 	fmt.Println("🧪 Testing socket.go communication with mock_micad")
 	fmt.Println("📋 Make sure mock_micad is running first!")
 	fmt.Println()
 
-	// Check if mock_micad is running
 	checkMockMicad()
 
-	// Test 1: Create message (325-byte struct) - like mica.py
 	fmt.Println("=== Test 1: MicaCreate (struct message) ===")
 	testMicaCreate()
 
-	// Wait a bit between tests
 	time.Sleep(1 * time.Second)
 
-	// Test 2: Control commands (string messages) - like socat
 	fmt.Println("=== Test 2: Control Commands (string messages) ===")
 	testControlCommands()
 
-	// Test 3: Message packing verification
 	fmt.Println("=== Test 3: Message Packing Verification ===")
 	testMessagePacking()
 
@@ -41,8 +37,8 @@ func testMicaCreate() {
 	// Create message with exact same parameters as mica.py
 	config := libmica.NewMicaCreateMsg(
 		3,                                // CPU=3 (from qemu-zephyr-rproc.conf)
-		"qemu-zephyr",                    // Name (from config file)
-		"/home/egg/playground/zephr.elf", // Path (from config file)
+		"qemu-zephyr-rpoc1212312123123sdasdasdasd123",                    // Name (from config file)
+		"/home/egg/playgssssround/zephr.elf", // Path (from config file)
 		"",                               // Ped (empty)
 		"",                               // PedCfg (empty)
 		false,                            // Debug=false
@@ -107,8 +103,9 @@ func testControlCommands() {
 func testMessagePacking() {
 	fmt.Println("📤 Testing message packing via TestCreate...")
 
-	id := rand.String(10)
-	response, err := libmica.TestCreate(id)
+	// the rand should be a random hex string
+	id := fmt.Sprintf("%x", rand.Int63nRange(0, 1000000000000000000))
+	response, err := libmica.DummyCreate(id)
 	if err != nil {
 		fmt.Printf("❌ TestCreate failed: %v\n", err)
 		return
@@ -119,14 +116,12 @@ func testMessagePacking() {
 	if response == "MICA-SUCCESS" {
 		fmt.Println("✅ Message packing test PASSED!")
 		fmt.Println("   The 325-byte struct was correctly packed and sent")
-		fmt.Println("   mock_micad should show the same format as mica.py")
 	} else {
 		fmt.Printf("❌ Expected MICA-SUCCESS, got: %s\n", response)
 	}
 	fmt.Println()
 }
 
-// Helper function to check if mock_micad is running
 func checkMockMicad() {
 	socketPath := "/tmp/mica/mica-create.socket"
 	if _, err := os.Stat(socketPath); os.IsNotExist(err) {

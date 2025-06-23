@@ -168,7 +168,11 @@ func (ms *micaSocket) handleMsg(msg []byte) (string, error) {
 	if err := ms.connect(); err != nil {
 		return "", fmt.Errorf("failed to connect to socket: %v", err)
 	}
-	defer ms.close()
+	defer func() {
+		fmt.Printf(">>>>>>>>>>>>Closing socket: %s\n", ms.socketPath)
+		fmt.Printf("*** %v\n", ms.conn)
+		ms.close()
+	}()
 
 	if err := ms.tx(msg); err != nil {
 		return "", fmt.Errorf("failed to send command: %v", err)
@@ -198,7 +202,6 @@ func (ms *micaSocket) handleMsg(msg []byte) (string, error) {
 // MicaCreate creates a new mica client; while MicaCtl is used to control the mica client
 func MicaCreate(config micaCreateMsg) (string, error) {
 	s := newMicaSocket(defs.MicaCreatSocketPath)
-
 	return s.handleMsg(config.pack())
 }
 
@@ -235,24 +238,28 @@ func dummyCreateMsg(id string) micaCreateMsg {
 		"", "", false)
 }
 
-func TestCreate(id string) (string, error) {
+func DummyCreate(id string) (string, error) {
 	s := newMicaSocket(defs.MicaCreatSocketPath)
-	defer s.close()
-	s.connect()
+	// we do not deref s here, because it is dropped in handleMsg()
+	// defer func() {
+	// 	time.Sleep(1 * time.Second)
+	// 	s.close()
+	// }()
+	// s.connect()
 	msg := dummyCreateMsg(id)
 	return s.handleMsg(msg.pack())
 }
 
-func TestStart(id string) (string, error) {
+func DummyStart(id string) (string, error) {
 	// client := "qemu-zephyr"
 	return MicaCtl(MStart, id)
 }
 
-func TestStop(id string) (string, error) {
+func DummyStop(id string) (string, error) {
 	return MicaCtl(MStop, id)
 }
 
-func TestRemove(id string) (string, error) {
+func DummyRemove(id string) (string, error) {
 	return MicaCtl(MRemove, id)
 }
 

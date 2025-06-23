@@ -148,7 +148,7 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 	// config : name <=> container ID ()
 	log.LocateDebugf("running mica create && a 5-time loop")
 	// TODO:  create.go
-	libmica.TestCreate(r.ID)
+	libmica.DummyCreate(r.ID)
 
 	cmd := exec.CommandContext(ctx, "sh", "-c",
 		"for i in {1..5}; do "+

@@ -82,14 +82,6 @@ mock-micad:
 	@echo "🎭 Building and running mock_micad..."
 	cd tests/mock_micad && make && ./mock_micad
 
-mock-micad-py:
-	@echo "🐍 Running mock_micad (Python version)..."
-	cd tests/mock_micad && python3 mock_micad.py
-
-mock-micad-py-quiet:
-	@echo "🐍 Running mock_micad (Python version, quiet mode)..."
-	cd tests/mock_micad && python3 mock_micad.py -q
-
 fmt:
 	go fmt ./...
 
