@@ -56,6 +56,8 @@
 1. pod IP;
 1. 1 node 1 micad N clients
 2. create: CPU需要调度选定的, firmware path 是完全可以静态的——runtime告诉micad 在哪里拿就好了——micad要有权限
+1. 暂时使用简单的调度方式：
+1. shimv2可能会有很多实例（并不是单shim的）；所以RTOS核调度应该在系统中有一个.lock
 3. autoboot：我们需要一个micad hook?
 1. 我们现在是利用mica暴露的北向接口来实现。需不需要从南向的虚拟化底座来……
 4. reboot: 对于同一个镜像，同一个task，专门化的reboot代替Stop() + Start()会节省开销吗?
@@ -76,17 +78,20 @@
 
 - [ ] 调整logger模块：
   - [ ] 去掉LocateDebugf等，全部作为 Debugf:Debugf会同时给containerd;mica shim logFile;stdout都输出；但内容格式不同
-- [ ] libmica 接口暴露过多，应减少，并且提供更好的抽象
+- [x] libmica 接口暴露过多，应减少，并且提供更好的抽象
 - [x] containerd_client 对mica-shim runtime运行
 - [ ] 优雅的错误处理
 
 ###  核心添加
 
-1. shim API， 完整参数处理:
-    1. containerd -> shim -> Create() -> create()
+1. shim API， 参数全对接，明确所有参数的处理策略:
+    - [ ] task CreateRequest, task CreateResponse
+    - [ ] task StartRequest, task StartResponse
+    - [ ] contaienrd -> shim -> 
 1. demo 添加：bundle 解析:
-   1. OCI zephyr-scratch 镜像
-   2. fetch information from bundle 
+   - [ ] OCI zephyr-scratch 镜像
+   - [ ] fetch information from bundle 
+   - [ ] 分配可用(目前不支持多核)CPU给clientOS
 1.  container events
 1. pod IP
 

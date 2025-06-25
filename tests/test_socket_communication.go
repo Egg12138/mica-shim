@@ -37,12 +37,12 @@ func main() {
 func testMicaCreate() {
 	// Create message with exact same parameters as mica.py
 	config := libmica.NewMicaCreateMsg(
-		3,                                // CPU=3 (from qemu-zephyr-rproc.conf)
-		"qemu-zephyr-rpoc1212312123123sdasdasdasd123",                    // Name (from config file)
-		"/home/egg/playgssssround/zephr.elf", // Path (from config file)
-		"",                               // Ped (empty)
-		"",                               // PedCfg (empty)
-		false,                            // Debug=false
+		3, // CPU=3 (from qemu-zephyr-rproc.conf)
+		"qemu-zephyr-rpoc1212312123123sdasdasdasd123", // Name (from config file)
+		"/home/egg/playgssssround/zephr.elf",          // Path (from config file)
+		"",                                            // Ped (empty)
+		"",                                            // PedCfg (empty)
+		false,                                         // Debug=false
 	)
 
 	fmt.Printf("📤 Sending create message:\n")
@@ -106,7 +106,8 @@ func testMessagePacking() {
 
 	// the rand should be a random hex string
 	id := fmt.Sprintf("%x", rand.Int63nRange(0, 1000000000000000000))
-	response, err := libmica.DummyCreate(id)
+	conf := libmica.NewMicaCreateMsg(0, id, "", "", "", false)
+	response, err := libmica.Create(conf)
 	if err != nil {
 		fmt.Printf("❌ TestCreate failed: %v\n", err)
 		return

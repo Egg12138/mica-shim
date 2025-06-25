@@ -141,7 +141,6 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 	if err != nil {
 		return nil, fmt.Errorf("creating mica client: %w", err)
 	}
-	// libmica.DummyCreate(r.ID)
 
 	cmd := exec.CommandContext(ctx, "sh", "-c",
 		"for i in {1..5}; do "+
@@ -223,7 +222,7 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 		proc.exitStatus = exitStatus
 	}()
 
-	// TODO: add rtos pid file 
+	// TODO: add rtos pid file
 	// If containerd needs to resort to calling the shim's "delete" command to
 	// clean things up, having the process' pid readable from a file is the
 	// only way for it to know what init process is associated with the task.
@@ -243,7 +242,7 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 	}, nil
 }
 
-// Start starts the primary user process inside the task.
+// Start the client rtos with its entrypoint task and managing agent process
 func (s *micaTaskService) Start(ctx context.Context, r *taskAPI.StartRequest) (*taskAPI.StartResponse, error) {
 	log.Debugf("start id:%s execid:%s", r.ID, r.ExecID)
 
@@ -253,7 +252,7 @@ func (s *micaTaskService) Start(ctx context.Context, r *taskAPI.StartRequest) (*
 	s.m.RLock()
 	defer s.m.RUnlock()
 
-	// NOTICE: boot the client rtos 
+	// NOTICE: boot the client rtos
 	response, err := libmica.MicaCtl(libmica.MStart, r.ID)
 	log.Debugf("start id:%s execid:%s response:%s; mica error: %v", r.ID, r.ExecID, response, err)
 
@@ -274,7 +273,7 @@ func (s *micaTaskService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) 
 	s.m.Lock()
 	defer s.m.Unlock()
 
-	// NOTICE: remove first, then stop the client rtos 
+	// NOTICE: remove first, then stop the client rtos
 	response, err := libmica.MicaCtl(libmica.MRemove, r.ID)
 	log.Debugf("delete id:%s execid:%s response:%s; mica error: %v", r.ID, r.ExecID, response, err)
 
@@ -372,7 +371,6 @@ func (s *micaTaskService) Kill(ctx context.Context, r *taskAPI.KillRequest) (*pt
 			}
 		}
 	}
-
 
 	return &ptypes.Empty{}, nil
 }

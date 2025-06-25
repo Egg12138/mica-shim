@@ -11,5 +11,6 @@ const (
 	MicaCreatSocketPath  = MicaSocketDir + "/" + MicaSocketName
 	MicaSocketBufSize    = 512
 	MicaSocketTimout     = 5 * time.Second
-)
 
+	SHM_NAME = "/dev/shm/mica_free_cores"
+)

@@ -83,7 +83,8 @@ func TestDummyCreateMsg(t *testing.T) {
 	fmt.Println("=== Testing DummyCreateMsg ===")
 
 	id := rand.String(10)
-	response, err := DummyCreate(id)
+	conf := NewMicaCreateMsg(0, id, "", "", "", false)
+	response, err := Create(conf)
 	if err != nil {
 		t.Errorf("TestCreate failed: %v", err)
 		return
@@ -146,19 +147,20 @@ func TestAllPublicFunctions(t *testing.T) {
 
 	tests := []struct {
 		name string
-		fn   func(id string) (string, error)
+		fn   func(conf micaCreateMsg) (string, error)
 	}{
-		{"TestCreate", DummyCreate},
-		{"TestStart", DummyStart},
-		{"TestStop", DummyStop},
-		{"TestRemove", DummyRemove},
+		{"TestCreate", Create},
+		{"TestStart", Start},
+		{"TestStop", Stop},
+		{"TestRemove", Remove},
 	}
 
 	for _, test := range tests {
 		fmt.Printf("Running %s...\n", test.name)
 
 		id := fmt.Sprintf("%x", rand.Int63nRange(0, 1000000000000000000))
-		response, err := test.fn(id)
+		conf := NewMicaCreateMsg(0, id, "", "", "", false)
+		response, err := test.fn(conf)
 		if err != nil {
 			// Some tests may fail due to missing client sockets, that's okay
 			fmt.Printf("  %s failed (may be expected): %v\n", test.name, err)

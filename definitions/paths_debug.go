@@ -4,6 +4,6 @@
 package defs
 
 const (
-	MicaConfDir    = "/tmp/mica"
-	MicaSocketDir  = "/tmp/mica"
+	MicaConfDir   = "/tmp/mica"
+	MicaSocketDir = "/tmp/mica"
 )

@@ -58,7 +58,6 @@ func (m *micaCreateMsg) pack() []byte {
 	return buf
 }
 
-
 // Public functions:
 
 // MicaCreate creates a new mica client; while MicaCtl is used to control the mica client
@@ -79,6 +78,27 @@ func MicaCtl(cmd MicaCommand, client string) (string, error) {
 	return s.handleMsg([]byte(msg))
 }
 
+// 1. search bundle/.../<clientOSname>.elf
+// 2. if missing, log and search for binary in bundle recursively
+// TALK: 这是预留的核，实际client可能更后面启动, 以及启动可能失败
+// TODO: 现在我们全部假定是单核RTOS, mica侧还未实现多核, 但是在镜像label中，我们可以指定核数量
+func CreateConf(name string, bundle string) (micaCreateMsg, error) {
+	ncpu := getNCPU(bundle)
+	if ncpu > 1 {
+		log.Debugf("expected using %d cores", ncpu)
+	}
+	// TODO: cpu id should be scheduled by mica-shim
+	cpu := schedFreeCPU()
+	firmware, err := getFirmwarePath(bundle, name)
+	if err != nil {
+		log.Errorf("failed to get firmware path: %v", err)
+		return micaCreateMsg{}, err
+	}
+	conf := micaCreateMsg{}
+	conf.init(cpu, name, firmware, "", "", false)
+	return conf, nil
+}
+
 // NewMicaCreateMsg creates a properly initialized micaCreateMsg
 func NewMicaCreateMsg(cpu uint32, name string, path string, ped string, pedCfg string, debug bool) micaCreateMsg {
 	msg := micaCreateMsg{}
@@ -86,41 +106,31 @@ func NewMicaCreateMsg(cpu uint32, name string, path string, ped string, pedCfg s
 	return msg
 }
 
-
-// dummy test functions:
-
-const (
-  dummyConfPath = "/lib/firmware/zephyr.elf"
-  // dummyConfPath = "/home/egg/source/mica-shim/tests/qemu-zephyr-rproc.conf"
-)
-
-func dummyCreateMsg(id string) micaCreateMsg {
-	return NewMicaCreateMsg(0, id,
-		dummyConfPath,
-		"", "", false)
-}
-
-func DummyCreate(id string) (string, error) {
+func Create(conf micaCreateMsg) (string, error) {
 	s := newMicaSocket(defs.MicaCreatSocketPath)
-	// we do not deref s here, because it is dropped in handleMsg()
-	msg := dummyCreateMsg(id)
-	return s.handleMsg(msg.pack())
+	// we do not deref s hengre, because it is dropped in handleMsg()
+	msg := conf.pack()
+	return s.handleMsg(msg)
 }
 
-func DummyStart(id string) (string, error) {
+func Start(conf micaCreateMsg) (string, error) {
 	// client := "qemu-zephyr"
-	return MicaCtl(MStart, id)
+	return MicaCtl(MStart, string(conf.name[:]))
 }
 
-func DummyStop(id string) (string, error) {
-	return MicaCtl(MStop, id)
+func Stop(conf micaCreateMsg) (string, error) {
+	return MicaCtl(MStop, string(conf.name[:]))
 }
 
-func DummyRemove(id string) (string, error) {
-	return MicaCtl(MRemove, id)
+func Remove(conf micaCreateMsg) (string, error) {
+	return MicaCtl(MRemove, string(conf.name[:]))
 }
 
-func TestStatus() (string, error) {
-	client := "qemu-zephyr"
-	return MicaCtl(MStatus, client)
+// TODO: check status of specific client os is not implemented yet.
+func clientStatus(conf micaCreateMsg) (string, error) {
+	return MicaCtl(MStatus, string(conf.name[:]))
+}
+
+func ClientsStatus() (string, error) {
+	return MicaCtl(MStatus, "")
 }

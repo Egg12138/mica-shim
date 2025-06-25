@@ -149,7 +149,7 @@ func (*manager) Start(ctx context.Context, containerID string, opts shim.StartOp
 	runtime.LockOSThread()
 
 	// NOTICE: disable SchedCore compeltely? It depends
-	// TALK: is it needed to run an agent process on Linux representing 
+	// TALK: is it needed to run an agent process on Linux representing
 	// the Mica client
 	// if cmdCfg.SchedCore {
 	// 	if err := schedcore.Create(schedcore.ProcessGroup); err != nil {

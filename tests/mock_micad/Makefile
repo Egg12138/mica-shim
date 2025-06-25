@@ -3,7 +3,7 @@ CFLAGS = -Wall -Wextra -g
 LDFLAGS = 
 
 BUILD_DIRS := ../../builds/
-TARGET = $(BUILD_DIRS)mock_micad
+TARGET = mock_micad
 SRCS = mock_micad.c
 OBJS = $(SRCS:.c=.o)
 
@@ -16,7 +16,7 @@ simple: $(OBJS)
 	$(CC) $(OBJS) -o simple-$(TARGET) $(LDFLAGS)
 
 $(TARGET): $(OBJS)
-	$(CC) $(OBJS) -o $(TARGET) $(LDFLAGS)
+	$(CC) $(OBJS) -o $(BUILD_DIRS)$(TARGET) $(LDFLAGS)
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@

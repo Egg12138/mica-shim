@@ -65,7 +65,7 @@ type initProcess struct {
 type micaTaskService struct {
 	m     sync.RWMutex
 	procs initProcByTaskID
-	ss shutdown.Service
+	ss    shutdown.Service
 }
 
 var (

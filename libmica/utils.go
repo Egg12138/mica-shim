@@ -1,7 +1,10 @@
 package libmica
 
 import (
+	"fmt"
 	defs "mica-shim/definitions"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -15,4 +18,51 @@ func startWithMicaPrefix(fieldName string) bool {
 
 func isMicaAnnotation(fieldName string) string {
 	return strings.TrimPrefix(fieldName, defs.MicaAnnotationPrefix)
+}
+
+func getFirmwarePath(bundle string, name string) (string, error) {
+	// 1. search bundle/.../<clientOSname>.elf
+	// 2. if missing, log and search for binary in bundle recursively
+	expected := filepath.Join(bundle, fmt.Sprintf("%s.elf", name))
+	if _, err := os.Stat(expected); err == nil {
+		return expected, nil
+	}
+	// recursively search for binary in bundle
+	files, err := os.ReadDir(bundle)
+	if err != nil {
+		return "", err
+	}
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+		if file.Name() == name {
+			return filepath.Join(bundle, file.Name()), nil
+		}
+	}
+	return "", fmt.Errorf("firmware not found in the whole bundle")
+}
+
+
+// Test helper functions for accessing private state
+func GetQueueSize() uint32 {
+	if shmData == nil {
+		return 0
+	}
+	shmData.lock()
+	defer shmData.unlock()
+	return shmData.count()
+}
+
+func IsQueueEmpty() bool {
+	if shmData == nil {
+		return true
+	}
+	shmData.lock()
+	defer shmData.unlock()
+	return shmData.isEmpty()
+}
+
+func GetMaxCPUs() uint32 {
+	return maxCPUs
 }

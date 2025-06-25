@@ -1,4 +1,4 @@
-.PHONY: all build-prod build build-arm64 build-prod-arm64 test-prod test clean clean-all help run-debug run-prod containerd-client build-containerd-client install install-arm64 install-prod-arm64 mock-micad mock-micad-py mock-micad-py-quiet
+.PHONY: all build-prod build build-arm64 build-prod-arm64 test-prod test clean clean-all help run-debug run-prod containerd-client build-containerd-client install install-arm64 install-prod-arm64 mock-micad mock-micad-py mock-micad-py-quiet test-sched bench-sched
 
 SHIM_NAME := org.openeuler.mica.v1
 # containerd shim v2 命名规约转换
@@ -69,6 +69,14 @@ test-socket:
 test-socket-prod:
 	@echo "🧪 Testing socket communication in production mode..."
 	cd tests && go run test_socket_communication.go
+
+test-sched:
+	@echo "🧪 Testing CPU scheduler in debug mode..."
+	cd libmica && go test -tags debug -v -run "Test.*Sched|Test.*Queue|Test.*CPU|Test.*Concurrent|Test.*Priority|Test.*Comprehensive"
+
+bench-sched:
+	@echo "📊 Benchmarking CPU scheduler performance..."
+	cd libmica && go test -bench=BenchmarkSched -benchmem -v
 
 containerd-client: build-containerd-client
 	@echo "🐳 Testing containerd client integration..."
@@ -145,6 +153,8 @@ help:
 	@echo "Testing & Simulations:"
 	@echo "  make test-socket            - Test socket communication (debug)"
 	@echo "  make test-socket-prod       - Test socket communication (prod)"
+	@echo "  make test-sched             - Test CPU scheduler (debug)"
+	@echo "  make bench-sched            - Benchmark CPU scheduler performance"
 	@echo "  make containerd-client 		 - Test containerd client integration"
 	@echo "  make build-containerd-client - Build containerd client binary"
 	@echo "  make mock-micad             - Run mock micad server"
