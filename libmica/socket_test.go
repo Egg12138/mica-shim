@@ -2,6 +2,7 @@ package libmica
 
 import (
 	"fmt"
+	defs "mica-shim/definitions"
 	"os"
 	"testing"
 	"time"
@@ -35,8 +36,8 @@ func TestMicaCreate(t *testing.T) {
 
 	fmt.Printf("Response: %s\n", response)
 
-	if response != "MICA-SUCCESS" {
-		t.Errorf("Expected MICA-SUCCESS, got: %s", response)
+	if response != defs.MicaSuccess {
+		t.Errorf("Expected %s, got: %s", defs.MicaSuccess, response)
 	}
 
 	fmt.Println("✅ MicaCreate test passed!")
@@ -69,8 +70,8 @@ func TestMicaCtlCommands(t *testing.T) {
 
 		fmt.Printf("  Response: %s\n", response)
 
-		if response != "MICA-SUCCESS" {
-			t.Errorf("Expected MICA-SUCCESS for %s, got: %s", cmd.name, response)
+		if response != defs.MicaSuccess {
+			t.Errorf("Expected %s for %s, got: %s", defs.MicaSuccess, cmd.name, response)
 		}
 	}
 
@@ -90,8 +91,8 @@ func TestDummyCreateMsg(t *testing.T) {
 
 	fmt.Printf("TestCreate response: %s\n", response)
 
-	if response != "MICA-SUCCESS" {
-		t.Errorf("Expected MICA-SUCCESS, got: %s", response)
+	if response != defs.MicaSuccess {
+		t.Errorf("Expected %s, got: %s", defs.MicaSuccess, response)
 	}
 
 	fmt.Println("✅ DummyCreateMsg test passed!")

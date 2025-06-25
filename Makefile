@@ -31,7 +31,7 @@ all: build
 
 build-prod:
 	@echo "🏭 Building production binary..."
-	go build ${DEV_BUILD_FLAGS} -o ${BIN_PROD} ./cmd
+	go build ${RELEASE_BUILD_FLAGS} -o ${BIN_PROD} ./cmd
 
 run-prod: build-prod
 	@echo "🏭 Running in production mode..."

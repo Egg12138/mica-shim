@@ -14,6 +14,7 @@
   - [️ Architecture (unstable)](#️-architecture-unstable)
     - [MCS Arch](#mcs-arch)
   - [Future Plans](#future-plans)
+    - [yocto 相关](#yocto-相关)
   - [TODO](#todo)
   - [Content flow](#content-flow)
   - [Architecture (History)](#architecture-history)
@@ -49,14 +50,19 @@
 ## 近期Issues
 
 * 最直接关键的问题：**信息 从哪来**：
-1. 从bundle来？那多数都是在image侧静态设定；
+1. 从bundle来？那多数都是在image侧静态设定；这个镜像需要多少个核
+1. entry point
+1. 验证pod, (下次用minikube跑一个demo)
+1. pod IP;
+1. 1 node 1 micad N clients
 2. create: CPU需要调度选定的, firmware path 是完全可以静态的——runtime告诉micad 在哪里拿就好了——micad要有权限
 3. autoboot：我们需要一个micad hook?
+1. 我们现在是利用mica暴露的北向接口来实现。需不需要从南向的虚拟化底座来……
 4. reboot: 对于同一个镜像，同一个task，专门化的reboot代替Stop() + Start()会节省开销吗?
 5. 1:1的一个想法是用对应的init process来监控client OS本身的信息 (N:N:1 , N个容器，N个monitor process, 对应一个micad monitor)
 * kata container runtime: Why Rust? 在已经有一个runtime-golang的情况下为什么要开发runtime-rs? 对我们是否有启发
-* 需要提供请求转发吗？(--runtime=io.containerd.mica.v?，但是不是混部容器的情况)
-  > 如果要提供，那么我们转发给谁？（配置）
+* 需要提供请求转发吗？(--runtime=io.containerd.mica.v?，但不是混部容器的情况)
+  > 如果要提供，那么我们转发给谁？（配置）, 如果不转发，我们需要让错误处理更加优雅
 * shim和runtime是否分离, runtime是否划到micad scope?
   > 我打算合并shim&runtime, 这会使shim和runtime的实现更加自由；并且shim&runtime调试可以独立于mica的编译
 * init process 我们要不要实现？
@@ -72,13 +78,18 @@
   - [ ] 去掉LocateDebugf等，全部作为 Debugf:Debugf会同时给containerd;mica shim logFile;stdout都输出；但内容格式不同
 - [ ] libmica 接口暴露过多，应减少，并且提供更好的抽象
 - [x] containerd_client 对mica-shim runtime运行
+- [ ] 优雅的错误处理
 
 ###  核心添加
 
+1. shim API， 完整参数处理:
+    1. containerd -> shim -> Create() -> create()
 1. demo 添加：bundle 解析:
-   1. 
+   1. OCI zephyr-scratch 镜像
+   2. fetch information from bundle 
+1.  container events
+1. pod IP
 
-2. 
 
 ###  其他事项
 
@@ -126,17 +137,40 @@ Linux Host Core (ARM Core 0)         RTOS Remote Core (ARM Core 1)
 ## Future Plans
 
 * containerd 2.0 (shim-v3)
+
+### yocto 相关
+
+* isulad yocto 需要跟随版本（k8s上游版本）;
+    * enable CRI V1(>=CRI 1.26)
+```json
+{
+"group": "isula",
+"default-runtime": "runc",
+...
+"enable-cri-v1": true
+}
+```
+    * 开启`ENABLE_CRI_API_V1` flag: `cmake ../ -D ENABLE_CRI_API_V1`
 * yocto: speed up the building of iSulad Shimv2? (其实也就是比用prebuild慢了几秒)
   > 预定考虑的策略： remove debug-info; faster linker; ...
+* oebuild 加入 docker, 在构建时手动构建特定rtos的scratch镜像
 
 ## TODO
 
 * using XMake to manage the building system ()
 
 ## Content flow
+
 ## Architecture (History)
 
 ### DEMO 0.2 0623 overview
+
+mica-shim
+::package core
+    :: shim
+    :: runtime
+    :: bundleParser
+
 <div class="mermaid">
 %%{init: {'theme':'auto', 'flowchart':{'nodeSpacing': 15, 'rankSpacing': 30, 'curve': 'basis'}}}%%
 flowchart LR

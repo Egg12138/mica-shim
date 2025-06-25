@@ -42,15 +42,6 @@ import (
 	"github.com/containerd/containerd/runtime/v2/shim"
 )
 
-// var (
-// 	_ shim.TTRPCService   = (*micaTaskService)(nil)
-// 	_ taskAPI.TaskService = (*micaTaskService)(nil)
-// )
-
-// func New(ctx context.Context, id string, publisher shim.Publisher, shutdown func()) (shim.Shim, error) {
-// 	return &MicaService{}, nil
-// }
-
 type MicaService struct {
 	mu    sync.Mutex
 	cs    map[string]*MicaContainer
@@ -144,11 +135,13 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 		return nil, fmt.Errorf("getting current working directory: %w", err)
 	}
 
-	// TODO: replace to mica sender
 	// config : name <=> container ID ()
 	log.LocateDebugf("running mica create && a 5-time loop")
-	// TODO:  create.go
-	libmica.DummyCreate(r.ID)
+	_, err = create(ctx, r)
+	if err != nil {
+		return nil, fmt.Errorf("creating mica client: %w", err)
+	}
+	// libmica.DummyCreate(r.ID)
 
 	cmd := exec.CommandContext(ctx, "sh", "-c",
 		"for i in {1..5}; do "+

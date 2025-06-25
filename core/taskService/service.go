@@ -52,7 +52,7 @@ type initProcByTaskID map[string]*initProcess
 // TODO: handle the init process, there it is just a placeholder
 // TALK: init process **represent** the process in RTOS
 type initProcess struct {
-	// TALK: for one container pod, make agent process(in Linux) as the init process?
+	// TALK: for one rtos container, make agent process(in Linux) as the init process?
 	pid        int
 	doneCtx    context.Context
 	exitTime   time.Time

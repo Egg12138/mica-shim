@@ -1,12 +1,8 @@
-//go:build !debug
-// +build !debug
-
 package defs
 
 import "time"
 
 const (
-	// ShimName             = "io.containerd.mica.v2"
 	RuntimeName          = "mica"
 	MicaAnnotationPrefix = "org.openeuler.mica"
 	MicaSuccess          = "MICA-SUCCESS"

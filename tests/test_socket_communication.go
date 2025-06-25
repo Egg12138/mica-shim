@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	defs "mica-shim/definitions"
 	"mica-shim/libmica"
 
 	"k8s.io/apimachinery/pkg/util/rand"
@@ -60,7 +61,7 @@ func testMicaCreate() {
 
 	fmt.Printf("📥 Response: %s\n", response)
 
-	if response == "MICA-SUCCESS" {
+	if response == defs.MicaSuccess {
 		fmt.Println("✅ MicaCreate test PASSED!")
 		fmt.Println("   mock_micad should show:")
 		fmt.Println("   - 325 bytes received")
@@ -68,7 +69,7 @@ func testMicaCreate() {
 		fmt.Println("   - Name: qemu-zephyr")
 		fmt.Println("   - Path: /home/egg/playground/zephr.elf")
 	} else {
-		fmt.Printf("❌ Expected MICA-SUCCESS, got: %s\n", response)
+		fmt.Printf("❌ Expected %s, got: %s\n", defs.MicaSuccess, response)
 	}
 	fmt.Println()
 }
@@ -113,11 +114,11 @@ func testMessagePacking() {
 
 	fmt.Printf("📥 TestCreate response: %s\n", response)
 
-	if response == "MICA-SUCCESS" {
+	if response == defs.MicaSuccess {
 		fmt.Println("✅ Message packing test PASSED!")
 		fmt.Println("   The 325-byte struct was correctly packed and sent")
 	} else {
-		fmt.Printf("❌ Expected MICA-SUCCESS, got: %s\n", response)
+		fmt.Printf("❌ Expected %s, got: %s\n", defs.MicaSuccess, response)
 	}
 	fmt.Println()
 }
