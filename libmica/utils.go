@@ -2,6 +2,7 @@ package libmica
 
 import (
 	"fmt"
+	"mica-shim/cntr"
 	defs "mica-shim/definitions"
 	"os"
 	"path/filepath"
@@ -21,9 +22,16 @@ func isMicaAnnotation(fieldName string) string {
 }
 
 func getFirmwarePath(bundle string, name string) (string, error) {
-	// 1. search bundle/.../<clientOSname>.elf
-	// 2. if missing, log and search for binary in bundle recursively
-	expected := filepath.Join(bundle, fmt.Sprintf("%s.elf", name))
+	// 0. check image LABEL "org.openeuler.mica.client.firmware = <relative path to firmware>" and search for it
+	// if missing, 1. search bundle/.../<clientOSname>.elf 
+	// if missing, 2.  log and search for binary in bundle recursively
+	expected := cntr.ReadFirmwarePath(bundle, name)
+	if expected != "" {
+		if _, err := os.Stat(expected); err == nil {
+			return expected, nil
+		}
+	}
+	expected = filepath.Join(bundle, fmt.Sprintf("%s.elf", name))
 	if _, err := os.Stat(expected); err == nil {
 		return expected, nil
 	}
