@@ -10,45 +10,59 @@ import (
 )
 
 func startWithMicaPrefix(fieldName string) bool {
-	if strings.HasPrefix(fieldName, defs.MicaAnnotationPrefix) {
-		return true
-	} else {
-		return false
-	}
+	return strings.HasPrefix(fieldName, defs.MicaAnnotationPrefix)
 }
 
 func isMicaAnnotation(fieldName string) string {
 	return strings.TrimPrefix(fieldName, defs.MicaAnnotationPrefix)
 }
 
-func getFirmwarePath(bundle string, name string) (string, error) {
-	// 0. check image LABEL "org.openeuler.mica.client.firmware = <relative path to firmware>" and search for it
-	// if missing, 1. search bundle/.../<clientOSname>.elf 
-	// if missing, 2.  log and search for binary in bundle recursively
-	expected := cntr.ReadFirmwarePath(bundle, name)
-	if expected != "" {
-		if _, err := os.Stat(expected); err == nil {
-			return expected, nil
+func getFirmwarePath(bundle string) (string, error) {
+	// 1. 尝试通过镜像annotation获取固件路径
+	firmwarePath, isMica, err := cntr.ReadFirmwarePath(bundle)
+	if err != nil {
+		return "", fmt.Errorf("failed to read firmware path: %w", err)
+	}
+	
+	if isMica {
+		fmt.Printf("OK,Found OCI image for mica, %s!\n", filepath.Base(bundle))
+	} else {
+		return "", fmt.Errorf("image is not a mica image")
+	}
+	
+	if firmwarePath != "" {
+		if _, err := os.Stat(firmwarePath); err == nil {
+			return firmwarePath, nil
 		}
 	}
-	expected = filepath.Join(bundle, fmt.Sprintf("%s.elf", name))
-	if _, err := os.Stat(expected); err == nil {
-		return expected, nil
-	}
-	// recursively search for binary in bundle
+	
 	files, err := os.ReadDir(bundle)
 	if err != nil {
 		return "", err
 	}
+	
 	for _, file := range files {
 		if file.IsDir() {
 			continue
 		}
-		if file.Name() == name {
+		if strings.HasSuffix(file.Name(), ".elf") {
 			return filepath.Join(bundle, file.Name()), nil
 		}
 	}
-	return "", fmt.Errorf("firmware not found in the whole bundle")
+	
+	rootfsPath := filepath.Join(bundle, "rootfs")
+	if rootFiles, err := os.ReadDir(rootfsPath); err == nil {
+		for _, file := range rootFiles {
+			if file.IsDir() {
+				continue
+			}
+			if strings.HasSuffix(file.Name(), ".elf") {
+				return filepath.Join(rootfsPath, file.Name()), nil
+			}
+		}
+	}
+	
+	return "", fmt.Errorf("firmware not found in the bundle")
 }
 
 

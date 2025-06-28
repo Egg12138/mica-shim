@@ -89,7 +89,7 @@ func CreateConf(name string, bundle string) (micaCreateMsg, error) {
 	}
 	// TODO: cpu id should be scheduled by mica-shim
 	cpu := schedFreeCPU()
-	firmware, err := getFirmwarePath(bundle, name)
+	firmware, err := getFirmwarePath(bundle)
 	if err != nil {
 		log.Errorf("failed to get firmware path: %v", err)
 		return micaCreateMsg{}, err

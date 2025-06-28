@@ -1,0 +1,20 @@
+FROM localhost:5000/zephyr-mica-scratch:latest
+# FROM zephyr-mica-scratch
+
+# default FIRMWARE_BUNDLE_PATH is <container_root>/zephyr.elf
+ARG FIRMWARE_BUNDLE_PATH="/zephyr.elf"
+# firmware source path
+ARG FIRMWARE="zephyr.elf"
+
+COPY ${FIRMWARE} ${FIRMWARE_BUNDLE_PATH}
+LABEL io.mica.client.firmware="${FIRMWARE_BUNDLE_PATH}"
+LABEL io.mica.client.pedestal_conf=""
+
+# Necessary for mica runtime to check the pedestal
+LABEL io.mica.client.pedestal="baremetal"
+LABEL io.mica.client.platform_config=""
+LABEL io.mica.client.compatibility.openamp="2023.04+"
+LABEL io.mica.client.compatibility.zephyr="3.7.1"
+
+# Inherit from zephyr-mica-scratch
+CMD ["/hello"]

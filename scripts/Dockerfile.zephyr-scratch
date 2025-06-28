@@ -1,0 +1,24 @@
+# this image is built as zephyr-mica-scratch:latest
+FROM scratch
+
+# For image builder based on scratch image, these labels can be overridden 
+# but some of which are not recommended to be overridden
+
+# Ok to be customized:
+LABEL io.mica.client.pedestal="baremetal"
+LABEL io.mica.client.compatibility.openamp="2023.04+"
+LABEL io.mica.client.compatibility.zephyr="3.7.1+"
+
+# Not recommended to be overridden:
+# OS name
+LABEL io.mica.client.os="zephyr"
+# realtive path to container root 
+LABEL io.mica.client.firmware="/zephyr.elf"
+
+
+
+# add a sample config file
+ADD qemu-zephyr-rproc.conf /qemu-zephyr-rproc.conf
+ADD linux-tiny-hello/hello_gcc /hello
+
+CMD [""]
