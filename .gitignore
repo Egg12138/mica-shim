@@ -1,6 +1,7 @@
 # If you prefer the allow list template instead of the deny list, see community template:
 # https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
 #
+mcs-src
 # Binaries for programs and plugins
 *.exe
 *.exe~
@@ -16,7 +17,7 @@ tests/containerd_client/containerd_client
 
 # Test binary, built with `go test -c`
 *.test
-.prompts
+prompts.md
 .local_devlog.md
 
 # Code coverage profiles and other test artifacts

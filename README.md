@@ -16,11 +16,6 @@
   - [Future Plans](#future-plans)
     - [yocto 相关](#yocto-相关)
   - [TODO](#todo)
-  - [Content flow](#content-flow)
-  - [Architecture (History)](#architecture-history)
-    - [DEMO 0.2 0623 overview](#demo-02-0623-overview)
-    - [DEMO 0.2 0623 expanded](#demo-02-0623-expanded)
-    - [DEMO 0.1 0620](#demo-01-0620)
 
 <!-- /code_chunk_output -->
 
@@ -33,7 +28,9 @@
 - [x] shim v2 框架
 - [x] libmica 的 通信和通信抽象
 - [ ] libmica: containerd rpc--> mica config, 任务配置对接
-- [ ] 确定Linux:RTOS clientos 1:1模型的必要性
+- [x] 确定Linux:RTOS clientos 1:1模型的必要性
+- [ ] pty
+- [ ] 镜像规制考虑
 
 ## ️ Roadmap
 
@@ -60,12 +57,23 @@
     1. Downward API是有的
     2. Upward API 有吗？
 1. 暂时使用简单的调度方式：
-1. shimv2可能会有很多实例（并不是单shim的）；所以RTOS核调度应该在系统中有一个.lock
+1. shimv2可能会有很多实例（并不是单shim的）；所以RTOS核调度应该在系统中有一个.lock OR 共享内存（我们最后选择用共享内存）
 3. autoboot：我们需要一个micad hook?
 1. 我们现在是利用mica暴露的北向接口来实现。需不需要从南向的虚拟化底座来……
 4. reboot: 对于同一个镜像，同一个task，专门化的reboot代替Stop() + Start()会节省开销吗?
 5. 1:1的一个想法是用对应的init process来监控client OS本身的信息 (N:N:1 , N个容器，N个monitor process, 对应一个micad monitor)
+- [ ] 镜像规制1:`${RTOS}_APP:{VERSION}`
+    1. k8s侧基于 ped=xxx 来选择不同image, 有可能吗？runtime不应该做这件事！ -- 虽然我们可以：
+      1. k8s pod apply : ped=zen, image=zephy:latest
+      2. runtime resolve image annotations 
+      3. call contaienrd client.GetImage(zephy-{ped}:latest) 
+      可以，但这样非常不
+- [x] 镜像规制2: `${RTOS}_APP:${PED}_${BSP}`: zephyr_hello-world:jailhouse_qemu  (platform作为metadata不暴露)
+    1. 镜像内加入 `io.mica.client.compatibility.zephyr="{VERSOIN}+"等来配置版本兼容性， runtime调用相关插件来手动检查
+    1. 如果k8s pod指定错了BSP怎么办？ inspect 首先是解析不镜像名了
 * kata container runtime: Why Rust? 在已经有一个runtime-golang的情况下为什么要开发runtime-rs? 对我们是否有启发
+* 一些很侵入式的特殊行为，我认为应该分离出来，作为mica runtime的plugin
+
 * 需要提供请求转发吗？(--runtime=io.containerd.mica.v?，但不是混部容器的情况)
   > 如果要提供，那么我们转发给谁？（配置）, 如果不转发，我们需要让错误处理更加优雅
 * shim和runtime是否分离, runtime是否划到micad scope?
@@ -95,7 +103,11 @@
    - [ ] OCI zephyr-scratch 镜像
    - [ ] fetch information from bundle 
    - [ ] 分配可用(目前不支持多核)CPU给clientOS
-1.  container events
+1. 核分配完善:
+    1. create时的freeCPU/create分配但是没有启动过的enqHead/使用过的CPU enqTail
+    2. stop时 CPU enqTail
+    3. 异常 CPU enqTailk
+1. container events
 1. pod IP
 
 

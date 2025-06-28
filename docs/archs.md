@@ -94,7 +94,7 @@ flowchart LR
 
 ```mermaid
 %%{init: {'theme':'auto', 'flowchart':{'nodeSpacing': 15, 'rankSpacing': 25, 'curve': 'basis'}}}%%
-flowchart LR
+flowchart TD
     subgraph ContainerEco ["Container Ecosystem"]
         Containerd[containerd] --> |ttrpc/gRPC|MicaShim[mica-runtime shimv2]
         Kubernetes[Kubernetes] --> |CRI gRPC|Containerd
@@ -108,6 +108,7 @@ flowchart LR
     end
     
     subgraph MicaRuntime ["MICA Runtime"]
+        BundleParser
         MicaShim --> RuntimeService[MicaRuntimeService]
         RuntimeService --> MicaClient[libMica]
         RuntimeService --> Components[Components...]
@@ -246,3 +247,17 @@ graph TB
         AG
     end
 ```
+
+
+# Image
+
+in the Dockerfile, these labels are defined in scratch image:
+
+```Dockerfile
+ARG RTOS="zephyr"
+LABEL io.mica.client.os="${RTOS}"
+LABEL io.mica.client.firmware="/zephyr.elf"
+LABEL io.mica.supported_boards="[\"qemu\", \"rpi4\"]"
+LABEL io.mica.client.support_pedestals="[\"baremetal\", \"jailhouse\", \"xen\"]"
+```
+
