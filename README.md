@@ -178,5 +178,6 @@ Linux Host Core (ARM Core 0)         RTOS Remote Core (ARM Core 1)
 ## TODO
 
 * using XMake to manage the building system ()
+* 组件内容设定为：shim + runtime 合并一起，与micad的通信移除，改为直接扩充libmica, 走openamp等策略发；语言可以换成Rust
 
 

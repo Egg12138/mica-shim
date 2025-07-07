@@ -62,68 +62,9 @@ type MicaContainer struct {
 	m          sync.RWMutex
 }
 
-// Containerd shim functions with command:
-// Create a new container
-// func (s *MicaService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) (_ *taskAPI.CreateTaskResponse, err error) {
-
-// StartShim is a binary call that executes a new shim returning the address
-// func (s *MicaService) StartShim(ctx context.Context, opts shim.StartOpts) (string, error) {
-
-// Cleanup is a binary call that cleans up any resources used by the shim when the service crashes
-// func (s *MicaService) Cleanup(ctx context.Context) (*taskAPI.DeleteResponse, error) {
-
-// Start the primary user process inside the container
-// func (s *MicaService) Start(ctx context.Context, r *taskAPI.StartRequest) (*taskAPI.StartResponse, error) {
-
-// Delete a process or container
-// func (s *MicaService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*taskAPI.DeleteResponse, error) {
-
-// Exec an additional process inside the container
-// func (s *MicaService) Exec(ctx context.Context, r *taskAPI.ExecProcessRequest) (*ptypes.Empty, error) {
-
-// ResizePty of a process
-// func (s *MicaService) ResizePty(ctx context.Context, r *taskAPI.ResizePtyRequest) (*ptypes.Empty, error) {
-
-// State returns runtime state of a process
-// func (s *MicaService) State(ctx context.Context, r *taskAPI.StateRequest) (*taskAPI.StateResponse, error) {
-
-// Pause the container
-// func (s *MicaService) Pause(ctx context.Context, r *taskAPI.PauseRequest) (*ptypes.Empty, error) {
-
-// Resume the container
-// func (s *MicaService) Resume(ctx context.Context, r *taskAPI.ResumeRequest) (*ptypes.Empty, error) {
-
-// Kill a process
-// func (s *MicaService) Kill(ctx context.Context, r *taskAPI.KillRequest) (*ptypes.Empty, error) {
-
-// Pids returns all pids inside the container
-// func (s *MicaService) Pids(ctx context.Context, r *taskAPI.PidsRequest) (*taskAPI.PidsResponse, error) {
-
-// CloseIO of a process
-// func (s *MicaService) CloseIO(ctx context.Context, r *taskAPI.CloseIORequest) (*ptypes.Empty, error) {
-
-// Checkpoint the container
-// func (s *MicaService) Checkpoint(ctx context.Context, r *taskAPI.CheckpointTaskRequest) (*ptypes.Empty, error) {
-
-// Connect returns shim information of the underlying service
-// func (s *MicaService) Connect(ctx context.Context, r *taskAPI.ConnectRequest) (*taskAPI.ConnectResponse, error) {
-
-// Shutdown is called after the underlying resources of the shim are cleaned up and the service can be stopped
-// func (s *MicaService) Shutdown(ctx context.Context, r *taskAPI.ShutdownRequest) (*ptypes.Empty, error) {
-
-// Stats returns container level system stats for a container and its processes
-// func (s *MicaService) Stats(ctx context.Context, r *taskAPI.StatsRequest) (*taskAPI.StatsResponse, error) {
-
-// Update the live container
-// func (s *MicaService) Update(ctx context.Context, r *taskAPI.UpdateTaskRequest) (*ptypes.Empty, error) {
-
-// Wait for a process to exit
-// func (s *MicaService) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*taskAPI.WaitResponse, error) {
-
 // Create creates a new task and **setup rtos Client**
 func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) (_ *taskAPI.CreateTaskResponse, retErr error) {
 	log.LocateDebugf("create id:%s", r.ID)
-
 	s.m.Lock()
 	defer s.m.Unlock()
 	if _, ok := s.procs[r.ID]; ok {

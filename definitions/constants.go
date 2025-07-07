@@ -4,7 +4,8 @@ import "time"
 
 const (
 	RuntimeName          = "mica"
-	MicaAnnotationPrefix = "org.openeuler.mica"
+	// MicaAnnotationPrefix = "org.openeuler.mica"
+	MicaAnnotationPrefix = "io.mica"
 	MicaSuccess          = "MICA-SUCCESS"
 	MicaFailed           = "MICA-FAILED"
 	MicaSocketName       = "mica-create.socket"

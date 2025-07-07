@@ -19,17 +19,12 @@ func isMicaAnnotation(fieldName string) string {
 
 func getFirmwarePath(bundle string) (string, error) {
 	// 1. 尝试通过镜像annotation获取固件路径
-	firmwarePath, isMica, err := cntr.ReadFirmwarePath(bundle)
+	info, err := cntr.ContainerInfoParse(bundle)
 	if err != nil {
 		return "", fmt.Errorf("failed to read firmware path: %w", err)
 	}
 	
-	if isMica {
-		fmt.Printf("OK,Found OCI image for mica, %s!\n", filepath.Base(bundle))
-	} else {
-		return "", fmt.Errorf("image is not a mica image")
-	}
-	
+	firmwarePath := info.FirmwarePath()
 	if firmwarePath != "" {
 		if _, err := os.Stat(firmwarePath); err == nil {
 			return firmwarePath, nil

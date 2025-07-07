@@ -4,6 +4,7 @@ package libmica
 import (
 	"encoding/binary"
 	"fmt"
+	"mica-shim/cntr"
 	defs "mica-shim/definitions"
 	log "mica-shim/logger"
 	"path/filepath"
@@ -22,7 +23,9 @@ const (
 // NOTICE: we have to ensure the length of each field consistency with the length of the field in mica daemon
 // TODO: add explaination for each field
 type micaCreateMsg struct {
+	// scheduled
 	cpu  uint32
+	// assigned by containerd
 	name [32]byte
 	// relative path in bundle
 	path   [128]byte
@@ -83,19 +86,25 @@ func MicaCtl(cmd MicaCommand, client string) (string, error) {
 // TALK: 这是预留的核，实际client可能更后面启动, 以及启动可能失败
 // TODO: 现在我们全部假定是单核RTOS, mica侧还未实现多核, 但是在镜像label中，我们可以指定核数量
 func CreateConf(name string, bundle string) (micaCreateMsg, error) {
+	// TODO: use a universal way to get all LABELS && Files under bundle
 	ncpu := getNCPU(bundle)
 	if ncpu > 1 {
 		log.Debugf("expected using %d cores", ncpu)
 	}
 	// TODO: cpu id should be scheduled by mica-shim
 	cpu := schedFreeCPU()
-	firmware, err := getFirmwarePath(bundle)
+
+	info, err := cntr.ContainerInfoParse(bundle)
 	if err != nil {
-		log.Errorf("failed to get firmware path: %v", err)
+		log.Errorf("failed to get container info: %v", err)
 		return micaCreateMsg{}, err
 	}
+
+	firmware := info.FirmwarePath()
+	pedestal := info.Ped()
+	
 	conf := micaCreateMsg{}
-	conf.init(cpu, name, firmware, "", "", false)
+	conf.init(cpu, name, firmware, pedestal.PedestalType.String(), pedestal.PedestalConf, false)
 	return conf, nil
 }
 
