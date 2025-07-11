@@ -6,6 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"mica-shim/libmica"
+
 	taskAPI "github.com/containerd/containerd/api/runtime/task/v2"
 	"github.com/containerd/containerd/pkg/shutdown"
 	"github.com/containerd/containerd/runtime/v2/shim"
@@ -58,6 +60,7 @@ type initProcess struct {
 	exitTime   time.Time
 	exitStatus int
 	stdout     string
+	micaIO     *libmica.MicaIO // IO handler for PTY communication
 }
 
 // micaTaskService is an implementation of a containerd taskAPI.TaskService

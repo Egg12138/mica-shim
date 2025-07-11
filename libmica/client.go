@@ -4,9 +4,9 @@ package libmica
 import (
 	"encoding/binary"
 	"fmt"
-	"mica-shim/cntr"
 	defs "mica-shim/definitions"
 	log "mica-shim/logger"
+	"mica-shim/oci"
 	"path/filepath"
 )
 
@@ -94,7 +94,7 @@ func CreateConf(name string, bundle string) (micaCreateMsg, error) {
 	// TODO: cpu id should be scheduled by mica-shim
 	cpu := schedFreeCPU()
 
-	info, err := cntr.ContainerInfoParse(bundle)
+	info, err := oci.ContainerInfoParse(bundle)
 	if err != nil {
 		log.Errorf("failed to get container info: %v", err)
 		return micaCreateMsg{}, err

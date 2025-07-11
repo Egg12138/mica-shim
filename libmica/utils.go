@@ -2,8 +2,8 @@ package libmica
 
 import (
 	"fmt"
-	"mica-shim/cntr"
 	defs "mica-shim/definitions"
+	"mica-shim/oci"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,7 +19,7 @@ func isMicaAnnotation(fieldName string) string {
 
 func getFirmwarePath(bundle string) (string, error) {
 	// 1. 尝试通过镜像annotation获取固件路径
-	info, err := cntr.ContainerInfoParse(bundle)
+	info, err := oci.ContainerInfoParse(bundle)
 	if err != nil {
 		return "", fmt.Errorf("failed to read firmware path: %w", err)
 	}

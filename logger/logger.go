@@ -106,7 +106,8 @@ func Debug(args ...interface{}) {
 }
 
 func Debugf(format string, args ...interface{}) {
-	Log.Debugf(format, args...)
+	prefix := getDebugInfoPrefix()
+	Log.Debugf(prefix+format+"\n", args...)
 }
 
 func Info(args ...interface{}) {

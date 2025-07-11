@@ -21,11 +21,8 @@ package core
 import (
 	"context"
 	"fmt"
-	"mica-shim/io"
 	"mica-shim/libmica"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -39,7 +36,6 @@ import (
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/protobuf"
 	ptypes "github.com/containerd/containerd/protobuf/types"
-	"github.com/containerd/containerd/runtime/v2/shim"
 )
 
 type MicaService struct {
@@ -62,146 +58,48 @@ type MicaContainer struct {
 	m          sync.RWMutex
 }
 
-// Create creates a new task and **setup rtos Client**
-func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) (_ *taskAPI.CreateTaskResponse, retErr error) {
-	log.LocateDebugf("create id:%s", r.ID)
-	s.m.Lock()
-	defer s.m.Unlock()
-	if _, ok := s.procs[r.ID]; ok {
-		return nil, errdefs.ErrAlreadyExists
-	}
-
-	cwd, err := os.Getwd()
-	if err != nil {
-		return nil, fmt.Errorf("getting current working directory: %w", err)
-	}
-
-	// config : name <=> container ID ()
-	log.LocateDebugf("running mica create && a 5-time loop")
-	_, err = create(ctx, r)
-	if err != nil {
-		return nil, fmt.Errorf("creating mica client: %w", err)
-	}
-
-	cmd := exec.CommandContext(ctx, "sh", "-c",
-		"for i in {1..5}; do "+
-			"echo \"after creating dummy client, MICA Task Loop $i - $(date --rfc-3339=seconds)\"; "+
-			"sleep 1; "+
-			"done",
-	)
-
-	// TODO: /dev/tty??
-	pio, err := io.NewPipeIO(r.Stdout)
-	if err != nil {
-		return nil, fmt.Errorf("creating pipe io for stdout %s: %w", r.Stdout, err)
-	}
-
-	go func() {
-		if err := pio.Copy(ctx); err != nil {
-			log.Warn("failed to copy from stdout pipe")
-		}
-	}()
-
-	cmd.Stdout = pio.Writer()
-
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("running init command: %w", err)
-	}
-
-	defer func() {
-		if retErr != nil {
-			if err := pio.Close(); err != nil {
-				log.LocateDebugf("pid = %v, err = %v", cmd.Process.Pid, err)
-				log.Error("failed to close stdout pipe io")
-			}
-			if err := cmd.Cancel(); err != nil {
-				log.LocateDebugf("pid = %v, err = %v", cmd.Process.Pid, err)
-				log.Error("failed to cancel task init command")
-			}
-		}
-	}()
-
-	pid := cmd.Process.Pid
-
-	doneCtx, markDone := context.WithCancel(context.Background())
-
-	go func() {
-		defer markDone()
-
-		if err := cmd.Wait(); err != nil {
-			if _, ok := err.(*exec.ExitError); !ok {
-				log.Errorf("failed to wait for init process %d", pid)
-			}
-		}
-
-		if err := pio.Close(); err != nil {
-			log.Error("failed to close stdout pipe io")
-		}
-
-		exitStatus := 255
-
-		if cmd.ProcessState != nil {
-			switch unixWaitStatus := cmd.ProcessState.Sys().(syscall.WaitStatus); {
-			case cmd.ProcessState.Exited():
-				exitStatus = cmd.ProcessState.ExitCode()
-			case unixWaitStatus.Signaled():
-				exitStatus = exitCodeSignal + int(unixWaitStatus.Signal())
-			}
-		} else {
-			log.Warn("init process wait returned without setting process state")
-		}
-
-		s.m.Lock()
-		defer s.m.Unlock()
-
-		proc, ok := s.procs[r.ID]
-		if !ok {
-			log.Errorf("failed to write final status of done init process: task was removed")
-		}
-
-		proc.exitTime = time.Now()
-		proc.exitStatus = exitStatus
-	}()
-
-	// TODO: add rtos pid file
-	// If containerd needs to resort to calling the shim's "delete" command to
-	// clean things up, having the process' pid readable from a file is the
-	// only way for it to know what init process is associated with the task.
-	pidPath := filepath.Join(filepath.Join(filepath.Dir(cwd), r.ID), initPidFile)
-	if err := shim.WritePidFile(pidPath, pid); err != nil {
-		return nil, fmt.Errorf("writing pid file of init process: %w", err)
-	}
-
-	s.procs[r.ID] = &initProcess{
-		pid:     pid,
-		doneCtx: doneCtx,
-		stdout:  r.Stdout,
-	}
-
-	return &taskAPI.CreateTaskResponse{
-		Pid: uint32(pid),
-	}, nil
-}
-
 // Start the client rtos with its entrypoint task and managing agent process
 func (s *micaTaskService) Start(ctx context.Context, r *taskAPI.StartRequest) (*taskAPI.StartResponse, error) {
 	log.Debugf("start id:%s execid:%s", r.ID, r.ExecID)
 
-	// we do not support starting a previously stopped task, and the init
-	// process was already started inside the Create RPC call, so we naively
-	// return its stored PID
 	s.m.RLock()
 	defer s.m.RUnlock()
-
-	// NOTICE: boot the client rtos
-	response, err := libmica.MicaCtl(libmica.MStart, r.ID)
-	log.Debugf("start id:%s execid:%s response:%s; mica error: %v", r.ID, r.ExecID, response, err)
 
 	proc, ok := s.procs[r.ID]
 	if !ok {
 		return nil, fmt.Errorf("task not created: %w", errdefs.ErrNotFound)
 	}
 
+	// Step 1: Start the RTOS client via micad
+	// This will trigger PTY service creation in micad
+	log.Infof("Starting RTOS client for task %s", r.ID)
+	response, err := libmica.MicaCtl(libmica.MStart, r.ID)
+	log.Debugf("start id:%s execid:%s response:%s; mica error: %v", r.ID, r.ExecID, response, err)
+	
+	if err != nil {
+		return nil, fmt.Errorf("failed to start mica client: %w", err)
+	}
+
+	// Step 2: Wait a moment for micad to complete service registration and PTY creation
+	// This is necessary because micad creates PTY devices asynchronously after client start
+	log.Debugf("Waiting for micad to complete service initialization for task %s", r.ID)
+	time.Sleep(2 * time.Second) // Give micad time to create PTY services
+
+	// Step 3: Start MicaIO to handle PTY communication
+	// This will discover and connect to the PTY device created by micad
+	if proc.micaIO != nil {
+		log.Debugf("Starting MicaIO for task %s", r.ID)
+		if err := proc.micaIO.Start(); err != nil {
+			log.Errorf("failed to start MicaIO for task %s: %v", r.ID, err)
+			// Don't fail the start operation completely - the RTOS client is still running
+			// We'll continue without PTY forwarding for now
+			log.Warnf("Task %s started but PTY forwarding is not available", r.ID)
+		} else {
+			log.Infof("MicaIO started successfully for task %s, PTY device: %s", r.ID, proc.micaIO.GetPTYDevice())
+		}
+	}
+
+	log.Infof("Successfully started MICA task %s", r.ID)
 	return &taskAPI.StartResponse{
 		Pid: uint32(proc.pid),
 	}, nil
@@ -214,10 +112,6 @@ func (s *micaTaskService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) 
 	s.m.Lock()
 	defer s.m.Unlock()
 
-	// NOTICE: remove first, then stop the client rtos
-	response, err := libmica.MicaCtl(libmica.MRemove, r.ID)
-	log.Debugf("delete id:%s execid:%s response:%s; mica error: %v", r.ID, r.ExecID, response, err)
-
 	client, ok := s.procs[r.ID]
 	if !ok {
 		return nil, fmt.Errorf("task not created: %w", errdefs.ErrNotFound)
@@ -226,6 +120,17 @@ func (s *micaTaskService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) 
 	if client.exitTime.IsZero() {
 		return nil, errdefs.ToGRPCf(errdefs.ErrFailedPrecondition, "init process %d is not done yet", client.pid)
 	}
+
+	// Clean up MicaIO resources
+	if client.micaIO != nil {
+		if err := client.micaIO.Close(); err != nil {
+			log.Errorf("failed to close MicaIO for task %s: %v", r.ID, err)
+		}
+	}
+
+	// NOTICE: remove first, then stop the client rtos
+	response, err := libmica.MicaCtl(libmica.MRemove, r.ID)
+	log.Debugf("delete id:%s execid:%s response:%s; mica error: %v", r.ID, r.ExecID, response, err)
 
 	delete(s.procs, r.ID)
 
@@ -347,6 +252,7 @@ func (s *micaTaskService) Connect(ctx context.Context, r *taskAPI.ConnectRequest
 
 	return &taskAPI.ConnectResponse{
 		ShimPid: uint32(os.Getpid()),
+		// TODO: task pid is the placeholder process pid,
 		TaskPid: uint32(proc.pid),
 	}, nil
 }
