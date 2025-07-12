@@ -6,7 +6,6 @@ import (
 	"fmt"
 	defs "mica-shim/definitions"
 	log "mica-shim/logger"
-	"mica-shim/oci"
 	"path/filepath"
 )
 
@@ -22,9 +21,9 @@ const (
 
 // NOTICE: we have to ensure the length of each field consistency with the length of the field in mica daemon
 // TODO: add explaination for each field
-type micaCreateMsg struct {
+type MicaClientConf struct {
 	// scheduled
-	cpu  uint32
+	cpu uint32
 	// assigned by containerd
 	name [32]byte
 	// relative path in bundle
@@ -34,7 +33,7 @@ type micaCreateMsg struct {
 	debug  bool
 }
 
-func (m *micaCreateMsg) init(cpu uint32, name string, path string, ped string, pedCfg string, debug bool) {
+func (m *MicaClientConf) Init(cpu uint32, name string, path string, ped string, pedCfg string, debug bool) {
 	m.cpu = cpu
 	copy(m.name[:], name)
 	copy(m.path[:], path)
@@ -43,7 +42,7 @@ func (m *micaCreateMsg) init(cpu uint32, name string, path string, ped string, p
 	m.debug = debug
 }
 
-func (m *micaCreateMsg) pack() []byte {
+func (m *MicaClientConf) pack() []byte {
 	buf := make([]byte, 4+32+128+32+128+1) // Total: 325 bytes
 
 	binary.LittleEndian.PutUint32(buf[0:4], m.cpu)
@@ -64,7 +63,7 @@ func (m *micaCreateMsg) pack() []byte {
 // Public functions:
 
 // MicaCreate creates a new mica client; while MicaCtl is used to control the mica client
-func MicaCreate(config micaCreateMsg) (string, error) {
+func MicaCreate(config MicaClientConf) (string, error) {
 	s := newMicaSocket(defs.MicaCreatSocketPath)
 	return s.handleMsg(config.pack())
 }
@@ -81,62 +80,36 @@ func MicaCtl(cmd MicaCommand, client string) (string, error) {
 	return s.handleMsg([]byte(msg))
 }
 
-// 1. search bundle/.../<clientOSname>.elf
-// 2. if missing, log and search for binary in bundle recursively
-// TALK: 这是预留的核，实际client可能更后面启动, 以及启动可能失败
-// TODO: 现在我们全部假定是单核RTOS, mica侧还未实现多核, 但是在镜像label中，我们可以指定核数量
-func CreateConf(name string, bundle string) (micaCreateMsg, error) {
-	// TODO: use a universal way to get all LABELS && Files under bundle
-	ncpu := getNCPU(bundle)
-	if ncpu > 1 {
-		log.Debugf("expected using %d cores", ncpu)
-	}
-	// TODO: cpu id should be scheduled by mica-shim
-	cpu := schedFreeCPU()
-
-	info, err := oci.ContainerInfoParse(bundle)
-	if err != nil {
-		log.Errorf("failed to get container info: %v", err)
-		return micaCreateMsg{}, err
-	}
-
-	firmware := info.FirmwarePath()
-	pedestal := info.Ped()
-	
-	conf := micaCreateMsg{}
-	conf.init(cpu, name, firmware, pedestal.PedestalType.String(), pedestal.PedestalConf, false)
-	return conf, nil
-}
 
 // NewMicaCreateMsg creates a properly initialized micaCreateMsg
-func NewMicaCreateMsg(cpu uint32, name string, path string, ped string, pedCfg string, debug bool) micaCreateMsg {
-	msg := micaCreateMsg{}
+func NewMicaCreateMsg(cpu uint32, name string, path string, ped string, pedCfg string, debug bool) MicaClientConf {
+	msg := MicaClientConf{}
 	msg.init(cpu, name, path, ped, pedCfg, debug)
 	return msg
 }
 
-func Create(conf micaCreateMsg) (string, error) {
+func Create(conf MicaClientConf) (string, error) {
 	s := newMicaSocket(defs.MicaCreatSocketPath)
 	// we do not deref s hengre, because it is dropped in handleMsg()
 	msg := conf.pack()
 	return s.handleMsg(msg)
 }
 
-func Start(conf micaCreateMsg) (string, error) {
+func Start(conf MicaClientConf) (string, error) {
 	// client := "qemu-zephyr"
 	return MicaCtl(MStart, string(conf.name[:]))
 }
 
-func Stop(conf micaCreateMsg) (string, error) {
+func Stop(conf MicaClientConf) (string, error) {
 	return MicaCtl(MStop, string(conf.name[:]))
 }
 
-func Remove(conf micaCreateMsg) (string, error) {
+func Remove(conf MicaClientConf) (string, error) {
 	return MicaCtl(MRemove, string(conf.name[:]))
 }
 
 // TODO: check status of specific client os is not implemented yet.
-func clientStatus(conf micaCreateMsg) (string, error) {
+func clientStatus(conf MicaClientConf) (string, error) {
 	return MicaCtl(MStatus, string(conf.name[:]))
 }
 

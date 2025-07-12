@@ -3,9 +3,9 @@ package core
 import (
 	"context"
 	"fmt"
+	"mica-shim/cntr"
 	"mica-shim/libmica"
 	log "mica-shim/logger"
-	"mica-shim/oci"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,7 +14,6 @@ import (
 
 	taskAPI "github.com/containerd/containerd/api/runtime/task/v2"
 	"github.com/containerd/containerd/runtime/v2/shim"
-	"github.com/opencontainers/runtime-spec/specs-go"
 
 	"github.com/containerd/containerd/errdefs"
 )
@@ -72,7 +71,6 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 	if err != nil {
 		return nil, fmt.Errorf("creating mica IO: %w", err)
 	}
-
 
 	// Start the placeholder process
 	// NOTICE: only created successfully, then handle pty
@@ -135,7 +133,7 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 
 		proc.exitTime = time.Now()
 		proc.exitStatus = exitStatus
-		
+
 		// Close MicaIO when process exits
 		if proc.micaIO != nil {
 			if err := proc.micaIO.Close(); err != nil {
@@ -163,17 +161,21 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 	}, nil
 }
 
-func loadSpec(r *taskAPI.CreateTaskRequest) (*specs.Spec, string, error) {
-	// Checks the MUST and MUST NOT from OCI runtime specification
-	bundlePath, err := oci.ValidBundle(r.ID, r.Bundle)
-	if err != nil {
-		return nil, "", err
-	}
 
-	ociSpec, err := oci.GetOCISpec(bundlePath)
-	if err != nil {
-		return nil, "", err
-	}
+// 1. search bundle/.../<clientOSname>.elf
+// 2. if missing, log and search for binary in bundle recursively
+// TODO: Only copy values, the evaluation procedure is in the caller function
+// TALK: 这是预留的核，实际client可能更后面启动, 以及启动可能失败
+// TODO: 现在我们全部假定是单核RTOS, mica侧还未实现多核, 但是在镜像label中，我们可以指定核数量
+func CreateMicaConf(container *cntr.Container) libmica.MicaClientConf {
+	info := container.GetMicaContainerInfo()
 
-	return &ociSpec.Spec, bundlePath, nil
+	firmware := info.FirmwarePath()
+	cpu := info.CPU()
+	pedestal := info.Ped()
+	name := container.ID
+
+	conf := libmica.MicaClientConf{}
+	conf.Init(cpu, name, firmware, pedestal.PedestalType.String(), pedestal.PedestalConf, false)
+	return conf
 }

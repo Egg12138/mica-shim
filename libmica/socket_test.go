@@ -147,7 +147,7 @@ func TestAllPublicFunctions(t *testing.T) {
 
 	tests := []struct {
 		name string
-		fn   func(conf micaCreateMsg) (string, error)
+		fn   func(conf MicaClientConf) (string, error)
 	}{
 		{"TestCreate", Create},
 		{"TestStart", Start},

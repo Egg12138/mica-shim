@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"mica-shim/cntr"
 	defs "mica-shim/definitions"
 	"mica-shim/libmica"
 	log "mica-shim/logger"
@@ -16,7 +17,9 @@ func create(ctx context.Context, req *taskAPI.CreateTaskRequest) (taskRes *taskA
 	// get firmware path from bundle: <bundle>/.../<clientOSname>.elf
 	// NOTICE: currently, everytime mica startup client os, it search files from the given path
 	// There, we must verify the bundle integrity before creating && **running** the client os.
-	conf, err := libmica.CreateConf(req.ID, req.Bundle)
+	
+	container, err := cntr.NewContainer(req, cntr.ContainerType(req.ContainerType), req.Bundle)
+	conf := CreateMicaConf(container)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create mica create conf: %w", err)
 	}

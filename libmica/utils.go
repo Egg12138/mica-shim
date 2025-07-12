@@ -2,8 +2,8 @@ package libmica
 
 import (
 	"fmt"
+	"mica-shim/cntr"
 	defs "mica-shim/definitions"
-	"mica-shim/oci"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,23 +19,23 @@ func isMicaAnnotation(fieldName string) string {
 
 func getFirmwarePath(bundle string) (string, error) {
 	// 1. 尝试通过镜像annotation获取固件路径
-	info, err := oci.ContainerInfoParse(bundle)
+	info, err := cntr.ContainerInfoParse(bundle)
 	if err != nil {
 		return "", fmt.Errorf("failed to read firmware path: %w", err)
 	}
-	
+
 	firmwarePath := info.FirmwarePath()
 	if firmwarePath != "" {
 		if _, err := os.Stat(firmwarePath); err == nil {
 			return firmwarePath, nil
 		}
 	}
-	
+
 	files, err := os.ReadDir(bundle)
 	if err != nil {
 		return "", err
 	}
-	
+
 	for _, file := range files {
 		if file.IsDir() {
 			continue
@@ -44,7 +44,7 @@ func getFirmwarePath(bundle string) (string, error) {
 			return filepath.Join(bundle, file.Name()), nil
 		}
 	}
-	
+
 	rootfsPath := filepath.Join(bundle, "rootfs")
 	if rootFiles, err := os.ReadDir(rootfsPath); err == nil {
 		for _, file := range rootFiles {
@@ -56,10 +56,9 @@ func getFirmwarePath(bundle string) (string, error) {
 			}
 		}
 	}
-	
+
 	return "", fmt.Errorf("firmware not found in the bundle")
 }
-
 
 // Test helper functions for accessing private state
 func GetQueueSize() uint32 {

@@ -75,7 +75,7 @@ func (s *micaTaskService) Start(ctx context.Context, r *taskAPI.StartRequest) (*
 	log.Infof("Starting RTOS client for task %s", r.ID)
 	response, err := libmica.MicaCtl(libmica.MStart, r.ID)
 	log.Debugf("start id:%s execid:%s response:%s; mica error: %v", r.ID, r.ExecID, response, err)
-	
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to start mica client: %w", err)
 	}

@@ -11,7 +11,7 @@ import (
 
 // Test statistics
 var (
-	testAllocatedCPUs     int64
+	testAllocatedCPUs      int64
 	testReleasedUnusedCPUs int64
 	testReleasedUsedCPUs   int64
 )
@@ -337,7 +337,7 @@ func TestComprehensiveScenario(t *testing.T) {
 	t.Logf("  Released used: %d", releasedUsed)
 
 	if allocated != releasedUnused+releasedUsed {
-		t.Errorf("final allocation/release mismatch: allocated=%d, released=%d", 
+		t.Errorf("final allocation/release mismatch: allocated=%d, released=%d",
 			allocated, releasedUnused+releasedUsed)
 	}
 
@@ -350,4 +350,4 @@ func TestComprehensiveScenario(t *testing.T) {
 	}
 
 	t.Log("Comprehensive test completed successfully")
-} 
+}
