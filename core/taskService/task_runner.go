@@ -17,8 +17,16 @@ func create(ctx context.Context, req *taskAPI.CreateTaskRequest) (taskRes *taskA
 	// get firmware path from bundle: <bundle>/.../<clientOSname>.elf
 	// NOTICE: currently, everytime mica startup client os, it search files from the given path
 	// There, we must verify the bundle integrity before creating && **running** the client os.
-	
-	container, err := cntr.NewContainer(req, cntr.ContainerType(req.ContainerType), req.Bundle)
+
+	spec, err := cntr.LoadContainerSpec(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load container spec: %w", err)
+	}
+	ctype, err := cntr.GetContainerType(spec)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get container type: %w", err)
+	}
+	container, err := cntr.NewContainer(req, *spec, ctype)
 	conf := CreateMicaConf(container)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create mica create conf: %w", err)

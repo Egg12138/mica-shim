@@ -7,13 +7,13 @@ import (
 )
 
 type annotationContainerType struct {
-	annotation string
+	annotation    string
 	containerType ContainerType
-}	
+}
 
 // CRI types list reference: kata-containers
 var (
-		// CRIContainerTypeKeyList lists all the CRI keys that could define
+	// CRIContainerTypeKeyList lists all the CRI keys that could define
 	// the container type from annotations in the config.json.
 	CRIContainerTypeKeyList = []string{ctrAnnotations.ContainerType, podmanAnnotations.ContainerType, dockershimAnnotations.ContainerTypeLabelKey}
 

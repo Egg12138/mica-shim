@@ -24,7 +24,7 @@ import (
 // alternative: docker, containerd, isulad
 // high level container engine
 var (
-	HighLevelCE = "containerd"
+	HighLevelCE    = "containerd"
 	RequiredLabels = []string{
 		defs.SuffixFirmware,
 		defs.SuffixOS,
@@ -64,7 +64,7 @@ func ParseConfigJSON(bundle string) (specs.Spec, error) {
 // the directly parsed data from container engine container storage system, needed by mica-shim
 // then ContainerSpec will be injected into ContainerResolution
 type ContainerSpec struct {
-	Spec   specs.Spec
+	Spec specs.Spec
 	// resolved bundle path
 	Bundle string
 	Labels map[string]string
@@ -73,16 +73,16 @@ type ContainerSpec struct {
 // MicaContainerInfo contains the resolved container information
 // This struct is reusable across the entire shim
 type MicaContainerInfo struct {
-	extraLabels     map[string]string
+	extraLabels map[string]string
 	// relative firmware path to the bundle. in most cases, it is "rootfs/<firmware_path>"
 	relativePath string
 	pedestal     *Pedestal
 	os           string
 	// support single cpu for now
-	cpu          uint32
+	cpu uint32
 	// default = 1
-	ncpu         int
-	mu           sync.RWMutex
+	ncpu int
+	mu   sync.RWMutex
 }
 
 type PedType int
@@ -131,9 +131,9 @@ const (
 	PodContainer ContainerType = "pod"
 	// pod sandbox
 	PodSandbox ContainerType = "sandbox"
-	SideCar ContainerType = "sidecar"
+	SideCar    ContainerType = "sidecar"
 	// a regular containers created not by CRI
-	Regular ContainerType = "regular"
+	Regular      ContainerType = "regular"
 	UnknownCtype ContainerType = "unknown"
 )
 
@@ -152,10 +152,10 @@ type Container struct {
 	io       *libmica.MicaIO
 	exitCode uint32
 	// int32: RUNNING, STOPPED, PAUSED, PAUSING, CREATED, UNKNOWN...
-	status   task.Status
-	cType    ContainerType
-	spec     *ContainerSpec
-	info     *MicaContainerInfo
+	status task.Status
+	cType  ContainerType
+	spec   *ContainerSpec
+	info   *MicaContainerInfo
 }
 
 // *************** Constructors *************** //
@@ -173,13 +173,12 @@ func getContainerSpec(bundle string) (*ContainerSpec, error) {
 	}, nil
 }
 
-
 // ContainerInfoParse parses the bundle and metadata, returns a ContainerResolution
 // This function should be called once per container and the result can be reused
 func (spec *ContainerSpec) containerInfoParse() (*MicaContainerInfo, error) {
 	labels := spec.Labels
 	result := &MicaContainerInfo{
-		extraLabels:     make(map[string]string),
+		extraLabels:  make(map[string]string),
 		relativePath: "",
 		pedestal:     nil,
 		os:           "",
@@ -192,8 +191,7 @@ func (spec *ContainerSpec) containerInfoParse() (*MicaContainerInfo, error) {
 	return result, nil
 }
 
-
-func LoadContainerSpec(r *taskAPI.CreateTaskRequest) (*ContainerSpec , error) {
+func LoadContainerSpec(r *taskAPI.CreateTaskRequest) (*ContainerSpec, error) {
 
 	bundlePath, err := ValidBundle(r.ID, r.Bundle)
 	if err != nil {
@@ -231,12 +229,12 @@ func GetContainerType(spec *ContainerSpec) (ContainerType, error) {
 // 1. checked bundle path
 // 2. parsed container spec
 // 3. parsed container info
-func NewContainer(r *taskAPI.CreateTaskRequest, spec ContainerSpec ,  cT ContainerType) (*Container, error) {
+func NewContainer(r *taskAPI.CreateTaskRequest, spec ContainerSpec, cT ContainerType) (*Container, error) {
 	info, err := spec.containerInfoParse()
 	if err != nil {
 		return nil, err
 	}
-	
+
 	container := &Container{
 		bundle:   spec.Bundle,
 		ID:       r.ID,
@@ -261,8 +259,7 @@ func (spec *ContainerSpec) getAllMicaLabels() map[string]string {
 	return labels
 }
 
-
-// Do not handle unmatched labels here 
+// Do not handle unmatched labels here
 func (r *MicaContainerInfo) parseMicaLabels(labels map[string]string) error {
 	// TODO: make sure we do can find the firmware path in container bundle
 	// Parse firmware path
@@ -271,30 +268,30 @@ func (r *MicaContainerInfo) parseMicaLabels(labels map[string]string) error {
 
 	for k, v := range labels {
 		switch k {
-			case prefix + defs.SuffixFirmware:
-				r.relativePath = filepath.Join("rootfs", v)
-			case prefix + defs.SuffixPedestal:
-				r.pedestal = &Pedestal{
-					PedestalType: ParsePedType(v),
-					PedestalConf: r.extraLabels[prefix+".client.pedestal_conf"],
-				}
-			case prefix + defs.SuffixOS:
-				if v == "" {
-					return fmt.Errorf("missing os label")
-				}
-				r.os = v
-			case prefix + defs.SuffixNcpu:
-				ncpu, err := strconv.Atoi(v)
-				if err != nil {
-					log.Warnf("failed to parse ncpu(int) label from %s: %v", v, err)
-					r.ncpu = 1
-				} else {
-					r.ncpu = ncpu
-				}
-			default:
-				if strings.HasPrefix(k, prefix) {
-					r.extraLabels[k] = v
-				}
+		case prefix + defs.SuffixFirmware:
+			r.relativePath = filepath.Join("rootfs", v)
+		case prefix + defs.SuffixPedestal:
+			r.pedestal = &Pedestal{
+				PedestalType: ParsePedType(v),
+				PedestalConf: r.extraLabels[prefix+".client.pedestal_conf"],
+			}
+		case prefix + defs.SuffixOS:
+			if v == "" {
+				return fmt.Errorf("missing os label")
+			}
+			r.os = v
+		case prefix + defs.SuffixNcpu:
+			ncpu, err := strconv.Atoi(v)
+			if err != nil {
+				log.Warnf("failed to parse ncpu(int) label from %s: %v", v, err)
+				r.ncpu = 1
+			} else {
+				r.ncpu = ncpu
+			}
+		default:
+			if strings.HasPrefix(k, prefix) {
+				r.extraLabels[k] = v
+			}
 		}
 	}
 
@@ -330,7 +327,6 @@ func parseiSuladContainerConfig(bundle string) (*ContainerSpec, error) {
 	return nil, nil
 }
 
-
 func (r *MicaContainerInfo) FirmwarePath() string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -363,8 +359,6 @@ func (r *MicaContainerInfo) Compatibility(component string) string {
 	return r.extraLabels[prefix+".client.compatibility."+component]
 }
 
-
-
 func (r *MicaContainerInfo) GetAllLabelsRef() *map[string]string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -372,13 +366,13 @@ func (r *MicaContainerInfo) GetAllLabelsRef() *map[string]string {
 	return labels
 }
 
-// MicaContainerInfo: {
-// 	extraLabels: map[string]string; do not care
-// 	relativePath: string; the resolved path must be valid
-// 	pedestal: *Pedestal; the pedestal type must be specified
-// 	os: string; one of the allowed os
-// 	ncpu: int
-// }
+//	MicaContainerInfo: {
+//		extraLabels: map[string]string; do not care
+//		relativePath: string; the resolved path must be valid
+//		pedestal: *Pedestal; the pedestal type must be specified
+//		os: string; one of the allowed os
+//		ncpu: int
+//	}
 func (c *Container) validMicaContainer() bool {
 	return validOS(c.info.OS()) &&
 		validFirmware(c.spec.Bundle, c.info.FirmwarePath()) &&
@@ -398,7 +392,10 @@ func (c *Container) GetMicaContainerInfo() *MicaContainerInfo {
 func (c *Container) AllocClientCPU() error {
 	cpu, err := allocCPU()
 	if err != nil {
+		return err
 	}
+	c.info.cpu = cpu
+	return nil
 }
 
 // *************** Utils functions *************** //
@@ -446,7 +443,6 @@ func hostPed() *Pedestal {
 		PedestalConf: "",
 	}
 }
-
 
 // Currently, one host only support one pedestal type.
 func hostPedMatched(ped *Pedestal, os string) bool {

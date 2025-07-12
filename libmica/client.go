@@ -80,11 +80,10 @@ func MicaCtl(cmd MicaCommand, client string) (string, error) {
 	return s.handleMsg([]byte(msg))
 }
 
-
 // NewMicaCreateMsg creates a properly initialized micaCreateMsg
 func NewMicaCreateMsg(cpu uint32, name string, path string, ped string, pedCfg string, debug bool) MicaClientConf {
 	msg := MicaClientConf{}
-	msg.init(cpu, name, path, ped, pedCfg, debug)
+	msg.Init(cpu, name, path, ped, pedCfg, debug)
 	return msg
 }
 

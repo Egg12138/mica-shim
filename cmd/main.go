@@ -18,8 +18,10 @@ func main() {
 	defer cancel()
 
 	tasksvc.RegisterPlugin()
-	// init and execute the shim
-	// FUTURE (containerd 2.0) use latest shim.Run
-	// 1.7.1-0.20230727135123-81895d22c9ee and later, the shim.Run parameters are changed
-	shim.Run(ctx, tasksvc.NewManager(ShimName))
+
+	// NOTICE: as we consider, the next edition of containerd we focus on is containerd 2.x
+	// according to the comments in containerd 1.7.27, shim.Run and shim.RunManager are removed
+	// Hence we do not need to do a huge workload to support the new shim interface
+	// Use RunManager for backwards compatibility with existing Manager interface
+	shim.RunManager(ctx, tasksvc.NewManager(ShimName))
 }

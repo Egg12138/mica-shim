@@ -161,7 +161,6 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 	}, nil
 }
 
-
 // 1. search bundle/.../<clientOSname>.elf
 // 2. if missing, log and search for binary in bundle recursively
 // TODO: Only copy values, the evaluation procedure is in the caller function
