@@ -92,6 +92,8 @@
 - [x] libmica 接口暴露过多，应减少，并且提供更好的抽象
 - [x] containerd_client 对mica-shim runtime运行
 - [ ] 优雅的错误处理
+- [x] migrate to containerd 1.7.27
+- [x] container 相关结构语义化明确，减小耦合
 
 ###  核心添加
 
@@ -100,9 +102,12 @@
     - [ ] task StartRequest, task StartResponse
     - [ ] contaienrd -> shim -> 
 1. demo 添加：bundle 解析:
-   - [ ] OCI zephyr-scratch 镜像
-   - [ ] fetch information from bundle 
-   - [ ] 分配可用(目前不支持多核)CPU给clientOS
+    - [ ] OCI zephyr-scratch 镜像
+    - [x] fetch information from bundle 
+    - [ ] 分配可用(目前不支持多核)CPU给clientOS
+1. image build tool 
+    - [ ] 独立可用；一键构建
+    - [ ] 继承到yocto 
 1. 核分配完善:
     1. create时的freeCPU/create分配但是没有启动过的enqHead/使用过的CPU enqTail
     2. stop时 CPU enqTail

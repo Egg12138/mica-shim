@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	// for shim manager, we use containerd's log package
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/runtime/v2/shim"
 )
@@ -48,8 +49,7 @@ func (m *manager) Name() string {
 }
 
 // NOTICE: `Start` is the start of the shimv2, instead of container or task.
-// Start starts a shim process.
-// It implements the shim's "start" command.
+// Start starts a shim process. Containerd shim-v2 startup shim by calling shim binary
 // https://github.com/containerd/containerd/tree/v1.7.3/runtime/v2#start
 func (*manager) Start(ctx context.Context, containerID string, opts shim.StartOpts) (addr string, retErr error) {
 	// get current shim binary path to run
@@ -148,8 +148,8 @@ func (*manager) Start(ctx context.Context, containerID string, opts shim.StartOp
 
 	runtime.LockOSThread()
 
-	// NOTICE: disable SchedCore compeltely? It depends
-	// TALK: is it needed to run an agent process on Linux representing
+	// TALK1: disable SchedCore compeltely? It depends (mica client needs cpu id as well)
+	// TALK0: is it needed to run an agent process on Linux representing
 	// the Mica client
 	// if cmdCfg.SchedCore {
 	// 	if err := schedcore.Create(schedcore.ProcessGroup); err != nil {

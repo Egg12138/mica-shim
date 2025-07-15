@@ -6,11 +6,11 @@ import (
 )
 
 func startWithMicaPrefix(fieldName string) bool {
-	return strings.HasPrefix(fieldName, defs.MicaAnnotationPrefix)
+	return strings.HasPrefix(fieldName, defs.MicaLabelPrefix)
 }
 
 func isMicaAnnotation(fieldName string) string {
-	return strings.TrimPrefix(fieldName, defs.MicaAnnotationPrefix)
+	return strings.TrimPrefix(fieldName, defs.MicaLabelPrefix)
 }
 
 // Test helper functions for accessing private state

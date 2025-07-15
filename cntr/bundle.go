@@ -1,12 +1,11 @@
 package cntr
 
 import (
+	"bufio"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,7 +16,6 @@ import (
 
 	taskAPI "github.com/containerd/containerd/api/runtime/task/v2"
 	"github.com/containerd/containerd/api/types/task"
-
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
@@ -26,12 +24,13 @@ import (
 var (
 	HighLevelCE    = "containerd"
 	RequiredLabels = []string{
-		defs.SuffixFirmware,
-		defs.SuffixOS,
+		defs.Firmware,
+		defs.OS,
 	}
 )
 
-const prefix = defs.MicaAnnotationPrefix
+const prefix = defs.MicaLabelPrefix
+
 
 // Structures:
 // - OCISpec: specs.Spec in config.json (or config.v2.json)
@@ -44,7 +43,7 @@ const prefix = defs.MicaAnnotationPrefix
 // *************** ocispec *************** //
 // assume containerd, parse config.json from bundle
 // TODO: iSulad
-func ParseConfigJSON(bundle string) (specs.Spec, error) {
+func parseConfigJSON(bundle string) (specs.Spec, error) {
 	// For docker higher version , config.v2.json
 	configPath := filepath.Join(bundle, "config.json")
 	configBytes, err := os.ReadFile(configPath)
@@ -60,10 +59,87 @@ func ParseConfigJSON(bundle string) (specs.Spec, error) {
 	return config, nil
 }
 
-// ContainerSpec contains OCIspec and fields needde by runtime
+// *************** INI mica configs *************** //
+
+// stripQuotes removes surrounding quotes from a string if both start and end quotes match
+func stripQuotes(s string) string {
+	if len(s) >= 2 {
+		if (s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'') {
+			return s[1 : len(s)-1]
+		}
+	}
+	return s
+}
+
+// a faster ini parsing method, by reading line by line
+func parseConfigINI(bundle string) (map[string]string, error) {
+	configPath := filepath.Join(bundle, "rootfs", defs.DefaultClientConf)
+
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		// If config file doesn't exist, return empty map (not an error)
+		log.Debugf("No %s found under bundle %s", defs.DefaultClientConf, bundle)
+		return make(map[string]string), nil
+	}
+
+	file, err := os.Open(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open mica config file: %v", err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	inMicaSection := false
+
+	// Pre-allocate map for faster lookups
+	parsedFields := make(map[string]string, 8)
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+
+		if len(line) == 0 || line[0] == '#' || line[0] == ';' {
+			continue
+		}
+
+		if line[0] == '[' && line[len(line)-1] == ']' {
+			sectionName := strings.ToLower(line[1 : len(line)-1])
+			inMicaSection = inList(defs.OKSectionList[:], sectionName)
+			continue
+		}
+
+		if !inMicaSection {
+			continue
+		}
+
+		// Find the separator (= or :)
+		sepIndex := strings.IndexByte(line, '=')
+		if sepIndex == -1 {
+			sepIndex = strings.IndexByte(line, ':')
+		}
+		if sepIndex == -1 {
+			continue // Skip malformed lines
+		}
+
+		key := strings.ToLower(strings.TrimSpace(line[:sepIndex]))
+		value := strings.TrimSpace(line[sepIndex+1:])
+
+		// Remove surrounding quotes if present
+		value = stripQuotes(value)
+
+		parsedFields[key] = value
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("error reading mica config file: %v", err)
+	}
+
+	log.Debugf("Parsed MICA config from %s: %+v", configPath, parsedFields)
+	return parsedFields, nil
+}
+
+// ContainerConf contains OCIspec and fields needde by runtime
 // the directly parsed data from container engine container storage system, needed by mica-shim
-// then ContainerSpec will be injected into ContainerResolution
-type ContainerSpec struct {
+// then ContainerConf will be injected into ContainerResolution
+type ContainerConf struct {
 	Spec specs.Spec
 	// resolved bundle path
 	Bundle string
@@ -79,7 +155,8 @@ type MicaContainerInfo struct {
 	pedestal     *Pedestal
 	os           string
 	// support single cpu for now
-	cpu uint32
+	// mica runtime will allocate CPU when close to libmica.create()
+	cpu int
 	// default = 1
 	ncpu int
 	mu   sync.RWMutex
@@ -91,6 +168,7 @@ const (
 	Baremetal PedType = iota + 1
 	Jailhouse
 	Xen
+	Unknown
 )
 
 // String returns the string representation of PedType
@@ -154,51 +232,62 @@ type Container struct {
 	// int32: RUNNING, STOPPED, PAUSED, PAUSING, CREATED, UNKNOWN...
 	status task.Status
 	cType  ContainerType
-	spec   *ContainerSpec
+	spec   *ContainerConf
 	info   *MicaContainerInfo
 }
 
 // *************** Constructors *************** //
 
-func getContainerSpec(bundle string) (*ContainerSpec, error) {
-	ociSpec, err := ParseConfigJSON(bundle)
+// get oci spec and container config from bundle
+func getContainerConf(bundle string) (*ContainerConf, error) {
+	ociSpec, err := parseConfigJSON(bundle)
 	if err != nil {
 		return nil, err
 	}
 
-	return &ContainerSpec{
+	clientConf, err := parseConfigINI(bundle)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ContainerConf{
 		Spec:   ociSpec,
 		Bundle: bundle,
-		Labels: make(map[string]string),
+		Labels: clientConf,
 	}, nil
 }
 
 // ContainerInfoParse parses the bundle and metadata, returns a ContainerResolution
 // This function should be called once per container and the result can be reused
-func (spec *ContainerSpec) containerInfoParse() (*MicaContainerInfo, error) {
-	labels := spec.Labels
+func (conf *ContainerConf) containerInfoParse() (*MicaContainerInfo, error) {
+	labels := conf.Labels
 	result := &MicaContainerInfo{
 		extraLabels:  make(map[string]string),
 		relativePath: "",
 		pedestal:     nil,
 		os:           "",
-		cpu:          0,
+		cpu:          -1,
 		ncpu:         1,
 		mu:           sync.RWMutex{},
 	}
 
-	result.parseMicaLabels(labels)
+	// CPU and ncpu will be parsed here
+
+	if err := result.parseMicaLabels(labels); err != nil {
+		log.LocateDebugf("failed to parse all mica labels: %v", err)
+		return nil, err
+	}
 	return result, nil
 }
 
-func LoadContainerSpec(r *taskAPI.CreateTaskRequest) (*ContainerSpec, error) {
+func LoadContainerSpec(r *taskAPI.CreateTaskRequest) (*ContainerConf, error) {
 
-	bundlePath, err := ValidBundle(r.ID, r.Bundle)
+	bundlePath, err := validBundle(r.ID, r.Bundle)
 	if err != nil {
 		return nil, err
 	}
 
-	containerSpec, err := getContainerSpec(bundlePath)
+	containerSpec, err := getContainerConf(bundlePath)
 
 	if err != nil {
 		return nil, err
@@ -207,7 +296,7 @@ func LoadContainerSpec(r *taskAPI.CreateTaskRequest) (*ContainerSpec, error) {
 	return containerSpec, nil
 }
 
-func GetContainerType(spec *ContainerSpec) (ContainerType, error) {
+func GetContainerType(spec *ContainerConf) (ContainerType, error) {
 	ocispec := spec.Spec
 	for _, key := range CRIContainerTypeKeyList {
 		containerType, ok := ocispec.Annotations[key]
@@ -229,7 +318,7 @@ func GetContainerType(spec *ContainerSpec) (ContainerType, error) {
 // 1. checked bundle path
 // 2. parsed container spec
 // 3. parsed container info
-func NewContainer(r *taskAPI.CreateTaskRequest, spec ContainerSpec, cT ContainerType) (*Container, error) {
+func NewContainer(r *taskAPI.CreateTaskRequest, spec ContainerConf, cT ContainerType) (*Container, error) {
 	info, err := spec.containerInfoParse()
 	if err != nil {
 		return nil, err
@@ -249,15 +338,6 @@ func NewContainer(r *taskAPI.CreateTaskRequest, spec ContainerSpec, cT Container
 	return container, nil
 }
 
-func (spec *ContainerSpec) getAllMicaLabels() map[string]string {
-	labels := make(map[string]string)
-	for k, v := range spec.Labels {
-		if strings.HasPrefix(k, prefix) {
-			labels[k] = v
-		}
-	}
-	return labels
-}
 
 // Do not handle unmatched labels here
 func (r *MicaContainerInfo) parseMicaLabels(labels map[string]string) error {
@@ -268,47 +348,57 @@ func (r *MicaContainerInfo) parseMicaLabels(labels map[string]string) error {
 
 	for k, v := range labels {
 		switch k {
-		case prefix + defs.SuffixFirmware:
+		case defs.Firmware:
 			r.relativePath = filepath.Join("rootfs", v)
-		case prefix + defs.SuffixPedestal:
-			r.pedestal = &Pedestal{
-				PedestalType: ParsePedType(v),
-				PedestalConf: r.extraLabels[prefix+".client.pedestal_conf"],
+		case defs.Pedestal:
+			if r.pedestal != nil {
+				r.pedestal.PedestalType = ParsePedType(v)
+			} else {
+				r.pedestal = &Pedestal{
+					PedestalType: ParsePedType(v),
+					PedestalConf: "",
+				}
 			}
-		case prefix + defs.SuffixOS:
+		case defs.PedestalConf:
+			if r.pedestal != nil {
+				r.pedestal.PedestalConf = v
+			} else {
+				r.pedestal = &Pedestal{
+					PedestalType: Unknown,
+					PedestalConf: v,
+				}
+			}
+		case defs.OS:
 			if v == "" {
 				return fmt.Errorf("missing os label")
 			}
-			r.os = v
-		case prefix + defs.SuffixNcpu:
-			ncpu, err := strconv.Atoi(v)
-			if err != nil {
-				log.Warnf("failed to parse ncpu(int) label from %s: %v", v, err)
-				r.ncpu = 1
-			} else {
-				r.ncpu = ncpu
+			log.LocateDebugf("current os label: %s", v)
+			if !validOS(v) {
+				return fmt.Errorf("invalid os label: %s", v)
 			}
+			r.os = v
+		case defs.Ncpu:
+			r.ncpu = getNcpu(v)
 		default:
 			if strings.HasPrefix(k, prefix) {
 				r.extraLabels[k] = v
 			}
 		}
 	}
-
 	return nil
 }
 
 // parseDockerConfigJSON tries to parse bundle information from the bundle directory
 // For docker, we can get the config.v2.json
 // But for containerd, we need to use the containerd API to fetch metadata stored in bolt db
-func parseDockerConfigJSON(bundle string) (*ContainerSpec, error) {
+func parseDockerConfigJSON(bundle string) (*ContainerConf, error) {
 	dockerConfigPath := filepath.Join(bundle, "config.v2.json")
 	if _, err := os.Stat(dockerConfigPath); err == nil {
 		dockerConfigData, err := os.ReadFile(dockerConfigPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read config.v2.json: %v", err)
 		}
-		var containerConfigs ContainerSpec
+		var containerConfigs ContainerConf
 		if err := json.Unmarshal(dockerConfigData, &containerConfigs); err != nil {
 			return nil, fmt.Errorf("failed to parse config.v2.json: %v", err)
 		}
@@ -317,12 +407,14 @@ func parseDockerConfigJSON(bundle string) (*ContainerSpec, error) {
 	return nil, nil
 }
 
-func parseContainerdContainerMetadata(cid string) (*ContainerSpec, error) {
-	// TODO: parse bultdb
+// workaround for fetching metadata from containerd, we refuse to call the standard
+// containerd API to fetch metadata stored in bolt db
+func parseContainerdContainerMetadata(cid string) (*ContainerConf, error) {
+	// TODO: a bad implementation, work as a containerd client
 	return nil, nil
 }
 
-func parseiSuladContainerConfig(bundle string) (*ContainerSpec, error) {
+func parseiSuladContainerConfig(bundle string) (*ContainerConf, error) {
 	// TODO: parse isulad container config
 	return nil, nil
 }
@@ -346,7 +438,7 @@ func (r *MicaContainerInfo) OS() string {
 	return r.os
 }
 
-func (r *MicaContainerInfo) CPU() uint32 {
+func (r *MicaContainerInfo) CPU() int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.cpu
@@ -398,154 +490,3 @@ func (c *Container) AllocClientCPU() error {
 	return nil
 }
 
-// *************** Utils functions *************** //
-
-// TODO: multi cpu
-// sharememory-based scheduler
-func allocCPU() (uint32, error) {
-	// TODO: alloc cpu
-	return 1, nil
-}
-
-// check OS value matches
-func validOS(os string) bool {
-	val := false
-	for _, o := range defs.PreservedOS {
-		if o == os {
-			val = true
-			break
-		}
-	}
-	log.Debugf("current os lable is: %s. valid = %v", os, val)
-	return val
-}
-
-func validFirmware(root, firmware string) bool {
-	// <bundle>/rootfs/<firmware>
-	resolved, err := resolvePath(filepath.Join(root, firmware))
-	if err != nil {
-		return false
-	}
-	ret := fileExists(resolved)
-	log.Debugf("current firmware path is: %s. valid = %v", resolved, ret)
-	return ret
-}
-
-func validCompatibility(info *MicaContainerInfo) bool {
-	// TODO: needed to ? how to check compatibility?
-	return true
-}
-
-func hostPed() *Pedestal {
-	// TODO: get host pedestal
-	return &Pedestal{
-		PedestalType: Baremetal,
-		PedestalConf: "",
-	}
-}
-
-// Currently, one host only support one pedestal type.
-func hostPedMatched(ped *Pedestal, os string) bool {
-	currentHost := hostPed()
-	if currentHost.PedestalType != ped.PedestalType {
-		return false
-	}
-	return true
-}
-
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return false
-	}
-	return true
-}
-
-func setReadonly(path string) error {
-	// assume path is a valid direntry
-	return filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		mode := os.FileMode(0444)
-		if info.IsDir() {
-			mode = os.FileMode(0555)
-		}
-		return os.Chmod(path, mode)
-	})
-}
-
-// bundle is <CONTINAER_STATE_ROOT>/<container_id>
-func SetupBundle(bundle string) error {
-
-	// config := filepath.Join(bundle, "config.json")
-	rootfs := filepath.Join(bundle, "rootfs")
-
-	rootfsExists := fileExists(rootfs)
-	log.Debugf("rootfs <%s> Exists: %v", rootfs, rootfsExists)
-	// TODO: mount rootfs
-	if !rootfsExists {
-		if err := os.MkdirAll(rootfs, 0755); err != nil {
-			return fmt.Errorf("failed to create rootfs: %w", err)
-		}
-	}
-
-	// TODO: recursively chmod 0555
-	if err := setReadonly(rootfs); err != nil {
-		return fmt.Errorf("failed to chmod rootfs: %w", err)
-	}
-	os.Chdir(bundle)
-	return nil
-}
-
-func ValidBundle(containerID, bundlePath string) (string, error) {
-	if containerID == "" {
-		return "", fmt.Errorf("missing container ID")
-	}
-
-	if bundlePath == "" {
-		return "", fmt.Errorf("missing bundle path")
-	}
-
-	// bundle path MUST be valid.
-	fileInfo, err := os.Stat(bundlePath)
-	if err != nil {
-		return "", fmt.Errorf("invalid bundle path '%s': %s", bundlePath, err)
-	}
-	if !fileInfo.IsDir() {
-		return "", fmt.Errorf("invalid bundle path '%s', it should be a directory", bundlePath)
-	}
-
-	// get a valid expanded path
-	resolved, err := resolvePath(bundlePath)
-	if err != nil {
-		return "", err
-	}
-
-	return resolved, nil
-}
-
-// resolvePath returns the fully resolved and expanded value of the
-// specified path.
-func resolvePath(path string) (string, error) {
-	if path == "" {
-		log.LocateDebugf("path must be specified")
-		return "", fmt.Errorf("path must be specified")
-	}
-
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-
-	resolved, err := filepath.EvalSymlinks(absolute)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", fmt.Errorf("file %v does not exist", absolute)
-		}
-
-		return "", err
-	}
-
-	return resolved, nil
-}

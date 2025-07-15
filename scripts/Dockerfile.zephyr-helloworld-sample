@@ -1,4 +1,4 @@
-FROM localhost:5000/zephyr-mica-scratch:latest
+FROM localhost:5000/zephyr-mica-scratch
 # FROM zephyr-mica-scratch
 
 # default FIRMWARE_BUNDLE_PATH is <container_root>/zephyr.elf
@@ -7,14 +7,15 @@ ARG FIRMWARE_BUNDLE_PATH="/zephyr.elf"
 ARG FIRMWARE="zephyr.elf"
 
 COPY ${FIRMWARE} ${FIRMWARE_BUNDLE_PATH}
-LABEL io.mica.client.firmware="${FIRMWARE_BUNDLE_PATH}"
-LABEL io.mica.client.pedestal_conf=""
+LABEL org.opencontainer.image.mica.firmware="${FIRMWARE_BUNDLE_PATH}"
+LABEL org.opencontainer.image.mica.pedestal_conf=""
 
 # Necessary for mica runtime to check the pedestal
-LABEL io.mica.client.pedestal="baremetal"
-LABEL io.mica.client.platform_config=""
-LABEL io.mica.client.compatibility.openamp="2023.04+"
-LABEL io.mica.client.compatibility.zephyr="3.7.1"
+LABEL org.opencontainer.image.mica.pedestal="baremetal"
+LABEL org.opencontainer.image.mica.platform_config=""
+LABEL org.opencontainer.image.mica.compatibility.openamp="2023.04+"
+LABEL org.opencontainer.image.mica.compatibility.zephyr="3.7.1"
 
+ADD qemu-zephyr-rproc.conf ${defs.DefaultClientConf}
 # Inherit from zephyr-mica-scratch
 CMD ["/hello"]

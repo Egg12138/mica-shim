@@ -170,7 +170,7 @@ func CreateMicaConf(container *cntr.Container) libmica.MicaClientConf {
 	info := container.GetMicaContainerInfo()
 
 	firmware := info.FirmwarePath()
-	cpu := info.CPU()
+	cpu := uint32(info.CPU())
 	pedestal := info.Ped()
 	name := container.ID
 

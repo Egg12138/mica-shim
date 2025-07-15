@@ -11,6 +11,7 @@ require (
 	github.com/kata-containers/kata-containers/src/runtime v0.0.0-20250711211413-4a79c2520d05
 	github.com/opencontainers/runtime-spec v1.2.0
 	github.com/sirupsen/logrus v1.9.3
+	gopkg.in/ini.v1 v1.67.0
 	k8s.io/apimachinery v0.30.0
 )
 

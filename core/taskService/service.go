@@ -72,7 +72,6 @@ type micaTaskService struct {
 }
 
 var (
-	_ shim.TTRPCService   = (*micaTaskService)(nil)
 	_ taskAPI.TaskService = (*micaTaskService)(nil)
 )
 
