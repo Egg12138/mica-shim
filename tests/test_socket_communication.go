@@ -107,7 +107,7 @@ func testMessagePacking() {
 	// the rand should be a random hex string
 	id := fmt.Sprintf("%x", rand.Int63nRange(0, 1000000000000000000))
 	conf := libmica.NewMicaCreateMsg(0, id, "", "", "", false)
-	response, err := libmica.Create(conf)
+	response, err := libmica.CreateMicaClient(conf)
 	if err != nil {
 		fmt.Printf("❌ TestCreate failed: %v\n", err)
 		return

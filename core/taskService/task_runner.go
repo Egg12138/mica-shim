@@ -18,7 +18,7 @@ func create(ctx context.Context, req *taskAPI.CreateTaskRequest) (taskRes *taskA
 	// NOTICE: currently, everytime mica startup client os, it search files from the given path
 	// There, we must verify the bundle integrity before creating && **running** the client os.
 
-	spec, err := cntr.LoadContainerSpec(req)
+	spec, err := cntr.LoadContainerConf(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load container spec: %w", err)
 	}
@@ -27,11 +27,15 @@ func create(ctx context.Context, req *taskAPI.CreateTaskRequest) (taskRes *taskA
 		return nil, fmt.Errorf("failed to get container type: %w", err)
 	}
 	container, err := cntr.NewContainer(req, *spec, ctype)
-	conf := CreateMicaConf(container)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create mica container instance: %w", err)
+	}
+	conf, err := CreateMicaConf(container)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create mica create conf: %w", err)
 	}
-	res, err := libmica.Create(conf)
+
+	res, err := libmica.CreateMicaClient(conf)
 	if err != nil {
 		return nil, fmt.Errorf("mica create: %w", err)
 	}

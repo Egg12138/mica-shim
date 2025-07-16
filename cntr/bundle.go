@@ -31,7 +31,6 @@ var (
 
 const prefix = defs.MicaLabelPrefix
 
-
 // Structures:
 // - OCISpec: specs.Spec in config.json (or config.v2.json)
 // - ContainerSpec: Raw data from container bundle && metdata
@@ -143,7 +142,7 @@ type ContainerConf struct {
 	Spec specs.Spec
 	// resolved bundle path
 	Bundle string
-	Labels map[string]string
+	MicaConf map[string]string
 }
 
 // MicaContainerInfo contains the resolved container information
@@ -165,8 +164,11 @@ type MicaContainerInfo struct {
 type PedType int
 
 const (
-	Baremetal PedType = iota + 1
+	// 0
+	Baremetal PedType = iota
+	// 1
 	Jailhouse
+	// 2
 	Xen
 	Unknown
 )
@@ -253,14 +255,15 @@ func getContainerConf(bundle string) (*ContainerConf, error) {
 	return &ContainerConf{
 		Spec:   ociSpec,
 		Bundle: bundle,
-		Labels: clientConf,
+		MicaConf: clientConf,
 	}, nil
 }
 
-// ContainerInfoParse parses the bundle and metadata, returns a ContainerResolution
+// The core container information parser caller
+// ContainerInfoParse parses the bundle and metadata, returns a MicaContainerInfo
 // This function should be called once per container and the result can be reused
 func (conf *ContainerConf) containerInfoParse() (*MicaContainerInfo, error) {
-	labels := conf.Labels
+	labels := conf.MicaConf
 	result := &MicaContainerInfo{
 		extraLabels:  make(map[string]string),
 		relativePath: "",
@@ -280,15 +283,13 @@ func (conf *ContainerConf) containerInfoParse() (*MicaContainerInfo, error) {
 	return result, nil
 }
 
-func LoadContainerSpec(r *taskAPI.CreateTaskRequest) (*ContainerConf, error) {
-
+func LoadContainerConf(r *taskAPI.CreateTaskRequest) (*ContainerConf, error) {
 	bundlePath, err := validBundle(r.ID, r.Bundle)
 	if err != nil {
 		return nil, err
 	}
 
 	containerSpec, err := getContainerConf(bundlePath)
-
 	if err != nil {
 		return nil, err
 	}
@@ -335,9 +336,12 @@ func NewContainer(r *taskAPI.CreateTaskRequest, spec ContainerConf, cT Container
 		// status: remain empty
 	}
 
+	if !container.validMicaContainer() {
+		return nil, fmt.Errorf("invalid mica container: %+v", container)
+	}
+
 	return container, nil
 }
-
 
 // Do not handle unmatched labels here
 func (r *MicaContainerInfo) parseMicaLabels(labels map[string]string) error {
@@ -438,11 +442,16 @@ func (r *MicaContainerInfo) OS() string {
 	return r.os
 }
 
-func (r *MicaContainerInfo) CPU() int {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.cpu
-}
+// // Schedule a CPU when CPU() is called
+// func (r *MicaContainerInfo) CPU() int {
+// 	r.mu.RLock()
+// 	defer r.mu.RUnlock()
+// 	cpu := allocCPU()
+// 	if err != nil {
+// 		return 0, err
+// 	}
+// 	return cpu, nil
+// }
 
 // GetCompatibility returns compatibility information for a specific component
 func (r *MicaContainerInfo) Compatibility(component string) string {
@@ -456,6 +465,11 @@ func (r *MicaContainerInfo) GetAllLabelsRef() *map[string]string {
 	defer r.mu.RUnlock()
 	labels := &r.extraLabels
 	return labels
+}
+
+// cpuUnset is alway callee, hence lock is not needed
+func (r *MicaContainerInfo) cpuUnset() bool {
+	return r.cpu == -1
 }
 
 //	MicaContainerInfo: {
@@ -472,21 +486,27 @@ func (c *Container) validMicaContainer() bool {
 		hostPedMatched(c.info.Ped(), c.info.OS())
 }
 
-// IsMicaImage returns true if this is a mica image
-func (c *Container) IsMicaImage() bool {
-	return c.validMicaContainer()
-}
 
 func (c *Container) GetMicaContainerInfo() *MicaContainerInfo {
 	return c.info
 }
 
-func (c *Container) AllocClientCPU() error {
-	cpu, err := allocCPU()
+func (c *Container) allocClientCPU() error {
+	cpu, err := allocCPU(c.info.ncpu)
 	if err != nil {
 		return err
 	}
 	c.info.cpu = cpu
 	return nil
 }
-
+func (c *Container) GetClientCPU() (int, error) {
+	// RW lock
+	c.info.mu.Lock()
+	defer c.info.mu.Unlock()
+	if c.info.cpuUnset() {
+		if err := c.allocClientCPU(); err != nil {
+			return c.info.cpu, err
+		}
+	}
+	return c.info.cpu, nil
+}

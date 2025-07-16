@@ -10,14 +10,14 @@ const (
 
 	DefaultClientConf = "client.conf"
 	// ini config keys in [Mica] section of client.conf
-	OS             = "os"
-	Firmware       = "firmware"
-	Pedestal       = "pedestal"
-	PedestalConf   = "pedestal_conf"
-	Ncpu           = "ncpu"
-	Compat         = "compatibility"
+	OS           = "os"
+	Firmware     = "firmware"
+	Pedestal     = "pedestal"
+	PedestalConf = "pedestal_conf"
+	Ncpu         = "ncpu"
+	Compat       = "compatibility"
 
-	// these items in client.conf will be ignored: CPU, Name, AutoBoot, Debug, 
+	// these items in client.conf will be ignored: CPU, Name, AutoBoot, Debug,
 	// runtime will configure these items by container logic
 	// AutoBoot       = "autoboot"
 	// Debug          = "debug"
@@ -33,4 +33,3 @@ const (
 
 	SHM_NAME = "/dev/shm/mica_free_cores"
 )
-

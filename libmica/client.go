@@ -87,14 +87,15 @@ func NewMicaCreateMsg(cpu uint32, name string, path string, ped string, pedCfg s
 	return msg
 }
 
-func Create(conf MicaClientConf) (string, error) {
+func CreateMicaClient(conf MicaClientConf) (string, error) {
+	log.LocateDebugf("create mica client conf: %+v", conf)
 	s := newMicaSocket(defs.MicaCreatSocketPath)
-	// we do not deref s hengre, because it is dropped in handleMsg()
+	// we do not deref s here, because it is dropped in handleMsg()
 	msg := conf.pack()
 	return s.handleMsg(msg)
 }
 
-func Start(conf MicaClientConf) (string, error) {
+func StartMicaClient(conf MicaClientConf) (string, error) {
 	// client := "qemu-zephyr"
 	return MicaCtl(MStart, string(conf.name[:]))
 }

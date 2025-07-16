@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	ctrAnnotations "github.com/containerd/containerd/pkg/cri/annotations"
 	podmanAnnotations "github.com/containers/podman/v4/pkg/annotations"
@@ -58,29 +59,34 @@ func pedestalMaxCPU() int {
 	return physicalMaxCPU()
 }
 
-// physical Max CPU in the perspective of container runtime!
-func physicalMaxCPU() int {
-	
+func physicalMaxCPURobust() int {
+
 	data, err := os.ReadFile("/proc/cpuinfo")
 	if err != nil {
 		log.Warnf("failed to read /proc/cpuinfo, falling back to runtime.NumCPU(): %v", err)
 		return runtime.NumCPU()
 	}
-	
+
 	// Parse physical CPU IDs to count unique physical processors
 	physicalNums := 0
 	lines := strings.Split(string(data), "\n")
-	
+
 	for _, line := range lines {
 		if strings.HasPrefix(line, "physical id") {
 			physicalNums++
 		}
 	}
-	
+
 	if physicalNums > 0 {
 		return physicalNums
 	}
-	
+
+	return runtime.NumCPU()
+}
+
+
+// physical Max CPU in the perspective of container runtime!
+func physicalMaxCPU() int {
 	log.Debugf("no physical CPU IDs found in /proc/cpuinfo, using runtime.NumCPU()")
 	return runtime.NumCPU()
 }
@@ -90,16 +96,22 @@ func physicalMaxCPU() int {
 // From mcs_km.c
 // mpidr = get_cpu_mpidr(info.cpu);  // Maps to physical CPU
 // if (cpu >= NR_CPUS)               // Validates against physical CPU count
-//     return INVALID_HWID;
+//
+//	return INVALID_HWID;
 func availableMaxCPU() int {
-	return min(physicalMaxCPU(), pedestalMaxCPU())
+	m := min(physicalMaxCPU(), pedestalMaxCPU())
+	if m > 1 {
+		m -= 1
+	}
+	log.Debugf("availableMaxCPU: %d", m)
+	return m
 }
 
 func getNcpu(v string) int {
 	ncpu, err := strconv.Atoi(v)
 	if err != nil {
 		log.Warnf("failed to parse ncpu(int) label from %s, set to %s: %v", v, defs.DefaultNcpu, err)
-	} else if ncpu > availableMaxCPU() {
+	} else if ncpu > HostMaxCPU {
 		log.Warnf("ncpu(int) label from %s is greater than the available max CPU, set to %d", v, availableMaxCPU())
 	} else if ncpu < 1 {
 		log.Warnf("ncpu(int) label from %s is less than 1, set to %s", v, defs.DefaultNcpu)
@@ -111,10 +123,25 @@ func getNcpu(v string) int {
 }
 
 // TODO: multi cpu
-// sharememory-based scheduler
-func allocCPU() (int, error) {
-	// TODO: alloc cpu
-	return 1, nil
+// system-wide sharememory-based scheduler
+func allocCPU(ncpu int) (int, error) {
+	// Validate ncpu parameter
+	if ncpu < 1 {
+		return 0, fmt.Errorf("ncpu must be at least 1, got %d", ncpu)
+	}
+	
+	maxCPU := HostMaxCPU
+	if ncpu > maxCPU {
+		return 0, fmt.Errorf("requested ncpu %d exceeds available max CPU %d", ncpu, maxCPU)
+	}
+	
+	// Simple round-robin allocation based on current time
+	// In a real implementation, this would track allocated CPUs
+	// For now, just return a CPU ID within the available range
+	allocatedCPU := int(time.Now().UnixNano()) % maxCPU
+	
+	log.Debugf("Allocated CPU %d for ncpu=%d (max available: %d)", allocatedCPU, ncpu, maxCPU)
+	return allocatedCPU, nil
 }
 
 // check OS value matches
@@ -138,21 +165,93 @@ func validCompatibility(info *MicaContainerInfo) bool {
 	return true
 }
 
-func hostPed() *Pedestal {
-	// TODO: get host pedestal
-	return &Pedestal{
-		PedestalType: Baremetal,
-		PedestalConf: "",
+func detectXen() int {
+	if _, err := os.Stat("/proc/xen"); err == nil {
+		return 1
 	}
+	return 0
+}
+
+func detectJailhouse() int {
+	weight := 0
+	if _, err := os.Stat("/sys/devices/jailhouse"); err == nil {
+		weight++
+	}
+	if _, err := os.Stat("/usr/share/jailhouse"); err == nil {
+		weight++
+	}
+	if _, err := os.Stat("/etc/modules-load.d/jailhouse.conf"); err == nil {
+		weight++
+	}
+
+	kernelRelease, err := os.ReadFile("/proc/sys/kernel/osrelease")
+	if err == nil {
+		release := strings.TrimSpace(string(kernelRelease))
+		jailhouseKoPath := fmt.Sprintf("/lib/modules/%s/extra/driver/jailhouse.ko", release)
+		if _, err := os.Stat(jailhouseKoPath); err == nil {
+			weight += 2
+		}
+	}
+
+	files, err := filepath.Glob("/usr/libexec/jailhouse/jailhouse-*")
+	if err == nil {
+		weight += len(files)
+	}
+
+	return weight
+}
+
+func detectBaremetal() int {
+	// check loaded Kerkenl modules contains "mcs":
+	weight := 0
+	kernelRelease, err := os.ReadFile("/proc/sys/kernel/osrelease")
+	if err == nil {
+		release := strings.TrimSpace(string(kernelRelease))
+		mcsKoPath := fmt.Sprintf("/lib/modules/%s/extra/mcs.ko", release)
+		if _, err := os.Stat(mcsKoPath); err == nil {
+			weight += 2
+		}
+	}
+
+	if _, err := os.Stat("/etc/modules-load.d/mcs.conf"); err == nil {
+		weight += 1
+	}
+
+	if _, err := os.Stat("/usr/share/mcs"); err == nil {
+		weight += 1
+	}
+
+	return weight
+}
+
+// TODO: mark this information a host-level config, the "guessing" only needs once
+// 'Guess' what pedestal the host is on
+func hostPed() PedType {
+
+	weights := []int{0, 0, 0}
+
+	weights[Xen] += detectXen()
+	weights[Jailhouse] += detectJailhouse()
+	weights[Baremetal] += detectBaremetal()
+
+	pedestalType := Baremetal
+	// maxWeight := weights[Baremetal]
+	// TODO: support detect Xen , and handle same weight case (corner case)
+	if weights[Jailhouse] > weights[Baremetal] {
+		pedestalType = Jailhouse
+	} else if weights[Baremetal] > weights[Jailhouse] {
+		pedestalType = Baremetal
+	} else {
+		log.Fatalf("ambiguous pedestal type, please clear the host build cache and try again")
+	}
+
+	return pedestalType
 }
 
 // Currently, one host only support one pedestal type.
 func hostPedMatched(ped *Pedestal, os string) bool {
-	currentHost := hostPed()
-	if currentHost.PedestalType != ped.PedestalType {
-		return false
-	}
-	return true
+	currentHostType := HostPedestalType
+	return currentHostType == ped.PedestalType
 }
 
 func fileExists(path string) bool {
@@ -183,15 +282,6 @@ func setupBundle(bundle string) error {
 	// config := filepath.Join(bundle, "config.json")
 	rootfs := filepath.Join(bundle, "rootfs")
 
-	rootfsExists := fileExists(rootfs)
-	log.Debugf("rootfs <%s> Exists: %v", rootfs, rootfsExists)
-	// TODO: mount rootfs
-	if !rootfsExists {
-		if err := os.MkdirAll(rootfs, 0755); err != nil {
-			return fmt.Errorf("failed to create rootfs: %w", err)
-		}
-	}
-
 	// TODO: recursively chmod 0555
 	if err := setReadonly(rootfs); err != nil {
 		return fmt.Errorf("failed to chmod rootfs: %w", err)
@@ -202,7 +292,7 @@ func setupBundle(bundle string) error {
 
 func validBundle(containerID, bundlePath string) (string, error) {
 	if containerID == "" {
-		return "", fmt.Errorf("missing container ID")
+		return "", fmt.Errorf("container ID is empty")
 	}
 
 	if bundlePath == "" {
@@ -216,6 +306,19 @@ func validBundle(containerID, bundlePath string) (string, error) {
 	}
 	if !fileInfo.IsDir() {
 		return "", fmt.Errorf("invalid bundle path '%s', it should be a directory", bundlePath)
+	}
+
+	rootfs := filepath.Join(bundlePath, "rootfs")
+	fileInfo, err = os.Stat(rootfs)
+	if err != nil {
+		return "", fmt.Errorf("%s requires rootfs in bundle, invalid rootfs path '%s': %s", defs.RuntimeName, rootfs, err)
+	}
+	if !fileInfo.IsDir() {
+		return "", fmt.Errorf("%s requires rootfs in bundle, invalid rootfs path '%s', it should be a directory", defs.RuntimeName, rootfs)
+	}
+
+	if err := setupBundle(bundlePath); err != nil {
+		return "", fmt.Errorf("failed to setup bundle: %w", err)
 	}
 
 	// get a valid expanded path

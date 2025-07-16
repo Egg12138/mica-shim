@@ -25,6 +25,9 @@ func init() {
 		FullTimestamp:   true,
 		TimestampFormat: "01-02 15:04:05",
 	})
+	if err := CleanDebugFile(); err != nil {
+		Log.Errorf("failed to clean debug file: %v", err)
+	}
 }
 
 // Config represents the logger configuration
@@ -200,12 +203,6 @@ func getDebugInfoPrefix() string {
 
 // func Fprintf(format string, args ...interface{}) error {
 func LocateDebugf(format string, args ...interface{}) error {
-	if _, err := os.Stat(debugFileName); os.IsNotExist(err) {
-		if err := CleanDebugFile(); err != nil {
-			return err
-		}
-	}
-
 	f, err := os.OpenFile(debugFileName, os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		return err

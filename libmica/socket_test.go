@@ -84,7 +84,7 @@ func TestDummyCreateMsg(t *testing.T) {
 
 	id := rand.String(10)
 	conf := NewMicaCreateMsg(0, id, "", "", "", false)
-	response, err := Create(conf)
+	response, err := CreateMicaClient(conf)
 	if err != nil {
 		t.Errorf("TestCreate failed: %v", err)
 		return
@@ -149,8 +149,8 @@ func TestAllPublicFunctions(t *testing.T) {
 		name string
 		fn   func(conf MicaClientConf) (string, error)
 	}{
-		{"TestCreate", Create},
-		{"TestStart", Start},
+		{"TestCreate", CreateMicaClient},
+		{"TestStart", StartMicaClient},
 		{"TestStop", Stop},
 		{"TestRemove", Remove},
 	}

@@ -166,15 +166,17 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 // TODO: Only copy values, the evaluation procedure is in the caller function
 // TALK: 这是预留的核，实际client可能更后面启动, 以及启动可能失败
 // TODO: 现在我们全部假定是单核RTOS, mica侧还未实现多核, 但是在镜像label中，我们可以指定核数量
-func CreateMicaConf(container *cntr.Container) libmica.MicaClientConf {
+func CreateMicaConf(container *cntr.Container) (libmica.MicaClientConf, error) {
 	info := container.GetMicaContainerInfo()
 
 	firmware := info.FirmwarePath()
-	cpu := uint32(info.CPU())
 	pedestal := info.Ped()
 	name := container.ID
-
+	cpu, err  := container.GetClientCPU()
+	if err != nil {
+		return libmica.MicaClientConf{}, fmt.Errorf("failed to get client cpu: %w", err)
+	}
 	conf := libmica.MicaClientConf{}
-	conf.Init(cpu, name, firmware, pedestal.PedestalType.String(), pedestal.PedestalConf, false)
-	return conf
+	conf.Init(uint32(cpu), name, firmware, pedestal.PedestalType.String(), pedestal.PedestalConf, false)
+	return conf, nil
 }
