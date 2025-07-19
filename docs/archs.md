@@ -26,7 +26,7 @@ flowchart LR
         Kubernetes[Kubernetes] --> |CRI gRPC|Containerd
         CtrCLI[ctr CLI] --> |ttrpc/gRPC|Containerd
     end
-    
+   
     subgraph OCIImages ["OCI Images Sample Bundle"]
         BaseImage[zephyr-mica-scratch:1.0.0]
         BaseImage --> |extends|DebugApp[debug-enabled-zephyr]
@@ -218,46 +218,37 @@ flowchart TD
     style AutobootAnnotation fill:#f5f5f5,stroke:#999,stroke-dasharray: 5 5
 ```
 
-### DEMO 0.1 0620
+## Profiling
 
-```mermaid
-%%{init: {'theme':'auto'}}%%
-graph TB
-    CD[containerd] ==>|ttrpc/gRPC| S
-    S[mica-shim] ==> MR
-    MR[mica-runtime（目前跟shim合并在一起）] -->|IPC| A[micad]
-    MR -->C[OCI Bundle,RTOS image]
-    MR ==>|containerd shim.Command will call a Linux process|AG[RTOS Agent process]
-    A -->|RPMsg| B[RTOS Remote Core]
-    C -.->|annotation matched| MR
-    AG <--> |1:1对应|D
-    subgraph RTOS Side 来自bundle
-        RT[resource_table]
-        K[RTOS kernel]
-        B[libmetal/openAMP/...]
-        D[RTOS fs] ==> E
-        D --> L[libs]
-        D --> B
-        E[RTOS task workspace]
-    end
+### Runtime pprof server
+When mica-shim is started with the environment variable `MICA_SHIM_PPROF=1` it automatically starts a Go *pprof* HTTP server on `localhost:6060` (override with `MICA_SHIM_PPROF_ADDR`).  The server exposes the standard Go debug endpoints, e.g.:
 
-    subgraph mica daemon scope
-        A
-        MR
-        AG
-    end
+* `/debug/pprof/profile?seconds=30` – CPU profile sample
+* `/debug/pprof/heap` – Heap profile
+
+This works for both debug and production builds and does **not** change normal shim behaviour – the handler runs in a background goroutine.
+
+### One-shot flame-graph via Make
+For a quick, automated CPU profile and SVG flame-graph you can simply run:
+
+```bash
+make profile-flame        # debug build
+# or
+make profile-flame-prod   # production build
 ```
 
+The target will:
+1. build the chosen binary;
+2. start it in the background with pprof enabled;
+3. collect a 30-second CPU profile through the HTTP endpoint; and
+4. save the rendered SVG flame graph to `flamegraph.svg` before shutting the shim down.
 
-# Image
+For library-level benchmarks inside the `cntr` package you can also run:
 
-in the Dockerfile, these labels are defined in scratch image:
-
-```Dockerfile
-ARG RTOS="zephyr"
-LABEL io.mica.client.os="${RTOS}"
-LABEL io.mica.client.firmware="/zephyr.elf"
-LABEL io.mica.supported_boards="[\"qemu\", \"rpi4\"]"
-LABEL io.mica.client.support_pedestals="[\"baremetal\", \"jailhouse\", \"xen\"]"
+```bash
+make profile-cntr
 ```
 
+which produces `cntr_flamegraph.svg` from the internal benchmark harness.
+
+> ℹ️ The flame-graph generation relies on `go tool pprof` and Graphviz (`dot`). Make sure they are installed and in your `PATH`.

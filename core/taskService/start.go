@@ -13,7 +13,7 @@ import (
 
 // Start the client rtos with its entrypoint task and managing agent process
 func (s *micaTaskService) Start(ctx context.Context, r *taskAPI.StartRequest) (*taskAPI.StartResponse, error) {
-	log.LocateDebugf("start id:%s execid:%s", r.ID, r.ExecID)
+	log.FDebugf("start id:%s execid:%s", r.ID, r.ExecID)
 
 	s.m.RLock()
 	defer s.m.RUnlock()

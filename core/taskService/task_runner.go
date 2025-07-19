@@ -18,17 +18,20 @@ func create(ctx context.Context, req *taskAPI.CreateTaskRequest) (taskRes *taskA
 	// NOTICE: currently, everytime mica startup client os, it search files from the given path
 	// There, we must verify the bundle integrity before creating && **running** the client os.
 
-	spec, err := cntr.LoadContainerConf(req)
+	// c, err := cntr.NewContainer()
+
+	log.Debugf(`create task: 
+		req.Rootfs = %s
+		req.Bundle = %s
+		req.ID = %s
+		req.Terminal = %v
+		req.Stdin = %v
+		req.Stdout = %v
+		req.Stderr = %v`, req.Rootfs, req.Bundle, req.ID, req.Terminal, req.Stdin, req.Stdout, req.Stderr)
+
+	container, err := cntr.SetupContainer(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load container spec: %w", err)
-	}
-	ctype, err := cntr.GetContainerType(spec)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get container type: %w", err)
-	}
-	container, err := cntr.NewContainer(req, *spec, ctype)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create mica container instance: %w", err)
+		return nil, fmt.Errorf("%w", err)
 	}
 	conf, err := CreateMicaConf(container)
 	if err != nil {
@@ -43,7 +46,7 @@ func create(ctx context.Context, req *taskAPI.CreateTaskRequest) (taskRes *taskA
 		taskRes = &taskAPI.CreateTaskResponse{
 			Pid: 1,
 		}
-		log.LocateDebugf("mica create success")
+		log.FDebugf("mica create success")
 	}
 
 	return nil, nil

@@ -13,6 +13,9 @@ docs/mica-io-implementation.md
 *.dll
 *.so
 *.dylib
+*.elf
+*.bin
+
 builds/
 main
 tests/mock_micad/mock_micad
@@ -45,3 +48,6 @@ go.work.sum
 # .idea/
 .vscode/
 .cursorignore
+cntr/cntr_flamegraph.svg
+flamegraph.svg
+cpu.prof

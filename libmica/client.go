@@ -10,6 +10,14 @@ import (
 )
 
 type MicaCommand string
+type PedType int
+
+const (
+	// 0
+	Baremetal PedType = iota
+	Jailhouse
+	Xen
+)
 
 const (
 	MCreate MicaCommand = "create"
@@ -18,6 +26,16 @@ const (
 	MRemove MicaCommand = "rm"
 	MStatus MicaCommand = "status"
 )
+
+type McsFS struct {
+	Source string `json:"source"`
+	//
+	Target  string   `json:"target"`
+	Ped     PedType  `json:"ped"`
+	OS      string   `json:"os"`
+	Mounted bool     `json:"mounted"`
+	Options []string `json:"options"`
+}
 
 // NOTICE: we have to ensure the length of each field consistency with the length of the field in mica daemon
 // TODO: add explaination for each field
@@ -74,7 +92,7 @@ func MicaCtl(cmd MicaCommand, client string) (string, error) {
 		return "", fmt.Errorf("mica socket directory does not exist, please check if micad is running")
 	}
 	target := filepath.Join(defs.MicaSocketDir, client+".socket")
-	log.LocateDebugf("client socket path: %s", target)
+	log.FDebugf("client socket path: %s", target)
 	s := newMicaSocket(target)
 	msg := string(cmd)
 	return s.handleMsg([]byte(msg))
@@ -88,7 +106,7 @@ func NewMicaCreateMsg(cpu uint32, name string, path string, ped string, pedCfg s
 }
 
 func CreateMicaClient(conf MicaClientConf) (string, error) {
-	log.LocateDebugf("create mica client conf: %+v", conf)
+	log.FDebugf("create mica client conf: %+v", conf)
 	s := newMicaSocket(defs.MicaCreatSocketPath)
 	// we do not deref s here, because it is dropped in handleMsg()
 	msg := conf.pack()

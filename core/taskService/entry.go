@@ -36,7 +36,6 @@ import (
 	ptypes "github.com/containerd/containerd/protobuf/types"
 )
 
-
 type MicaContainer struct {
 	ID         string
 	Bundle     string
@@ -50,7 +49,6 @@ type MicaContainer struct {
 	Checkpoint string
 	m          sync.RWMutex
 }
-
 
 // Delete deletes a task.
 func (s *micaTaskService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*taskAPI.DeleteResponse, error) {

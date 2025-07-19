@@ -59,7 +59,7 @@ func initSharedMemory(create bool) error {
 
 	if create {
 		if err := fd.Truncate(int64(SHM_SIZE)); err != nil {
-			log.LocateDebugf("failed to truncate shared memory: %v", err)
+			log.FDebugf("failed to truncate shared memory: %v", err)
 			return err
 		}
 	}
@@ -67,7 +67,7 @@ func initSharedMemory(create bool) error {
 	prot := syscall.PROT_READ | syscall.PROT_WRITE
 	data, err := syscall.Mmap(int(fd.Fd()), 0, SHM_SIZE, prot, syscall.MAP_SHARED)
 	if err != nil {
-		log.LocateDebugf("failed to mmap shared memory: %v", err)
+		log.FDebugf("failed to mmap shared memory: %v", err)
 		return err
 	}
 

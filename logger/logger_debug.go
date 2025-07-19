@@ -1,5 +1,5 @@
-//go:build !debug
-// +build !debug
+//go:build debug
+// +build debug
 
 package log
 
@@ -15,7 +15,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-const debugFileName = "/var/log/mica/mica-runtime.log"
+const debugFileName = "/tmp/mica/mica-runtime.log"
 
 var (
 	Log = logrus.New()
@@ -42,6 +42,8 @@ type Config struct {
 	Debug bool
 }
 
+// TODO:
+// make a symbolic link <debugFileName> to <debugFileName>-<ContainerID>.log
 func Init(config *Config) error {
 	if config == nil {
 		return nil
@@ -105,12 +107,13 @@ func WithError(err error) *logrus.Entry {
 }
 
 func Debug(args ...interface{}) {
-	Log.Debug(args...)
+	Debugf("%v", args...)
 }
 
+// In debug mode, all debugf will duplicate the debug message to both debug file and stderr
 func Debugf(format string, args ...interface{}) {
-	prefix := getDebugInfoPrefix()
-	Log.Debugf(prefix+format+"\n", args...)
+	Log.Debugf(format+"\n", args...)
+	FDebugf(format, args...)
 }
 
 func Info(args ...interface{}) {
@@ -174,33 +177,32 @@ func CleanDebugFile() error {
 	defer f.Close()
 
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
-	_, err = fmt.Fprintf(f, "\n\n%s", timestamp)
+	_, err = fmt.Fprintf(f, "\n\n============ %s ============\n", timestamp)
 	return err
 }
 
-// Used for those debug points needed to be traced call stack
 func getDebugInfoPrefix() string {
 	var prefix = ""
-	pc_parent, _, _, ok := runtime.Caller(3)
+	pc_parent, _, _, ok := runtime.Caller(5)
 	if ok {
 		fullFuncName := runtime.FuncForPC(pc_parent).Name()
 		funcName := filepath.Base(fullFuncName)
-		prefix += fmt.Sprintf("%s-> ", funcName)
+		prefix += fmt.Sprintf(" \033[34m%s()\033[0m calls ", funcName)
 	}
-	pc, _, _, ok := runtime.Caller(2)
+	pc, _, _, ok := runtime.Caller(4)
 	if ok {
-		var caller string
+		var callee string
 		fullFuncName := runtime.FuncForPC(pc).Name()
 		file, line := runtime.FuncForPC(pc).FileLine(pc)
 		file = filepath.Base(file)
-		caller = fullFuncName
-		caller = "\033[32m" + caller + "\033[0m"
-		prefix += fmt.Sprintf("[\033[33m%s:%d\033[0m] %s \n\t", file, line, caller)
+		callee = fullFuncName
+		callee = "\033[32m" + callee + "\033[0m"
+		prefix += fmt.Sprintf("%s(),debug at [\033[33m%s:%d\033[0m] \n\t", callee, file, line)
 	}
 	return prefix
 }
 
-// FDebugf write debug message to debug file
+// Used for those debug points needed to be traced call stack
 func FDebugf(format string, args ...interface{}) error {
 	f, err := os.OpenFile(debugFileName, os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {

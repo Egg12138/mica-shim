@@ -30,7 +30,7 @@
 - [ ] libmica: containerd rpc--> mica config, 任务配置对接
 - [x] 确定Linux:RTOS clientos 1:1模型的必要性
 - [ ] pty
-- [ ] 镜像规制考虑
+- [x] 镜像规制考虑
 
 ## ️ Roadmap
 
@@ -38,8 +38,8 @@
 
 - [x] 能通过 isula 拉起 一个 dummy 镜像
 - [ ] 自如管理 基本镜像的： OS register, OS boot, Task start
-- [ ] 提供一个mica-from-scrach基础镜像,根据这个镜像来搭建混部容器镜像,并且可以根据这些镜像拉起服务
-- [ ] Client OS 和 Client Task process 的明确分离管理
+- [x] 提供一个mica-from-scrach基础镜像,根据这个镜像来搭建混部容器镜像,并且可以根据这些镜像拉起服务
+- [x] Client OS 和 Client Task process 的明确分离管理
 - [ ] IO 接管
 - [ ] 持久化
 - [ ] 网络
@@ -88,7 +88,8 @@
 ### 🔧 非功能性调整
 
 - [ ] 调整logger模块：
-  - [ ] 去掉LocateDebugf等，全部作为 Debugf:Debugf会同时给containerd;mica shim logFile;stdout都输出；但内容格式不同
+  - [ ] LocateDebugf -> FDebugf
+  - [ ] 完全去掉LocateDebugf等，全部作为 Debugf:Debugf会同时给containerd;mica shim logFile;stdout都输出；但内容格式不同
 - [x] libmica 接口暴露过多，应减少，并且提供更好的抽象
 - [x] containerd_client 对mica-shim runtime运行
 - [ ] 优雅的错误处理

@@ -16,6 +16,7 @@ import (
 
 	taskAPI "github.com/containerd/containerd/api/runtime/task/v2"
 	"github.com/containerd/containerd/api/types/task"
+	"github.com/containerd/containerd/mount"
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
@@ -141,8 +142,10 @@ func parseConfigINI(bundle string) (map[string]string, error) {
 type ContainerConf struct {
 	Spec specs.Spec
 	// resolved bundle path
-	Bundle string
+	Bundle   string
 	MicaConf map[string]string
+	Type     ContainerType
+	Detach   bool
 }
 
 // MicaContainerInfo contains the resolved container information
@@ -240,12 +243,19 @@ type Container struct {
 
 // *************** Constructors *************** //
 
-// get oci spec and container config from bundle
-func getContainerConf(bundle string) (*ContainerConf, error) {
+func loadSpec(bundle string) (specs.Spec, error) {
 	ociSpec, err := parseConfigJSON(bundle)
 	if err != nil {
-		return nil, err
+		return specs.Spec{}, err
 	}
+	return ociSpec, nil
+}
+
+// get oci spec and container config from bundle
+func parseContainerConf(bundle string, ocispec specs.Spec) (*ContainerConf, error) {
+	log.Debugf("recursively walk bundle <%s>: \n %s", bundle, walkDir(bundle))
+
+	time.Sleep(3 * time.Second)
 
 	clientConf, err := parseConfigINI(bundle)
 	if err != nil {
@@ -253,8 +263,8 @@ func getContainerConf(bundle string) (*ContainerConf, error) {
 	}
 
 	return &ContainerConf{
-		Spec:   ociSpec,
-		Bundle: bundle,
+		Spec:     ocispec,
+		Bundle:   bundle,
 		MicaConf: clientConf,
 	}, nil
 }
@@ -277,30 +287,38 @@ func (conf *ContainerConf) containerInfoParse() (*MicaContainerInfo, error) {
 	// CPU and ncpu will be parsed here
 
 	if err := result.parseMicaLabels(labels); err != nil {
-		log.LocateDebugf("failed to parse all mica labels: %v", err)
+		log.Debugf("failed to parse all mica labels: %v", err)
 		return nil, err
 	}
+	if result.os == "" {
+		log.Warn("os is not set, default to zephyr")
+		result.os = "zephyr"
+	}
+	log.Debugf("containerInfoParse: %+v", result)
 	return result, nil
 }
 
-func LoadContainerConf(r *taskAPI.CreateTaskRequest) (*ContainerConf, error) {
+// deprecated: should not parse client.conf and config.json at the same time
+// NOTICE: client.conf is parsed after rootfs is mounted, of which oci spec is before
+func loadContainerConf(r *taskAPI.CreateTaskRequest, ocispec specs.Spec, detach bool) (*ContainerConf, error) {
 	bundlePath, err := validBundle(r.ID, r.Bundle)
 	if err != nil {
 		return nil, err
 	}
 
-	containerSpec, err := getContainerConf(bundlePath)
+	containerSpec, err := parseContainerConf(bundlePath, ocispec)
 	if err != nil {
 		return nil, err
 	}
 
+	containerSpec.Detach = detach
+
 	return containerSpec, nil
 }
 
-func GetContainerType(spec *ContainerConf) (ContainerType, error) {
-	ocispec := spec.Spec
+func getContainerType(spec *specs.Spec) (ContainerType, error) {
 	for _, key := range CRIContainerTypeKeyList {
-		containerType, ok := ocispec.Annotations[key]
+		containerType, ok := spec.Annotations[key]
 		if !ok {
 			continue
 		}
@@ -315,26 +333,110 @@ func GetContainerType(spec *ContainerConf) (ContainerType, error) {
 	return Regular, nil
 }
 
+type Mount struct {
+	Type    string
+	Source  string
+	Target  string
+	Options []string
+}
+
+func SetupContainer(req *taskAPI.CreateTaskRequest) (_ *Container, retErr error) {
+	// presetRootfs(req)
+	detach := !req.Terminal
+	// spec, err := loadContainerConf(req)
+	spec, err := loadSpec(req.Bundle)
+	enableTTy := spec.Process.Terminal
+	// when tty is disable, stdio use regular pipe, which containerd needs pipe io to log
+	disableOutput := detach && enableTTy
+	// TALK: act like kata?
+	// runtimeConfig, err := parseRuntimeConfig(r, spec.Annotations)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to load container spec: %w", err)
+	}
+	ctype, err := getContainerType(&spec)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get container type: %w", err)
+	}
+
+	switch ctype {
+	case PodSandbox, Regular:
+
+		if ctype == PodSandbox {
+			log.Info("TODO: setup cpu/mem resources size for sandbox")
+		} else {
+			log.Info("Only set one one cpu for a container. Memory is not limited")
+		}
+
+		var mounts []mount.Mount
+
+		for _, mnt := range req.Rootfs {
+			mounts = append(mounts, mount.Mount{
+				Type:    mnt.Type,
+				Source:  mnt.Source,
+				Target:  mnt.Target,
+				Options: mnt.Options,
+			})
+
+			rootfsPath := filepath.Join(req.Bundle, "rootfs")
+			if len(mounts) > 0 {
+				if err := os.Mkdir(rootfsPath, 0711); err != nil && !os.IsExist(err) {
+					return nil, err
+				}
+			}
+
+			if err := mount.All(mounts, rootfsPath); err != nil {
+				return nil, fmt.Errorf("failed to mount rootfs: %w", err)
+			}
+			defer func() {
+				if retErr != nil {
+					if err := mount.UnmountMounts(mounts, rootfsPath, 0); err != nil {
+						log.Errorf("failed to unmount rootfs: %v", err)
+					}
+				}
+			}()
+
+		}
+
+	default:
+		log.Fatalf("container type: %s is not supported yet", ctype)
+	}
+
+	// preset for sandbox, pod...
+	presetSandbox()
+
+	cconf, err := loadContainerConf(req, spec, disableOutput)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load container conf: %w", err)
+	}
+	container, err := newContainer(req, *cconf)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create mica container instance: %w", err)
+	}
+	return container, err
+}
+
 // A new container instance, initialized only :
 // 1. checked bundle path
 // 2. parsed container spec
 // 3. parsed container info
-func NewContainer(r *taskAPI.CreateTaskRequest, spec ContainerConf, cT ContainerType) (*Container, error) {
-	info, err := spec.containerInfoParse()
+func newContainer(r *taskAPI.CreateTaskRequest, cconf ContainerConf) (*Container, error) {
+	info, err := cconf.containerInfoParse()
 	if err != nil {
 		return nil, err
 	}
 
 	container := &Container{
-		bundle:   spec.Bundle,
+		bundle:   cconf.Bundle,
 		ID:       r.ID,
 		io:       nil,
 		exitCode: 0,
-		cType:    cT,
-		spec:     &spec,
+		cType:    cconf.Type,
+		spec:     &cconf,
 		info:     info,
 		// status: remain empty
 	}
+	log.Debugf("new container: %+v", container)
 
 	if !container.validMicaContainer() {
 		return nil, fmt.Errorf("invalid mica container: %+v", container)
@@ -376,7 +478,7 @@ func (r *MicaContainerInfo) parseMicaLabels(labels map[string]string) error {
 			if v == "" {
 				return fmt.Errorf("missing os label")
 			}
-			log.LocateDebugf("current os label: %s", v)
+			log.FDebugf("current os label: %s", v)
 			if !validOS(v) {
 				return fmt.Errorf("invalid os label: %s", v)
 			}
@@ -480,12 +582,14 @@ func (r *MicaContainerInfo) cpuUnset() bool {
 //		ncpu: int
 //	}
 func (c *Container) validMicaContainer() bool {
-	return validOS(c.info.OS()) &&
+	log.Debugf("validating MicaContainer: %+v", c.info)
+	judge := validOS(c.info.OS()) &&
 		validFirmware(c.spec.Bundle, c.info.FirmwarePath()) &&
 		validCompatibility(c.info) &&
 		hostPedMatched(c.info.Ped(), c.info.OS())
+	log.Debugf("MicaContainer validation result: %v", judge)
+	return judge
 }
-
 
 func (c *Container) GetMicaContainerInfo() *MicaContainerInfo {
 	return c.info

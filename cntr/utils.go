@@ -84,10 +84,10 @@ func physicalMaxCPURobust() int {
 	return runtime.NumCPU()
 }
 
-
 // physical Max CPU in the perspective of container runtime!
 func physicalMaxCPU() int {
-	log.Debugf("no physical CPU IDs found in /proc/cpuinfo, using runtime.NumCPU()")
+	// log.Debugf("no physical CPU IDs found in /proc/cpuinfo, using runtime.NumCPU()")
+	log.Debugf("Currently use runtime.NumCPU()")
 	return runtime.NumCPU()
 }
 
@@ -110,11 +110,11 @@ func availableMaxCPU() int {
 func getNcpu(v string) int {
 	ncpu, err := strconv.Atoi(v)
 	if err != nil {
-		log.Warnf("failed to parse ncpu(int) label from %s, set to %s: %v", v, defs.DefaultNcpu, err)
+		log.Warnf("failed to parse ncpu(int) label from %s, set to %d: %v", v, defs.DefaultNcpu, err)
 	} else if ncpu > HostMaxCPU {
 		log.Warnf("ncpu(int) label from %s is greater than the available max CPU, set to %d", v, availableMaxCPU())
 	} else if ncpu < 1 {
-		log.Warnf("ncpu(int) label from %s is less than 1, set to %s", v, defs.DefaultNcpu)
+		log.Warnf("ncpu(int) label from %s is less than 1, set to %d", v, defs.DefaultNcpu)
 	} else {
 		return ncpu
 	}
@@ -129,24 +129,26 @@ func allocCPU(ncpu int) (int, error) {
 	if ncpu < 1 {
 		return 0, fmt.Errorf("ncpu must be at least 1, got %d", ncpu)
 	}
-	
+
 	maxCPU := HostMaxCPU
 	if ncpu > maxCPU {
 		return 0, fmt.Errorf("requested ncpu %d exceeds available max CPU %d", ncpu, maxCPU)
 	}
-	
+
 	// Simple round-robin allocation based on current time
 	// In a real implementation, this would track allocated CPUs
 	// For now, just return a CPU ID within the available range
 	allocatedCPU := int(time.Now().UnixNano()) % maxCPU
-	
+
 	log.Debugf("Allocated CPU %d for ncpu=%d (max available: %d)", allocatedCPU, ncpu, maxCPU)
 	return allocatedCPU, nil
 }
 
 // check OS value matches
 func validOS(os string) bool {
-	return inList(defs.PreservedOS[:], os)
+	ret := inList(defs.PreservedOS[:], os)
+	log.Debugf("validating OS: %s, result: %v", os, ret)
+	return ret
 }
 
 func validFirmware(root, firmware string) bool {
@@ -165,87 +167,116 @@ func validCompatibility(info *MicaContainerInfo) bool {
 	return true
 }
 
-func detectXen() int {
-	if _, err := os.Stat("/proc/xen"); err == nil {
-		return 1
+// Recursively walk the directory and return a string of the directory tree
+// Used for debug
+func walkDir(dir string) string {
+	// Build a human-readable directory tree for debug purposes.
+	// On any failure it returns a string prefixed with "Walk error:" describing the problem.
+	var builder strings.Builder
+
+	root, err := filepath.Abs(dir)
+	if err != nil {
+		return fmt.Sprintf("Walk error: %v", err)
 	}
-	return 0
+
+	walkErr := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return relErr
+		}
+
+		depth := 0
+		if rel != "." {
+			depth = strings.Count(rel, string(os.PathSeparator))
+		}
+		indent := strings.Repeat("  ", depth)
+
+		if info.IsDir() {
+			builder.WriteString(fmt.Sprintf("%s%s/\n", indent, info.Name()))
+		} else {
+			builder.WriteString(fmt.Sprintf("%s%s\n", indent, info.Name()))
+		}
+		return nil
+	})
+
+	if walkErr != nil {
+		return fmt.Sprintf("Walk error: %v", walkErr)
+	}
+
+	return builder.String()
+}
+
+func detectXen() int {
+	if _, err := os.Stat("/proc/xen"); err != nil {
+		return 0
+	}
+	return 1
 }
 
 func detectJailhouse() int {
-	weight := 0
-	if _, err := os.Stat("/sys/devices/jailhouse"); err == nil {
-		weight++
+	if _, err := os.Stat("/sys/devices/jailhouse"); err != nil {
+		return 0
 	}
-	if _, err := os.Stat("/usr/share/jailhouse"); err == nil {
-		weight++
+	if _, err := os.Stat("/usr/share/jailhouse"); err != nil {
+		return 0
 	}
-	if _, err := os.Stat("/etc/modules-load.d/jailhouse.conf"); err == nil {
-		weight++
+	if _, err := os.Stat("/etc/modules-load.d/jailhouse.conf"); err != nil {
+		return 0
 	}
 
 	kernelRelease, err := os.ReadFile("/proc/sys/kernel/osrelease")
 	if err == nil {
 		release := strings.TrimSpace(string(kernelRelease))
 		jailhouseKoPath := fmt.Sprintf("/lib/modules/%s/extra/driver/jailhouse.ko", release)
-		if _, err := os.Stat(jailhouseKoPath); err == nil {
-			weight += 2
+		if _, err := os.Stat(jailhouseKoPath); err != nil {
+			return 0
 		}
 	}
 
-	files, err := filepath.Glob("/usr/libexec/jailhouse/jailhouse-*")
-	if err == nil {
-		weight += len(files)
+	_, err = filepath.Glob("/usr/libexec/jailhouse/jailhouse-*")
+	if err != nil {
+		return 0
 	}
 
-	return weight
+	return 1
 }
 
 func detectBaremetal() int {
 	// check loaded Kerkenl modules contains "mcs":
-	weight := 0
 	kernelRelease, err := os.ReadFile("/proc/sys/kernel/osrelease")
+	return 1
 	if err == nil {
 		release := strings.TrimSpace(string(kernelRelease))
 		mcsKoPath := fmt.Sprintf("/lib/modules/%s/extra/mcs.ko", release)
-		if _, err := os.Stat(mcsKoPath); err == nil {
-			weight += 2
+		if _, err := os.Stat(mcsKoPath); err != nil {
+			return 0
 		}
 	}
 
-	if _, err := os.Stat("/etc/modules-load.d/mcs.conf"); err == nil {
-		weight += 1
+	if _, err := os.Stat("/etc/modules-load.d/mcs.conf"); err != nil {
+		return 0
 	}
 
-	if _, err := os.Stat("/usr/share/mcs"); err == nil {
-		weight += 1
+	if _, err := os.Stat("/usr/share/mcs"); err != nil {
+		return 0
 	}
 
-	return weight
+	return 1
 }
 
 // TODO: mark this information a host-level config, the "guessing" only needs once
 // 'Guess' what pedestal the host is on
 func hostPed() PedType {
-
-	weights := []int{0, 0, 0}
-
-	weights[Xen] += detectXen()
-	weights[Jailhouse] += detectJailhouse()
-	weights[Baremetal] += detectBaremetal()
-
-	pedestalType := Baremetal
-	// maxWeight := weights[Baremetal]
-	// TODO: support detect Xen , and handle same weight case (corner case)
-	if weights[Jailhouse] > weights[Baremetal] {
-		pedestalType = Jailhouse
-	} else if weights[Baremetal] > weights[Jailhouse] {
-		pedestalType = Baremetal
-	} else {
-		log.Fatalf("ambiguous pedestal type, please clear the host build cache and try again")
+	weights := []int{detectXen(), detectJailhouse(), detectBaremetal()}
+	index := 1*weights[Baremetal] + 2*weights[Jailhouse] + 3*weights[Xen] - 1
+	if index < 0 || index > 2 {
+		return Unknown
 	}
-
-	return pedestalType
+	return PedType(index)
 }
 
 // Currently, one host only support one pedestal type.
@@ -256,10 +287,7 @@ func hostPedMatched(ped *Pedestal, os string) bool {
 
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return false
-	}
-	return true
+	return !errors.Is(err, os.ErrNotExist)
 }
 
 func setReadonly(path string) error {
@@ -334,7 +362,7 @@ func validBundle(containerID, bundlePath string) (string, error) {
 // specified path.
 func resolvePath(path string) (string, error) {
 	if path == "" {
-		log.LocateDebugf("path must be specified")
+		log.FDebugf("path must be specified")
 		return "", fmt.Errorf("path must be specified")
 	}
 
@@ -354,3 +382,5 @@ func resolvePath(path string) (string, error) {
 
 	return resolved, nil
 }
+
+func presetSandbox() {}

@@ -23,7 +23,7 @@ import (
 // we will complete it in future and make it a real good init process.
 // TALK: the init process receives signals from containerd,
 func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) (_ *taskAPI.CreateTaskResponse, retErr error) {
-	log.LocateDebugf("create id:%s", r.ID)
+	log.FDebugf("create id:%s", r.ID)
 	s.m.Lock()
 	defer s.m.Unlock()
 	if _, ok := s.procs[r.ID]; ok {
@@ -36,7 +36,7 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 	}
 
 	// Create mica client first - this registers with micad but doesn't start PTY services yet
-	log.LocateDebugf("Creating mica client for task %s", r.ID)
+	log.FDebugf("Creating mica client for task %s", r.ID)
 	_, err = create(ctx, r)
 	if err != nil {
 		return nil, fmt.Errorf("creating mica client: %w", err)
@@ -67,13 +67,13 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 	// Initialize MicaIO for future PTY communication
 	// Note: PTY devices will be created later when mica client starts
 	micaIO, err := libmica.NewMicaIO(ctx, r.ID, r.Stdin, r.Stdout, r.Stderr, r.Terminal)
-	log.LocateDebugf("micaIO: %v", micaIO)
+	log.FDebugf("micaIO: %v", micaIO)
 	if err != nil {
 		return nil, fmt.Errorf("creating mica IO: %w", err)
 	}
 
 	// Start the placeholder process
-	// NOTICE: only created successfully, then handle pty
+	// NOTICE: only if created successfully, handle pty
 	if err := cmd.Start(); err != nil {
 		micaIO.Close()
 		return nil, fmt.Errorf("starting placeholder process: %w", err)
@@ -82,13 +82,13 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 	defer func() {
 		if retErr != nil {
 			if err := micaIO.Close(); err != nil {
-				log.LocateDebugf("pid = %v, err = %v", cmd.Process.Pid, err)
+				log.FDebugf("pid = %v, err = %v", cmd.Process.Pid, err)
 				log.Error("failed to close mica IO")
 			}
 			if cmd.Process != nil {
 				// we do not care the debug commandline, just kill it.
 				if err := cmd.Process.Kill(); err != nil {
-					log.LocateDebugf("pid = %v, err = %v", cmd.Process.Pid, err)
+					log.FDebugf("pid = %v, err = %v", cmd.Process.Pid, err)
 					log.Error("failed to debug kill placeholder process")
 				}
 			}
@@ -172,7 +172,8 @@ func CreateMicaConf(container *cntr.Container) (libmica.MicaClientConf, error) {
 	firmware := info.FirmwarePath()
 	pedestal := info.Ped()
 	name := container.ID
-	cpu, err  := container.GetClientCPU()
+	// TODO: Calculate the CPU too late, we should calculate it in the container creation
+	cpu, err := container.GetClientCPU()
 	if err != nil {
 		return libmica.MicaClientConf{}, fmt.Errorf("failed to get client cpu: %w", err)
 	}
