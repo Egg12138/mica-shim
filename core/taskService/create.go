@@ -19,8 +19,9 @@ import (
 )
 
 // Create creates a new containerd task and **setup rtos Client**
-// TODO: Currently, init process is just a placeholder process,
-// we will complete it in future and make it a real good init process.
+// The init process is now a true init process :
+// 1. satisfy containerd's requirements
+// 2. as an agent, managing something needed in future
 // TALK: the init process receives signals from containerd,
 func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) (_ *taskAPI.CreateTaskResponse, retErr error) {
 	log.FDebugf("create id:%s", r.ID)
@@ -72,11 +73,11 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 		return nil, fmt.Errorf("creating mica IO: %w", err)
 	}
 
-	// Start the placeholder process
+	// Start the MICA init process
 	// NOTICE: only if created successfully, handle pty
 	if err := cmd.Start(); err != nil {
 		micaIO.Close()
-		return nil, fmt.Errorf("starting placeholder process: %w", err)
+		return nil, fmt.Errorf("starting MICA init process: %w", err)
 	}
 
 	defer func() {
@@ -86,17 +87,17 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 				log.Error("failed to close mica IO")
 			}
 			if cmd.Process != nil {
-				// we do not care the debug commandline, just kill it.
+				// Kill the MICA init process on error
 				if err := cmd.Process.Kill(); err != nil {
 					log.FDebugf("pid = %v, err = %v", cmd.Process.Pid, err)
-					log.Error("failed to debug kill placeholder process")
+					log.Error("failed to kill MICA init process")
 				}
 			}
 		}
 	}()
 
 	pid := cmd.Process.Pid
-	log.Debugf("Created placeholder process with PID %d for task %s", pid, r.ID)
+	log.Debugf("Created MICA init process with PID %d for task %s", pid, r.ID)
 
 	doneCtx, markDone := context.WithCancel(context.Background())
 
@@ -105,7 +106,7 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 
 		if err := cmd.Wait(); err != nil {
 			if _, ok := err.(*exec.ExitError); !ok {
-				log.Errorf("failed to wait for placeholder process %d", pid)
+				log.Errorf("failed to wait for MICA init process %d", pid)
 			}
 		}
 
@@ -119,7 +120,7 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 				exitStatus = exitCodeSignal + int(unixWaitStatus.Signal())
 			}
 		} else {
-			log.Warn("placeholder process wait returned without setting process state")
+			log.Warn("MICA init process wait returned without setting process state")
 		}
 
 		s.m.Lock()
@@ -127,7 +128,7 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 
 		proc, ok := s.procs[r.ID]
 		if !ok {
-			log.Errorf("failed to write final status of done placeholder process: task was removed")
+			log.Errorf("failed to write final status of done MICA init process: task was removed")
 			return
 		}
 
@@ -144,8 +145,9 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 
 	// Write PID file for containerd compatibility
 	pidPath := filepath.Join(filepath.Join(filepath.Dir(cwd), r.ID), initPidFile)
+	log.Debugf("we do created a pidFile: %s", pidPath)
 	if err := shim.WritePidFile(pidPath, pid); err != nil {
-		return nil, fmt.Errorf("writing pid file of placeholder process: %w", err)
+		return nil, fmt.Errorf("writing pid file of MICA init process: %w", err)
 	}
 
 	s.procs[r.ID] = &initProcess{
@@ -155,7 +157,7 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 		micaIO:  micaIO,
 	}
 
-	log.Infof("Successfully created MICA task %s with placeholder PID %d", r.ID, pid)
+	log.Infof("Successfully created MICA task %s with init process PID %d", r.ID, pid)
 	return &taskAPI.CreateTaskResponse{
 		Pid: uint32(pid),
 	}, nil

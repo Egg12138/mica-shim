@@ -11,9 +11,9 @@ const (
 	DefaultClientConf = "client.conf"
 	// ini config keys in [Mica] section of client.conf
 	OS           = "os"
-	Firmware     = "firmware"
+	Firmware     = "clientpath"
 	Pedestal     = "pedestal"
-	PedestalConf = "pedestal_conf"
+	PedestalConf = "pedestalconf"
 	Ncpu         = "ncpu"
 	Compat       = "compatibility"
 

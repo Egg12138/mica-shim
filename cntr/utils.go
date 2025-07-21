@@ -153,6 +153,7 @@ func validOS(os string) bool {
 
 func validFirmware(root, firmware string) bool {
 	// <bundle>/rootfs/<firmware>
+	log.Debugf("validating firmware: %s", firmware)
 	resolved, err := resolvePath(filepath.Join(root, firmware))
 	if err != nil {
 		return false
@@ -271,7 +272,8 @@ func detectBaremetal() int {
 // TODO: mark this information a host-level config, the "guessing" only needs once
 // 'Guess' what pedestal the host is on
 func hostPed() PedType {
-	weights := []int{detectXen(), detectJailhouse(), detectBaremetal()}
+	// weights := []int{detectXen(), detectJailhouse(), detectBaremetal()}
+	weights := []int{detectBaremetal(), detectJailhouse(), detectXen()}
 	index := 1*weights[Baremetal] + 2*weights[Jailhouse] + 3*weights[Xen] - 1
 	if index < 0 || index > 2 {
 		return Unknown
@@ -281,8 +283,10 @@ func hostPed() PedType {
 
 // Currently, one host only support one pedestal type.
 func hostPedMatched(ped *Pedestal, os string) bool {
-	currentHostType := HostPedestalType
-	return currentHostType == ped.PedestalType
+	ret := HostPedestalType == ped.PedestalType
+	log.Debugf("hostPedMatched: %v, %s, result: %v", ped, os, ret)
+	log.Debugf("hostPedestalType: %v, ped.PedestalType: %v", HostPedestalType, ped.PedestalType)
+	return ret
 }
 
 func fileExists(path string) bool {

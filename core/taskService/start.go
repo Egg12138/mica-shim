@@ -36,7 +36,7 @@ func (s *micaTaskService) Start(ctx context.Context, r *taskAPI.StartRequest) (*
 	// Step 2: Wait a moment for micad to complete service registration and PTY creation
 	// This is necessary because micad creates PTY devices asynchronously after client start
 	log.Debugf("Waiting for micad to complete service initialization for task %s", r.ID)
-	time.Sleep(2 * time.Second) // Give micad time to create PTY services
+	time.Sleep(5 * time.Second) // Give micad time to create PTY services
 
 	// Step 3: Start MicaIO to handle PTY communication
 	// This will discover and connect to the PTY device created by micad

@@ -154,7 +154,8 @@ type MicaContainerInfo struct {
 	extraLabels map[string]string
 	// relative firmware path to the bundle. in most cases, it is "rootfs/<firmware_path>"
 	relativePath string
-	pedestal     *Pedestal
+	pedestalType PedType
+	pedestalConf string
 	os           string
 	// support single cpu for now
 	// mica runtime will allocate CPU when close to libmica.create()
@@ -192,14 +193,14 @@ func (p PedType) String() string {
 
 func ParsePedType(s string) PedType {
 	switch strings.ToLower(s) {
-	case "baremetal":
+	case "baremetal", "openamp", "":
 		return Baremetal
-	case "jailhouse":
+	case "jailhouse", "jail":
 		return Jailhouse
 	case "xen":
 		return Xen
 	default:
-		return Baremetal // default to baremetal
+		return Unknown // default to baremetal
 	}
 }
 
@@ -255,7 +256,7 @@ func loadSpec(bundle string) (specs.Spec, error) {
 func parseContainerConf(bundle string, ocispec specs.Spec) (*ContainerConf, error) {
 	log.Debugf("recursively walk bundle <%s>: \n %s", bundle, walkDir(bundle))
 
-	time.Sleep(3 * time.Second)
+	time.Sleep(6 * time.Second)
 
 	clientConf, err := parseConfigINI(bundle)
 	if err != nil {
@@ -277,7 +278,8 @@ func (conf *ContainerConf) containerInfoParse() (*MicaContainerInfo, error) {
 	result := &MicaContainerInfo{
 		extraLabels:  make(map[string]string),
 		relativePath: "",
-		pedestal:     nil,
+		pedestalType: Unknown,
+		pedestalConf: "",
 		os:           "",
 		cpu:          -1,
 		ncpu:         1,
@@ -426,6 +428,10 @@ func newContainer(r *taskAPI.CreateTaskRequest, cconf ContainerConf) (*Container
 		return nil, err
 	}
 
+	log.Debugf(`container info parsed from bundle is: 
+		%s, MicaConf = %v
+	`, cconf.Bundle, cconf.MicaConf)
+
 	container := &Container{
 		bundle:   cconf.Bundle,
 		ID:       r.ID,
@@ -457,23 +463,9 @@ func (r *MicaContainerInfo) parseMicaLabels(labels map[string]string) error {
 		case defs.Firmware:
 			r.relativePath = filepath.Join("rootfs", v)
 		case defs.Pedestal:
-			if r.pedestal != nil {
-				r.pedestal.PedestalType = ParsePedType(v)
-			} else {
-				r.pedestal = &Pedestal{
-					PedestalType: ParsePedType(v),
-					PedestalConf: "",
-				}
-			}
+			r.pedestalType = ParsePedType(v)
 		case defs.PedestalConf:
-			if r.pedestal != nil {
-				r.pedestal.PedestalConf = v
-			} else {
-				r.pedestal = &Pedestal{
-					PedestalType: Unknown,
-					PedestalConf: v,
-				}
-			}
+			r.pedestalConf = v
 		case defs.OS:
 			if v == "" {
 				return fmt.Errorf("missing os label")
@@ -491,6 +483,14 @@ func (r *MicaContainerInfo) parseMicaLabels(labels map[string]string) error {
 			}
 		}
 	}
+	log.Debugf(`parsed mica client conf: 
+		relativePath = %s,
+		pedestalType = %s,
+		pedestalConf = %s,
+		os = %s,
+		ncpu = %d,
+		:: extra mappings = %v
+	`, r.relativePath, r.pedestalType, r.pedestalConf, r.os, r.ncpu, r.extraLabels)
 	return nil
 }
 
@@ -528,6 +528,7 @@ func parseiSuladContainerConfig(bundle string) (*ContainerConf, error) {
 func (r *MicaContainerInfo) FirmwarePath() string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	log.Debugf("relative FirmwarePath: %s", r.relativePath)
 	return r.relativePath
 }
 
@@ -535,7 +536,24 @@ func (r *MicaContainerInfo) FirmwarePath() string {
 func (r *MicaContainerInfo) Ped() *Pedestal {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.pedestal
+	return &Pedestal{
+		PedestalType: r.pedestalType,
+		PedestalConf: r.pedestalConf,
+	}
+}
+
+// PedestalType returns the pedestal type
+func (r *MicaContainerInfo) PedestalType() PedType {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.pedestalType
+}
+
+// PedestalConf returns the pedestal configuration
+func (r *MicaContainerInfo) PedestalConf() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.pedestalConf
 }
 
 func (r *MicaContainerInfo) OS() string {
@@ -583,11 +601,23 @@ func (r *MicaContainerInfo) cpuUnset() bool {
 //	}
 func (c *Container) validMicaContainer() bool {
 	log.Debugf("validating MicaContainer: %+v", c.info)
-	judge := validOS(c.info.OS()) &&
-		validFirmware(c.spec.Bundle, c.info.FirmwarePath()) &&
-		validCompatibility(c.info) &&
-		hostPedMatched(c.info.Ped(), c.info.OS())
-	log.Debugf("MicaContainer validation result: %v", judge)
+	// judge := validOS(c.info.OS()) &&
+	// 	validFirmware(c.spec.Bundle, c.info.FirmwarePath()) &&
+	// 	validCompatibility(c.info) &&
+	// 	hostPedMatched(c.info.Ped(), c.info.OS())
+	osValid := validOS(c.info.OS())
+	fwValid := validFirmware(c.spec.Bundle, c.info.FirmwarePath())
+	pedValid := hostPedMatched(c.info.Ped(), c.info.OS())
+	compatValid := validCompatibility(c.info)
+	judge := osValid && fwValid && pedValid && compatValid
+
+	log.Debugf(`MicaContainer validation result = 
+		osValid = %v,
+		fwValid = %v,
+		pedValid = %v,
+		compatValid = %v,
+		judge = %v
+	`, osValid, fwValid, pedValid, compatValid, judge)
 	return judge
 }
 
