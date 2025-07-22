@@ -169,12 +169,10 @@ func allocCPU(ncpu int) (int, error) {
 
 // allocCPUWithLimit allocates CPU considering container-specific limits
 func allocCPUWithLimit(ncpu int, config *ContainerConfig) (int, error) {
-	// Validate ncpu parameter
 	if ncpu < 1 {
 		return 0, fmt.Errorf("ncpu must be at least 1, got %d", ncpu)
 	}
 
-	// Get container-specific CPU limit
 	maxCPU := getContainerCPULimit(config)
 	if ncpu > maxCPU {
 		return 0, fmt.Errorf("requested ncpu %d exceeds container CPU limit %d", ncpu, maxCPU)
@@ -184,10 +182,11 @@ func allocCPUWithLimit(ncpu int, config *ContainerConfig) (int, error) {
 	if config != nil && config.CpusetCpus() != "" {
 		// For now, log the cpuset requirement but use simple allocation
 		// TODO: Implement proper cpuset.cpus parsing and allocation
-		log.Debugf("Container specifies cpuset.cpus: %s", config.CpusetCpus())
+		log.Infof("Container specifies cpuset.cpus: %s", config.CpusetCpus())
 	}
 
 	// Simple round-robin allocation based on current time within the allowed range
+	// TODO: let containerd the manager CPU selector, and limit the CPU perspective
 	allocatedCPU := int(time.Now().UnixNano()) % maxCPU
 
 	log.Debugf("Allocated CPU %d for ncpu=%d (container limit: %d)", allocatedCPU, ncpu, maxCPU)

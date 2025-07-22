@@ -1,4 +1,4 @@
-package libmica
+package cntr
 
 import (
 	"fmt"

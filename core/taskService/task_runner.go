@@ -13,23 +13,6 @@ import (
 
 // setup the task and client os; without managing micataskservice
 func create(ctx context.Context, req *taskAPI.CreateTaskRequest) (taskRes *taskAPI.CreateTaskResponse, retErr error) {
-
-	// get firmware path from bundle: <bundle>/.../<clientOSname>.elf
-	// NOTICE: currently, everytime mica startup client os, it search files from the given path
-	// There, we must verify the bundle integrity before creating && **running** the client os.
-
-	// c, err := cntr.NewContainer()
-
-	// log.Debugf(`create task: 
-	// 	req.Rootfs = %s
-	// 	req.Bundle = %s
-	// 	req.ID = %s
-	// 	req.Terminal = %v
-	// 	req.Stdin = %v
-	// 	req.Stdout = %v
-	// 	req.Stderr = %v`, req.Rootfs, req.Bundle, req.ID, req.Terminal, req.Stdin, req.Stdout, req.Stderr)
-	log.Pretty("create task: %# v", req)
-
 	container, err := cntr.SetupContainer(req)
 	if err != nil {
 		return nil, fmt.Errorf("%w", err)

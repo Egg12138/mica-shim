@@ -51,3 +51,6 @@ go.work.sum
 cntr/cntr_flamegraph.svg
 flamegraph.svg
 cpu.prof
+core/taskService/init_process.go
+.cursor
+tests/logger/

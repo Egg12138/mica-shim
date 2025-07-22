@@ -1,4 +1,4 @@
-package libmica
+package cntr
 
 import (
 	defs "mica-shim/definitions"
@@ -206,4 +206,28 @@ func getNCPU(bundle string) uint32 {
 	// 1. search bundle/.../<clientOSname>.elf
 	// 2. if missing, log and search for binary in bundle recursively
 	return 1
+}
+
+
+// Test helper functions for accessing private state
+func GetQueueSize() uint32 {
+	if shmData == nil {
+		return 0
+	}
+	shmData.lock()
+	defer shmData.unlock()
+	return shmData.count()
+}
+
+func IsQueueEmpty() bool {
+	if shmData == nil {
+		return true
+	}
+	shmData.lock()
+	defer shmData.unlock()
+	return shmData.isEmpty()
+}
+
+func GetMaxCPUs() uint32 {
+	return maxCPUs
 }

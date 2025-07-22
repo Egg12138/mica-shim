@@ -182,7 +182,9 @@ func CreateMicaConf(container *cntr.Container) (libmica.MicaClientConf, error) {
 		return libmica.MicaClientConf{}, fmt.Errorf("failed to get client cpu: %w", err)
 	}
 	conf := libmica.MicaClientConf{}
+	log.Debugf("backed from GetClientCPU: %d", cpu)
 	conf.Init(uint32(cpu), name, firmware, pedestal.PedestalType.String(), pedestal.PedestalConf, false)
+	log.Pretty("MicaClientConf: %v", conf)
 	return conf, nil
 }
 

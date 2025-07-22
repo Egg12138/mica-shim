@@ -182,15 +182,16 @@ func CleanDebugFile() error {
 	return err
 }
 
-func getDebugInfoPrefix() string {
+// default depth=4
+func getDebugInfoPrefix(depth int) string {
 	var prefix = ""
-	pc_parent, _, _, ok := runtime.Caller(5)
+	pc_parent, _, _, ok := runtime.Caller(depth + 1)
 	if ok {
 		fullFuncName := runtime.FuncForPC(pc_parent).Name()
 		funcName := filepath.Base(fullFuncName)
 		prefix += fmt.Sprintf(" \033[34m%s()\033[0m calls ", funcName)
 	}
-	pc, _, _, ok := runtime.Caller(4)
+	pc, _, _, ok := runtime.Caller(depth)
 	if ok {
 		var callee string
 		fullFuncName := runtime.FuncForPC(pc).Name()
@@ -203,6 +204,7 @@ func getDebugInfoPrefix() string {
 	return prefix
 }
 
+
 // Used for those debug points needed to be traced call stack
 func FDebugf(format string, args ...interface{}) error {
 	f, err := os.OpenFile(debugFileName, os.O_APPEND|os.O_WRONLY, 0644)
@@ -211,16 +213,67 @@ func FDebugf(format string, args ...interface{}) error {
 	}
 	defer f.Close()
 
-	prefix := getDebugInfoPrefix()
+	prefix := getDebugInfoPrefix(4)
 	_, err = fmt.Fprintf(f, prefix+format+"\n", args...)
 	return err
 }
 
 
+// Pretty safely formats and logs complex structs with safeguards against memory issues
+// Costy
 func Pretty(format string, args ...interface{}) {
 	formattedArgs := make([]interface{}, len(args))
 	for i, arg := range args {
-		formattedArgs[i] = pretty.Formatter(arg)
+		formattedArgs[i] = safePrettyFormat(arg)
 	}
 	Debugf(format, formattedArgs...)
+}
+
+// pretty packages can not ensure memory safe, hence safePrettyFormat is needed,
+// as a wrapper of pretty.Sprint
+func safePrettyFormat(arg interface{}) interface{} {
+	if arg == nil {
+		return "<nil>"
+	}
+	
+	resultChan := make(chan interface{}, 1)
+	errorChan := make(chan error, 1)
+	
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				errorChan <- fmt.Errorf("panic during pretty formatting: %v", r)
+			}
+		}()
+		
+		resultStr := pretty.Sprint(arg)
+		
+		const maxSize = 10 * 1024
+		if len(resultStr) > maxSize {
+			resultStr = resultStr[:maxSize] + "\n... [TRUNCATED: output too large]"
+		}
+		
+		// Add indentation for better readability
+		lines := strings.Split(resultStr, "\n")
+		var indentedLines []string
+		for _, line := range lines {
+			if strings.TrimSpace(line) != "" {
+				indentedLines = append(indentedLines, "    "+line)
+			} else {
+				indentedLines = append(indentedLines, line)
+			}
+		}
+		resultStr = strings.Join(indentedLines, "\n")
+		
+		resultChan <- resultStr
+	}()
+	
+	select {
+	case result := <-resultChan:
+		return result
+	case err := <-errorChan:
+		return fmt.Sprintf("<error formatting: %v>", err)
+	case <-time.After(2 * time.Second):
+		return fmt.Sprintf("<timeout formatting type: %T>", arg)
+	}
 }

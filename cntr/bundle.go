@@ -152,7 +152,6 @@ type ContainerConfig struct {
 	// Parsed configuration values
 	// Firmware and pedestal
 	// MICA-specific configurations from client.conf
-	MicaConf    map[string]string
 	extraLabels map[string]string
 	relativePath string  // relative firmware path to the bundle
 	pedestalType PedType
@@ -254,22 +253,6 @@ func loadSpec(bundle string) (specs.Spec, error) {
 	return ociSpec, nil
 }
 
-// get oci spec and container config from bundle
-func parseContainerConf(bundle string, ocispec specs.Spec) (*ContainerConfig, error) {
-	log.Debugf("recursively walk bundle <%s>: \n %s", bundle, walkDir(bundle))
-
-	// BUG: expand MicaConf here, 
-	clientConf, err := parseConfigINI(bundle)
-	if err != nil {
-		return nil, err
-	}
-
-	return &ContainerConfig{
-		Spec:     ocispec,
-		Bundle:   bundle,
-		MicaConf: clientConf,
-	}, nil
-}
 
 // The core container configuration parser
 // This function parses all configurations from the bundle and returns a complete ContainerConfig
@@ -288,7 +271,6 @@ func parseContainerConfig(bundle string, ocispec specs.Spec, cType ContainerType
 		Detach: detach,
 
 		// MICA configuration
-		MicaConf:    micaConf,
 		extraLabels: make(map[string]string),
 
 		// Initialize with defaults
@@ -332,23 +314,6 @@ func (conf *ContainerConfig) containerInfoParse() (*ContainerConfig, error) {
 	return conf, nil
 }
 
-// deprecated: should not parse client.conf and config.json at the same time
-// NOTICE: client.conf is parsed after rootfs is mounted, of which oci spec is before
-func loadContainerConf(r *taskAPI.CreateTaskRequest, ocispec specs.Spec, detach bool) (*ContainerConfig, error) {
-	bundlePath, err := validBundle(r.ID, r.Bundle)
-	if err != nil {
-		return nil, err
-	}
-
-	containerSpec, err := parseContainerConf(bundlePath, ocispec)
-	if err != nil {
-		return nil, err
-	}
-
-	containerSpec.Detach = detach
-
-	return containerSpec, nil
-}
 
 func getContainerType(spec *specs.Spec) (ContainerType, error) {
 	for _, key := range CRIContainerTypeKeyList {
@@ -459,9 +424,7 @@ func SetupContainer(req *taskAPI.CreateTaskRequest) (_ *Container, retErr error)
 
 // A new container instance, initialized with complete configuration
 func newContainer(r *taskAPI.CreateTaskRequest, config *ContainerConfig) (*Container, error) {
-	log.Debugf(`container config parsed from bundle: 
-		%s, MicaConf = %v
-	`, config.Bundle, config.MicaConf)
+	log.Pretty(`container config parsed from bundle: %v`, config)
 
 	container := &Container{
 		bundle:   config.Bundle,
@@ -693,13 +656,11 @@ func (c *Container) allocClientCPU() error {
 }
 
 func (c *Container) GetClientCPU() (int, error) {
-	// RW lock
-	c.config.mu.Lock()
-	defer c.config.mu.Unlock()
 	if c.config.cpuUnset() {
 		if err := c.allocClientCPU(); err != nil {
 			return c.config.cpu, err
 		}
 	}
+	log.Debugf("get clientcpu done.")
 	return c.config.cpu, nil
 }
