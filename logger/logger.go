@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kr/pretty"
 	"github.com/sirupsen/logrus"
 )
 
@@ -215,4 +216,8 @@ func FDebugf(format string, args ...interface{}) error {
 	prefix := getDebugInfoPrefix()
 	_, err = fmt.Fprintf(f, prefix+format+"\n", args...)
 	return err
+}
+
+func Pretty(format string, args ...interface{}) {
+	Debug(pretty.Sprintf(format, args...))
 }

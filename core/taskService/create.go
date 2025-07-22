@@ -70,7 +70,7 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 	// Initialize MicaIO for future PTY communication
 	// Note: PTY devices will be created later when mica client starts
 	micaIO, err := libmica.NewMicaIO(ctx, r.ID, r.Stdin, r.Stdout, r.Stderr, r.Terminal)
-	log.Debugf("micaIO: %v", micaIO)
+	log.Pretty("micaIO: %# v", micaIO)
 	if err != nil {
 		return nil, fmt.Errorf("creating mica IO: %w", err)
 	}

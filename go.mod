@@ -9,6 +9,7 @@ require (
 	github.com/containerd/ttrpc v1.2.7
 	github.com/containers/podman/v4 v4.9.5
 	github.com/kata-containers/kata-containers/src/runtime v0.0.0-20250711211413-4a79c2520d05
+	github.com/kr/pretty v0.3.1
 	github.com/opencontainers/runtime-spec v1.2.0
 	github.com/sirupsen/logrus v1.9.3
 	k8s.io/apimachinery v0.30.0
