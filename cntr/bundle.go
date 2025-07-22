@@ -34,11 +34,11 @@ const prefix = defs.MicaLabelPrefix
 
 // Structures:
 // - OCISpec: specs.Spec in config.json (or config.v2.json)
-// - ContainerSpec: Raw data from container bundle && metdata
-// - MicaContainerInfo: Converted from ContainerSpec
+// - ContainerConfig: All configurations parsed from bundle (replaces old ContainerConf and MicaContainerInfo)
 // - libmica.micaClientConf
+// - Container
 
-// ocispec => ContainerSpec => MicaContainerInfo => Container => libmica.micaClientConf
+// ocispec => ContainerConfig => Container => libmica.micaClientConf
 
 // *************** ocispec *************** //
 // assume containerd, parse config.json from bundle
@@ -136,33 +136,36 @@ func parseConfigINI(bundle string) (map[string]string, error) {
 	return parsedFields, nil
 }
 
-// ContainerConf contains OCIspec and fields needde by runtime
-// the directly parsed data from container engine container storage system, needed by mica-shim
-// then ContainerConf will be injected into ContainerResolution
-type ContainerConf struct {
+// ContainerConfig represents all configurations parsed from bundle
+// This includes OCI spec, MICA-specific configurations, and runtime state
+type ContainerConfig struct {
+	// OCI Specification
 	Spec specs.Spec
-	// resolved bundle path
-	Bundle   string
-	MicaConf map[string]string
-	Type     ContainerType
-	Detach   bool
-}
-
-// MicaContainerInfo contains the resolved container information
-// This struct is reusable across the entire shim
-type MicaContainerInfo struct {
+	
+	// Bundle information  
+	Bundle string
+	Type   ContainerType
+	Detach bool
+	
+	
+	// BUG: overlapped fields: remove MicaConf, leaving extracted MicaLabels and extraLabels
+	// Parsed configuration values
+	// Firmware and pedestal
+	// MICA-specific configurations from client.conf
+	MicaConf    map[string]string
 	extraLabels map[string]string
-	// relative firmware path to the bundle. in most cases, it is "rootfs/<firmware_path>"
-	relativePath string
+	relativePath string  // relative firmware path to the bundle
 	pedestalType PedType
 	pedestalConf string
-	os           string
-	// support single cpu for now
-	// mica runtime will allocate CPU when close to libmica.create()
-	cpu int
-	// default = 1
-	ncpu int
-	mu   sync.RWMutex
+	os         string
+	ncpu       int    // requested CPU count (default = 1)
+	cpuLimit   int    // CPU limit from OCI spec
+	cpusetCpus string // cpuset.cpus specification
+	
+	// Runtime state
+	cpu int // allocated CPU (-1 if not allocated)
+	
+	mu sync.RWMutex
 }
 
 type PedType int
@@ -238,8 +241,7 @@ type Container struct {
 	// int32: RUNNING, STOPPED, PAUSED, PAUSING, CREATED, UNKNOWN...
 	status task.Status
 	cType  ContainerType
-	spec   *ContainerConf
-	info   *MicaContainerInfo
+	config *ContainerConfig // single source of configuration truth
 }
 
 // *************** Constructors *************** //
@@ -253,56 +255,86 @@ func loadSpec(bundle string) (specs.Spec, error) {
 }
 
 // get oci spec and container config from bundle
-func parseContainerConf(bundle string, ocispec specs.Spec) (*ContainerConf, error) {
+func parseContainerConf(bundle string, ocispec specs.Spec) (*ContainerConfig, error) {
 	log.Debugf("recursively walk bundle <%s>: \n %s", bundle, walkDir(bundle))
 
-	time.Sleep(6 * time.Second)
-
+	// BUG: expand MicaConf here, 
 	clientConf, err := parseConfigINI(bundle)
 	if err != nil {
 		return nil, err
 	}
 
-	return &ContainerConf{
+	return &ContainerConfig{
 		Spec:     ocispec,
 		Bundle:   bundle,
 		MicaConf: clientConf,
 	}, nil
 }
 
-// The core container information parser caller
-// ContainerInfoParse parses the bundle and metadata, returns a MicaContainerInfo
-// This function should be called once per container and the result can be reused
-func (conf *ContainerConf) containerInfoParse() (*MicaContainerInfo, error) {
-	labels := conf.MicaConf
-	result := &MicaContainerInfo{
-		extraLabels:  make(map[string]string),
+// The core container configuration parser
+// This function parses all configurations from the bundle and returns a complete ContainerConfig
+func parseContainerConfig(bundle string, ocispec specs.Spec, cType ContainerType, detach bool) (*ContainerConfig, error) {
+	// Parse MICA configuration from client.conf
+	micaConf, err := parseConfigINI(bundle)
+	if err != nil {
+		return nil, err
+	}
+
+	config := &ContainerConfig{
+		// OCI and bundle info
+		Spec:   ocispec,
+		Bundle: bundle,
+		Type:   cType,
+		Detach: detach,
+
+		// MICA configuration
+		MicaConf:    micaConf,
+		extraLabels: make(map[string]string),
+
+		// Initialize with defaults
 		relativePath: "",
 		pedestalType: Unknown,
 		pedestalConf: "",
 		os:           "",
-		cpu:          -1,
 		ncpu:         1,
-		mu:           sync.RWMutex{},
+		cpuLimit:     0,
+		cpusetCpus:   "",
+		cpu:          -1, // not allocated yet
+
+		mu: sync.RWMutex{},
 	}
 
-	// CPU and ncpu will be parsed here
-
-	if err := result.parseMicaLabels(labels); err != nil {
-		log.Debugf("failed to parse all mica labels: %v", err)
+	// Parse MICA-specific labels
+	if err := config.parseMicaLabels(micaConf); err != nil {
+		log.Debugf("failed to parse mica labels: %v", err)
 		return nil, err
 	}
-	if result.os == "" {
-		log.Warn("os is not set, default to zephyr")
-		result.os = "zephyr"
+
+	// Parse CPU resources from OCI spec
+	if err := config.parseOCICPUResources(&ocispec); err != nil {
+		log.Debugf("failed to parse OCI CPU resources: %v", err)
+		return nil, err
 	}
-	log.Debugf("containerInfoParse: %+v", result)
-	return result, nil
+
+	// Set default OS if not specified
+	if config.os == "" {
+		log.Warn("os is not set, default to zephyr")
+		config.os = "zephyr"
+	}
+
+	log.Debugf("parsed container config: %+v", config)
+	return config, nil
+}
+
+// deprecated: containerInfoParse is now replaced by parseContainerConfig
+func (conf *ContainerConfig) containerInfoParse() (*ContainerConfig, error) {
+	log.Warn("containerInfoParse is deprecated, use parseContainerConfig instead")
+	return conf, nil
 }
 
 // deprecated: should not parse client.conf and config.json at the same time
 // NOTICE: client.conf is parsed after rootfs is mounted, of which oci spec is before
-func loadContainerConf(r *taskAPI.CreateTaskRequest, ocispec specs.Spec, detach bool) (*ContainerConf, error) {
+func loadContainerConf(r *taskAPI.CreateTaskRequest, ocispec specs.Spec, detach bool) (*ContainerConfig, error) {
 	bundlePath, err := validBundle(r.ID, r.Bundle)
 	if err != nil {
 		return nil, err
@@ -407,39 +439,37 @@ func SetupContainer(req *taskAPI.CreateTaskRequest) (_ *Container, retErr error)
 	// preset for sandbox, pod...
 	presetSandbox()
 
-	cconf, err := loadContainerConf(req, spec, disableOutput)
+	// Use the new parseContainerConfig function
+	bundlePath, err := validBundle(req.ID, req.Bundle)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load container conf: %w", err)
+		return nil, err
 	}
-	container, err := newContainer(req, *cconf)
+	
+	config, err := parseContainerConfig(bundlePath, spec, ctype, disableOutput)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse container config: %w", err)
+	}
+	
+	container, err := newContainer(req, config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create mica container instance: %w", err)
 	}
 	return container, err
 }
 
-// A new container instance, initialized only :
-// 1. checked bundle path
-// 2. parsed container spec
-// 3. parsed container info
-func newContainer(r *taskAPI.CreateTaskRequest, cconf ContainerConf) (*Container, error) {
-	info, err := cconf.containerInfoParse()
-	if err != nil {
-		return nil, err
-	}
-
-	log.Debugf(`container info parsed from bundle is: 
+// A new container instance, initialized with complete configuration
+func newContainer(r *taskAPI.CreateTaskRequest, config *ContainerConfig) (*Container, error) {
+	log.Debugf(`container config parsed from bundle: 
 		%s, MicaConf = %v
-	`, cconf.Bundle, cconf.MicaConf)
+	`, config.Bundle, config.MicaConf)
 
 	container := &Container{
-		bundle:   cconf.Bundle,
+		bundle:   config.Bundle,
 		ID:       r.ID,
 		io:       nil,
 		exitCode: 0,
-		cType:    cconf.Type,
-		spec:     &cconf,
-		info:     info,
+		cType:    config.Type,
+		config:   config,
 		// status: remain empty
 	}
 	log.Debugf("new container: %+v", container)
@@ -452,7 +482,7 @@ func newContainer(r *taskAPI.CreateTaskRequest, cconf ContainerConf) (*Container
 }
 
 // Do not handle unmatched labels here
-func (r *MicaContainerInfo) parseMicaLabels(labels map[string]string) error {
+func (r *ContainerConfig) parseMicaLabels(labels map[string]string) error {
 	// TODO: make sure we do can find the firmware path in container bundle
 	// Parse firmware path
 	// preserved os:
@@ -494,17 +524,49 @@ func (r *MicaContainerInfo) parseMicaLabels(labels map[string]string) error {
 	return nil
 }
 
+// parseOCICPUResources parses CPU resource limits from OCI spec
+func (r *ContainerConfig) parseOCICPUResources(spec *specs.Spec) error {
+	if spec.Linux == nil || spec.Linux.Resources == nil || spec.Linux.Resources.CPU == nil {
+		log.Debugf("No CPU resources specified in OCI spec")
+		return nil
+	}
+
+	cpu := spec.Linux.Resources.CPU
+
+	// Parse CPU quota and period to get CPU limit
+	if cpu.Quota != nil && cpu.Period != nil && *cpu.Period > 0 {
+		cpuLimit := int(*cpu.Quota / int64(*cpu.Period))
+		if cpuLimit > 0 {
+			r.cpuLimit = cpuLimit
+			log.Debugf("Parsed CPU limit from quota/period: %d", cpuLimit)
+		}
+	}
+
+	// Parse cpuset.cpus for specific CPU assignment
+	if cpu.Cpus != "" {
+		r.cpusetCpus = cpu.Cpus
+		log.Debugf("Parsed cpuset.cpus: %s", r.cpusetCpus)
+	}
+
+	// Parse realtime CPU constraints if present
+	if cpu.RealtimeRuntime != nil {
+		log.Debugf("Realtime CPU runtime specified: %d", *cpu.RealtimeRuntime)
+	}
+
+	return nil
+}
+
 // parseDockerConfigJSON tries to parse bundle information from the bundle directory
 // For docker, we can get the config.v2.json
 // But for containerd, we need to use the containerd API to fetch metadata stored in bolt db
-func parseDockerConfigJSON(bundle string) (*ContainerConf, error) {
+func parseDockerConfigJSON(bundle string) (*ContainerConfig, error) {
 	dockerConfigPath := filepath.Join(bundle, "config.v2.json")
 	if _, err := os.Stat(dockerConfigPath); err == nil {
 		dockerConfigData, err := os.ReadFile(dockerConfigPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read config.v2.json: %v", err)
 		}
-		var containerConfigs ContainerConf
+		var containerConfigs ContainerConfig
 		if err := json.Unmarshal(dockerConfigData, &containerConfigs); err != nil {
 			return nil, fmt.Errorf("failed to parse config.v2.json: %v", err)
 		}
@@ -513,19 +575,13 @@ func parseDockerConfigJSON(bundle string) (*ContainerConf, error) {
 	return nil, nil
 }
 
-// workaround for fetching metadata from containerd, we refuse to call the standard
-// containerd API to fetch metadata stored in bolt db
-func parseContainerdContainerMetadata(cid string) (*ContainerConf, error) {
-	// TODO: a bad implementation, work as a containerd client
-	return nil, nil
-}
 
-func parseiSuladContainerConfig(bundle string) (*ContainerConf, error) {
+func parseiSuladContainerConfig(bundle string) (*ContainerConfig, error) {
 	// TODO: parse isulad container config
 	return nil, nil
 }
 
-func (r *MicaContainerInfo) FirmwarePath() string {
+func (r *ContainerConfig) FirmwarePath() string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	log.Debugf("relative FirmwarePath: %s", r.relativePath)
@@ -533,7 +589,7 @@ func (r *MicaContainerInfo) FirmwarePath() string {
 }
 
 // Pedestal returns the pedestal information
-func (r *MicaContainerInfo) Ped() *Pedestal {
+func (r *ContainerConfig) Ped() *Pedestal {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return &Pedestal{
@@ -543,44 +599,33 @@ func (r *MicaContainerInfo) Ped() *Pedestal {
 }
 
 // PedestalType returns the pedestal type
-func (r *MicaContainerInfo) PedestalType() PedType {
+func (r *ContainerConfig) PedestalType() PedType {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.pedestalType
 }
 
 // PedestalConf returns the pedestal configuration
-func (r *MicaContainerInfo) PedestalConf() string {
+func (r *ContainerConfig) PedestalConf() string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.pedestalConf
 }
 
-func (r *MicaContainerInfo) OS() string {
+func (r *ContainerConfig) OS() string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.os
 }
 
-// // Schedule a CPU when CPU() is called
-// func (r *MicaContainerInfo) CPU() int {
-// 	r.mu.RLock()
-// 	defer r.mu.RUnlock()
-// 	cpu := allocCPU()
-// 	if err != nil {
-// 		return 0, err
-// 	}
-// 	return cpu, nil
-// }
-
 // GetCompatibility returns compatibility information for a specific component
-func (r *MicaContainerInfo) Compatibility(component string) string {
+func (r *ContainerConfig) Compatibility(component string) string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.extraLabels[prefix+".client.compatibility."+component]
+	return r.extraLabels[defs.Compat]
 }
 
-func (r *MicaContainerInfo) GetAllLabelsRef() *map[string]string {
+func (r *ContainerConfig) GetAllLabelsRef() *map[string]string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	labels := &r.extraLabels
@@ -588,27 +633,39 @@ func (r *MicaContainerInfo) GetAllLabelsRef() *map[string]string {
 }
 
 // cpuUnset is alway callee, hence lock is not needed
-func (r *MicaContainerInfo) cpuUnset() bool {
+func (r *ContainerConfig) cpuUnset() bool {
 	return r.cpu == -1
 }
 
-//	MicaContainerInfo: {
-//		extraLabels: map[string]string; do not care
-//		relativePath: string; the resolved path must be valid
+// CPULimit returns the effective CPU limit for this container
+func (r *ContainerConfig) CPULimit() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.cpuLimit
+}
+
+// CpusetCpus returns the cpuset.cpus specification
+func (r *ContainerConfig) CpusetCpus() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.cpusetCpus
+}
+
+//	ContainerConfig contains:
+//		extraLabels: map[string]string; additional labels
+//		relativePath: string; the resolved firmware path must be valid
 //		pedestal: *Pedestal; the pedestal type must be specified
 //		os: string; one of the allowed os
-//		ncpu: int
-//	}
+//		ncpu: int; requested CPU count
+//		cpuLimit: int; CPU limit from OCI spec
+//		cpu: int; allocated CPU (-1 if not allocated)
 func (c *Container) validMicaContainer() bool {
-	log.Debugf("validating MicaContainer: %+v", c.info)
-	// judge := validOS(c.info.OS()) &&
-	// 	validFirmware(c.spec.Bundle, c.info.FirmwarePath()) &&
-	// 	validCompatibility(c.info) &&
-	// 	hostPedMatched(c.info.Ped(), c.info.OS())
-	osValid := validOS(c.info.OS())
-	fwValid := validFirmware(c.spec.Bundle, c.info.FirmwarePath())
-	pedValid := hostPedMatched(c.info.Ped(), c.info.OS())
-	compatValid := validCompatibility(c.info)
+	log.Debugf("validating MicaContainer: %+v", c.config)
+	
+	osValid := validOS(c.config.OS())
+	fwValid := validFirmware(c.bundle, c.config.FirmwarePath())
+	pedValid := hostPedMatched(c.config.Ped(), c.config.OS())
+	compatValid := validCompatibility(c.config)
 	judge := osValid && fwValid && pedValid && compatValid
 
 	log.Debugf(`MicaContainer validation result = 
@@ -621,26 +678,28 @@ func (c *Container) validMicaContainer() bool {
 	return judge
 }
 
-func (c *Container) GetMicaContainerInfo() *MicaContainerInfo {
-	return c.info
+func (c *Container) GetConfig() *ContainerConfig {
+	return c.config
 }
 
 func (c *Container) allocClientCPU() error {
-	cpu, err := allocCPU(c.info.ncpu)
+	// Use container-specific CPU limit instead of global HostMaxCPU
+	cpu, err := allocCPUWithLimit(c.config.ncpu, c.config)
 	if err != nil {
 		return err
 	}
-	c.info.cpu = cpu
+	c.config.cpu = cpu
 	return nil
 }
+
 func (c *Container) GetClientCPU() (int, error) {
 	// RW lock
-	c.info.mu.Lock()
-	defer c.info.mu.Unlock()
-	if c.info.cpuUnset() {
+	c.config.mu.Lock()
+	defer c.config.mu.Unlock()
+	if c.config.cpuUnset() {
 		if err := c.allocClientCPU(); err != nil {
-			return c.info.cpu, err
+			return c.config.cpu, err
 		}
 	}
-	return c.info.cpu, nil
+	return c.config.cpu, nil
 }

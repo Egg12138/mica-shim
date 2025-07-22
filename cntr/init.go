@@ -9,7 +9,6 @@ var HostMaxCPU int
 
 // Some crutial information should be shared between shim instances!
 func init() {
-	log.Debugf("cntr init")
 
 	HostPedestalType = hostPed()
 	if HostPedestalType == Unknown {
@@ -18,4 +17,5 @@ func init() {
 		Please clear the host build cache and try again.`)
 	}
 	HostMaxCPU = availableMaxCPU()
+	log.Debugf("cntr init: HostPedestalType: %v, HostMaxCPU: %d", HostPedestalType, HostMaxCPU)
 }

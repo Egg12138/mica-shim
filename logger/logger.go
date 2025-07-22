@@ -166,6 +166,10 @@ func FatalWithCleanup(cleanup func(), args ...interface{}) {
 	Log.Fatal(args...)
 }
 
+// BUG: facing multiinstance issue, there will be an conflict when cleaning debug file
+// solution: 
+// create debug file with suffix <containerID>;
+// we need to parse ID in task service
 func CleanDebugFile() error {
 	f, err := os.OpenFile(debugFileName, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {

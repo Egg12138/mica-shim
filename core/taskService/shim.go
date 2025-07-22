@@ -2,10 +2,15 @@ package core
 
 import (
 	"fmt"
+	"runtime"
 
 	"github.com/containerd/containerd/pkg/shutdown"
 	"github.com/containerd/containerd/plugin"
 )
+
+func init() {
+	runtime.GOMAXPROCS(1)
+}
 
 func ttrpcService(ic *plugin.InitContext) (interface{}, error) {
 	ss, err := ic.GetByID(plugin.InternalPlugin, "shutdown")

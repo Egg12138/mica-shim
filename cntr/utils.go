@@ -85,10 +85,33 @@ func physicalMaxCPURobust() int {
 }
 
 // physical Max CPU in the perspective of container runtime!
+// the range of CPU cores mica-shim can see, is limited by containerd! 
 func physicalMaxCPU() int {
-	// log.Debugf("no physical CPU IDs found in /proc/cpuinfo, using runtime.NumCPU()")
-	log.Debugf("Currently use runtime.NumCPU()")
-	return runtime.NumCPU()
+	// TODO: this is a dummy CPU core limitation, we will parse the CPU core limitation
+	// in the future
+	limitCPU := 5
+	return min(runtime.NumCPU(), limitCPU)
+}
+
+// getContainerCPULimit returns the effective CPU limit for a container
+// considering both OCI spec limits and system constraints
+func getContainerCPULimit(info *ContainerConfig) int {
+	systemCPUs := runtime.NumCPU()
+	
+	// If container has specific CPU limit from OCI spec, use it
+	if info != nil && info.cpuLimit > 0 {
+		log.Debugf("Using container CPU limit from OCI spec: %d", info.cpuLimit)
+		return min(info.cpuLimit, systemCPUs)
+	}
+	
+	// Default fallback - use all available CPUs but reserve one for host
+	defaultLimit := systemCPUs
+	if defaultLimit > 1 {
+		defaultLimit -= 1
+	}
+	
+	log.Debugf("Using default CPU limit: %d (system CPUs: %d)", defaultLimit, systemCPUs)
+	return defaultLimit
 }
 
 // get the most CPU nums the machine provided and current pedestal manager supports
@@ -144,6 +167,33 @@ func allocCPU(ncpu int) (int, error) {
 	return allocatedCPU, nil
 }
 
+// allocCPUWithLimit allocates CPU considering container-specific limits
+func allocCPUWithLimit(ncpu int, config *ContainerConfig) (int, error) {
+	// Validate ncpu parameter
+	if ncpu < 1 {
+		return 0, fmt.Errorf("ncpu must be at least 1, got %d", ncpu)
+	}
+
+	// Get container-specific CPU limit
+	maxCPU := getContainerCPULimit(config)
+	if ncpu > maxCPU {
+		return 0, fmt.Errorf("requested ncpu %d exceeds container CPU limit %d", ncpu, maxCPU)
+	}
+
+	// Handle cpuset.cpus if specified
+	if config != nil && config.CpusetCpus() != "" {
+		// For now, log the cpuset requirement but use simple allocation
+		// TODO: Implement proper cpuset.cpus parsing and allocation
+		log.Debugf("Container specifies cpuset.cpus: %s", config.CpusetCpus())
+	}
+
+	// Simple round-robin allocation based on current time within the allowed range
+	allocatedCPU := int(time.Now().UnixNano()) % maxCPU
+
+	log.Debugf("Allocated CPU %d for ncpu=%d (container limit: %d)", allocatedCPU, ncpu, maxCPU)
+	return allocatedCPU, nil
+}
+
 // check OS value matches
 func validOS(os string) bool {
 	ret := inList(defs.PreservedOS[:], os)
@@ -163,7 +213,7 @@ func validFirmware(root, firmware string) bool {
 	return ret
 }
 
-func validCompatibility(info *MicaContainerInfo) bool {
+func validCompatibility(_ *ContainerConfig) bool {
 	// TODO: needed to ? how to check compatibility?
 	return true
 }

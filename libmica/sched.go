@@ -74,8 +74,9 @@ func initSharedMemory(create bool) error {
 	shmData = (*FreeCPUs)(unsafe.Pointer(&data[0]))
 
 	if create {
-		// TODO: getting max CPUs from ?
-		maxCPUs = uint32(runtime.NumCPU())
+		// Use a conservative CPU limit for shared memory initialization
+		// This can be dynamically adjusted by individual containers
+		maxCPUs = uint32(getDefaultMaxCPUs())
 		shmData.head = 0
 		shmData.tail = 0
 		shmData.size = maxCPUs
@@ -91,6 +92,16 @@ func initSharedMemory(create bool) error {
 	}
 
 	return nil
+}
+
+// getDefaultMaxCPUs returns a conservative default for shared memory initialization
+func getDefaultMaxCPUs() int {
+	systemCPUs := runtime.NumCPU()
+	// Reserve one CPU for host system
+	if systemCPUs > 1 {
+		return systemCPUs - 1
+	}
+	return systemCPUs
 }
 
 // lazy init CPUFrequencyMap

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"mica-shim/cntr"
+	core "mica-shim/core/oci"
 	"mica-shim/libmica"
 	log "mica-shim/logger"
 	"os"
@@ -35,9 +36,10 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 	if err != nil {
 		return nil, fmt.Errorf("getting current working directory: %w", err)
 	}
+	// Parse runtime configurations
 
 	// Create mica client first - this registers with micad but doesn't start PTY services yet
-	log.FDebugf("Creating mica client for task %s", r.ID)
+	log.Debugf("Creating mica client for task %s", r.ID)
 	_, err = create(ctx, r)
 	if err != nil {
 		return nil, fmt.Errorf("creating mica client: %w", err)
@@ -68,7 +70,7 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 	// Initialize MicaIO for future PTY communication
 	// Note: PTY devices will be created later when mica client starts
 	micaIO, err := libmica.NewMicaIO(ctx, r.ID, r.Stdin, r.Stdout, r.Stderr, r.Terminal)
-	log.FDebugf("micaIO: %v", micaIO)
+	log.Debugf("micaIO: %v", micaIO)
 	if err != nil {
 		return nil, fmt.Errorf("creating mica IO: %w", err)
 	}
@@ -169,10 +171,10 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 // TALK: 这是预留的核，实际client可能更后面启动, 以及启动可能失败
 // TODO: 现在我们全部假定是单核RTOS, mica侧还未实现多核, 但是在镜像label中，我们可以指定核数量
 func CreateMicaConf(container *cntr.Container) (libmica.MicaClientConf, error) {
-	info := container.GetMicaContainerInfo()
+	config := container.GetConfig()
 
-	firmware := info.FirmwarePath()
-	pedestal := info.Ped()
+	firmware := config.FirmwarePath()
+	pedestal := config.Ped()
 	name := container.ID
 	// TODO: Calculate the CPU too late, we should calculate it in the container creation
 	cpu, err := container.GetClientCPU()
@@ -182,4 +184,10 @@ func CreateMicaConf(container *cntr.Container) (libmica.MicaClientConf, error) {
 	conf := libmica.MicaClientConf{}
 	conf.Init(uint32(cpu), name, firmware, pedestal.PedestalType.String(), pedestal.PedestalConf, false)
 	return conf, nil
+}
+
+func parseRuntimeConfig(r *taskAPI.CreateTaskRequest) (*core.RuntimeConfig, error) {
+	spec := core.NewRuntimeSpec()
+
+	return spec, nil
 }

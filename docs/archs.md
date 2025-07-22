@@ -217,38 +217,3 @@ flowchart TD
     style CPUAnnotation fill:#f5f5f5,stroke:#999,stroke-dasharray: 5 5
     style AutobootAnnotation fill:#f5f5f5,stroke:#999,stroke-dasharray: 5 5
 ```
-
-## Profiling
-
-### Runtime pprof server
-When mica-shim is started with the environment variable `MICA_SHIM_PPROF=1` it automatically starts a Go *pprof* HTTP server on `localhost:6060` (override with `MICA_SHIM_PPROF_ADDR`).  The server exposes the standard Go debug endpoints, e.g.:
-
-* `/debug/pprof/profile?seconds=30` – CPU profile sample
-* `/debug/pprof/heap` – Heap profile
-
-This works for both debug and production builds and does **not** change normal shim behaviour – the handler runs in a background goroutine.
-
-### One-shot flame-graph via Make
-For a quick, automated CPU profile and SVG flame-graph you can simply run:
-
-```bash
-make profile-flame        # debug build
-# or
-make profile-flame-prod   # production build
-```
-
-The target will:
-1. build the chosen binary;
-2. start it in the background with pprof enabled;
-3. collect a 30-second CPU profile through the HTTP endpoint; and
-4. save the rendered SVG flame graph to `flamegraph.svg` before shutting the shim down.
-
-For library-level benchmarks inside the `cntr` package you can also run:
-
-```bash
-make profile-cntr
-```
-
-which produces `cntr_flamegraph.svg` from the internal benchmark harness.
-
-> ℹ️ The flame-graph generation relies on `go tool pprof` and Graphviz (`dot`). Make sure they are installed and in your `PATH`.
