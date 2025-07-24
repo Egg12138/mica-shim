@@ -52,7 +52,7 @@ func (ms *micaSocket) close() error {
 }
 
 func (ms *micaSocket) tx(data []byte) error {
-	log.FDebugf("Sending message to MicaSocket: %s", string(data))
+	log.Debugf("Sending message to MicaSocket: %s", string(data))
 	if ms.conn == nil {
 		return errors.New("socket not connected")
 	}
@@ -61,7 +61,7 @@ func (ms *micaSocket) tx(data []byte) error {
 }
 
 func (ms *micaSocket) rx() (string, error) {
-	log.FDebugf("Receiving message from MicaSocket")
+	log.Debugf("Receiving message from MicaSocket")
 	if ms.conn == nil {
 		return "", errors.New("socket not connected")
 	}
@@ -112,7 +112,7 @@ func (ms *micaSocket) rx() (string, error) {
 // Because mica daemon print clients information by its own format, which is not
 // compatible with containerd
 func (ms *micaSocket) handleMsg(msg []byte) (string, error) {
-	log.FDebugf("Handling message with socket: %s", ms.socketPath)
+	log.Debugf("Handling message with socket: %s", ms.socketPath)
 
 	if err := ms.connect(); err != nil {
 		return "", fmt.Errorf("failed to connect to socket: %v", err)
@@ -127,20 +127,20 @@ func (ms *micaSocket) handleMsg(msg []byte) (string, error) {
 	}
 
 	response, err := ms.rx()
-	log.FDebugf("Received response: %s, error: %v", response, err)
+	log.Debugf("Received response: %s, error: %v", response, err)
 	if err != nil {
 		return "", fmt.Errorf("failed to receive response: %v", err)
 	}
 
 	switch response {
 	case defs.MicaSuccess:
-		log.FDebugf("Command executed successfully: %s", response)
+		log.Debugf("Command executed successfully: %s", response)
 		return response, nil
 	case defs.MicaFailed:
-		log.FDebugf("Command failed: %s", response)
+		log.Debugf("Command failed: %s", response)
 		return response, fmt.Errorf("mica daemon reported failure")
 	default:
-		log.FDebugf("Received unexpected response: %s", response)
+		log.Debugf("Received unexpected response: %s", response)
 		return response, fmt.Errorf("unexpected response format: %s", response)
 	}
 }

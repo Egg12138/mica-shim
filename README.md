@@ -90,12 +90,12 @@
 
 ### 🔧 非功能性调整
 
-- [ ] 调整logger模块：
-  - [ ] LocateDebugf -> FDebugf
-  - [ ] 完全去掉LocateDebugf等，全部作为 Debugf:Debugf会同时给containerd;mica shim logFile;stdout都输出；但内容格式不同
+- [x] 调整logger模块：
+  - [x] LocateDebugf -> FDebugf
+  - [x] 完全去掉LocateDebugf等，全部作为 Debugf:Debugf会同时给containerd;mica shim logFile;stdout都输出；但内容格式不同
 - [x] libmica 接口暴露过多，应减少，并且提供更好的抽象
 - [x] containerd_client 对mica-shim runtime运行
-- [ ] 优雅的错误处理
+- [x] 优雅的错误处理
 - [x] migrate to containerd 1.7.27
 - [x] container 相关结构语义化明确，减小耦合
 
@@ -108,9 +108,10 @@
     - [ ] task StartRequest, task StartResponse
     - [x] contaienrd -> shim -> 
 1. demo 添加：bundle 解析:
-    - [ ] OCI zephyr-scratch 镜像
+    - [x] OCI zephyr-scratch 镜像
     - [x] fetch information from bundle 
-    - [ ] 分配可用(目前不支持多核)CPU给clientOS
+    - [x] 分配可用(目前不支持多核)CPU给clientOS
+    - [ ] 改用ocispec annotation + rootfs conf双解析，保险起见
 1. image build tool 
     - [x] 独立可用；一键构建
     - [ ] 继承到yocto 
@@ -118,6 +119,8 @@
     1. create时的freeCPU/create分配但是没有启动过的enqHead/使用过的CPU enqTail
     2. stop时 CPU enqTail
     3. 异常 CPU enqTailk
+1. IO
+
 1. container events
 1. pod IP
 1. client sock收回的问题；
@@ -126,10 +129,9 @@
 ###  其他事项
 
 * 版本
-* containerd 1.7是containerd v1的末版本，1.7内部出现了明显的API变动，下一步先调整API到1.7.3之后的API
-* libmica接口暴露调整为 Create, Stop, Rm, Delete ，其他都改为private
-* package logger 调整
-* replace all Unix process handler ==> rtos process monitor
+* k8s接入的问题分析
+* log轻型化
+
 
 ###  已知问题
 
@@ -194,3 +196,7 @@ Linux Host Core (ARM Core 0)         RTOS Remote Core (ARM Core 1)
   - 比如pty，可能我们需要更优的策略来转
 
 
+
+# references
+
+[urunc talk](https://blog.cloudkernels.net/posts/urunc/)

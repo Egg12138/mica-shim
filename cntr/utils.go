@@ -95,14 +95,23 @@ func physicalMaxCPU() int {
 
 // getContainerCPULimit returns the effective CPU limit for a container
 // considering both OCI spec limits and system constraints
-func getContainerCPULimit(info *ContainerConfig) int {
+func getContainerCPULimit(cfg *ContainerConfig) int {
 	systemCPUs := runtime.NumCPU()
 	
-	log.Debugf("getContainerCPULimit: info = %v, systemCPUs = %d", info.cpuLimit, systemCPUs)
-	// If container has specific CPU limit from OCI spec, use it
-	if info != nil && info.cpuLimit > 0 {
-		log.Debugf("Using container CPU limit from OCI spec: %d", info.cpuLimit)
-		return min(info.cpuLimit, systemCPUs)
+		// If container has specific CPU limit from OCI spec, use it
+	if cfg != nil {
+	log.Debugf(`cpu config:
+		cpuLimit: %d, 
+		cpuPeriod: %d, 
+		cpuQuota: %d, 
+		cpuShares: %d, 
+		cpusetCpus: %s, 
+		`, cfg, cfg.cpuLimit, cfg.cpuPeriod, cfg.cpuQuota, cfg.cpuShares, cfg.cpusetCpus)
+
+	}
+	if cfg != nil && cfg.cpuLimit > 0 {
+		log.Debugf("Using container CPU limit from OCI spec: %d", cfg.cpuLimit)
+		return min(cfg.cpuLimit, systemCPUs)
 	}
 	
 	// Default fallback - use all available CPUs but reserve one for host
@@ -586,7 +595,7 @@ func validBundle(containerID, bundlePath string) (string, error) {
 // specified path.
 func resolvePath(path string) (string, error) {
 	if path == "" {
-		log.FDebugf("path must be specified")
+		log.Debugf("path must be specified")
 		return "", fmt.Errorf("path must be specified")
 	}
 

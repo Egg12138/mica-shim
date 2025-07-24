@@ -108,9 +108,7 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 		if retErr != nil {
 			log.Debugf("*** TASK CREATE: Error occurred, cleaning up resources for task %s", r.ID)
 			if err := micaIO.Close(); err != nil {
-				log.FDebugf("pid = %v, err = %v", cmd.Process.Pid, err)
-				log.Error("failed to close mica IO")
-				log.Debugf("*** TASK CREATE: Failed to close MicaIO during cleanup for task %s: %v", r.ID, err)
+				log.Debugf("Failed to close mica IO for PID %v: %v", cmd.Process.Pid, err)
 			}
 			if cmd.Process != nil {
 				// Kill the MICA init process on error

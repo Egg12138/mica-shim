@@ -507,7 +507,7 @@ func (r *ContainerConfig) parseMicaLabels(labels map[string]string) error {
 			if v == "" {
 				return fmt.Errorf("missing os label")
 			}
-			log.FDebugf("current os label: %s", v)
+			log.Debugf("current os label: %s", v)
 			if !validOS(v) {
 				return fmt.Errorf("invalid os label: %s", v)
 			}
@@ -551,13 +551,11 @@ func (r *ContainerConfig) parseOCICPUResources(spec *specs.Spec) error {
 		}
 	}
 
-	// Parse CPU shares
 	if cpu.Shares != nil {
 		r.cpuShares = *cpu.Shares
 		log.Debugf("Parsed CPU shares: %d", *cpu.Shares)
 	}
 
-	// Parse cpuset.cpus for specific CPU assignment
 	if cpu.Cpus != "" {
 		r.cpusetCpus = cpu.Cpus
 		log.Debugf("Parsed cpuset.cpus: %s", r.cpusetCpus)
@@ -787,7 +785,6 @@ func (r *ContainerConfig) OOMKillDisable() bool {
 //		cpuLimit: int; CPU limit from OCI spec
 //		cpu: int; allocated CPU (-1 if not allocated)
 func (c *Container) validMicaContainer() bool {
-	log.Debugf("validating MicaContainer: %+v", c.config)
 	
 	osValid := validOS(c.config.OS())
 	fwValid := validFirmware(c.bundle, c.config.FirmwarePath())

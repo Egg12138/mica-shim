@@ -1,6 +1,6 @@
 .PHONY: all build-prod build build-arm64 build-prod-arm64 test-prod test clean clean-all help run-debug run-prod containerd-client build-containerd-client install install-arm64 install-prod-arm64 mock-micad mock-micad-py mock-micad-py-quiet test-sched bench-sched profile-flame profile-flame-prod profile-cntr
 
-SHIM_NAME := org.openeuler.mica.v1
+SHIM_NAME := io.containerd.mica.v2
 # containerd shim v2 命名规约转换
 # Runtime name: io.containerd.runc.v2 → Binary: containerd-shim-runc-v2
 # Runtime name: org.openeuler.micashim.v2 → Binary: containerd-shim-micashim-v2

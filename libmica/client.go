@@ -92,7 +92,7 @@ func MicaCtl(cmd MicaCommand, client string) (string, error) {
 		return "", fmt.Errorf("mica socket directory does not exist, please check if micad is running")
 	}
 	target := filepath.Join(defs.MicaSocketDir, client+".socket")
-	log.FDebugf("client socket path: %s", target)
+	log.Debugf("client socket path: %s", target)
 	s := newMicaSocket(target)
 	msg := string(cmd)
 	return s.handleMsg([]byte(msg))
@@ -106,7 +106,7 @@ func NewMicaCreateMsg(cpu uint32, name string, path string, ped string, pedCfg s
 }
 
 func CreateMicaClient(conf MicaClientConf) (string, error) {
-	log.FDebugf("create mica client conf: %+v", conf)
+	log.Debugf("create mica client conf: %+v", conf)
 	s := newMicaSocket(defs.MicaCreatSocketPath)
 	// we do not deref s here, because it is dropped in handleMsg()
 	msg := conf.pack()

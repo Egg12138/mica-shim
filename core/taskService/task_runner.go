@@ -30,7 +30,7 @@ func create(ctx context.Context, req *taskAPI.CreateTaskRequest) (taskRes *taskA
 		taskRes = &taskAPI.CreateTaskResponse{
 			Pid: 1,
 		}
-		log.FDebugf("mica create success")
+		log.Debugf("mica create success")
 	}
 
 	return nil, nil

@@ -114,8 +114,12 @@ func Debug(args ...interface{}) {
 
 // In debug mode, all debugf will duplicate the debug message to both debug file and stderr
 func Debugf(format string, args ...interface{}) {
+	debugf(format, 1, args...)
+}
+
+func debugf(format string, additionalDepth int, args ...interface{}) {
 	Log.Debugf(format+"\n", args...)
-	FDebugf(format, args...)
+	FDebugf(format, additionalDepth, args...)
 }
 
 func Info(args ...interface{}) {
@@ -190,7 +194,7 @@ func getDebugInfoPrefix(depth int) string {
 	if ok {
 		fullFuncName := runtime.FuncForPC(pc_parent).Name()
 		funcName := filepath.Base(fullFuncName)
-		prefix += fmt.Sprintf(" \033[34m%s()\033[0m calls ", funcName)
+		prefix += fmt.Sprintf(" \033[34m%s()\033[0m --> ", funcName)
 	}
 	pc, _, _, ok := runtime.Caller(depth)
 	if ok {
@@ -208,14 +212,14 @@ func getDebugInfoPrefix(depth int) string {
 
 
 // Used for those debug points needed to be traced call stack
-func FDebugf(format string, args ...interface{}) error {
+func FDebugf(format string, additionalDepth int, args ...interface{}) error {
 	f, err := os.OpenFile(debugFileName, os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 
-	prefix := getDebugInfoPrefix(4)
+	prefix := getDebugInfoPrefix(3 + additionalDepth)
 	_, err = fmt.Fprintf(f, prefix+format+"\n", args...)
 	return err
 }
@@ -228,7 +232,7 @@ func Pretty(format string, args ...interface{}) {
 	for i, arg := range args {
 		formattedArgs[i] = safePrettyFormat(arg)
 	}
-	Debugf(format, formattedArgs...)
+	debugf(format, 1, formattedArgs...)
 }
 
 // pretty packages can not ensure memory safe, hence safePrettyFormat is needed,
