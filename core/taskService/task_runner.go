@@ -37,9 +37,7 @@ func create(ctx context.Context, req *taskAPI.CreateTaskRequest) (taskRes *taskA
 }
 
 func start(ctx context.Context, req *taskAPI.StartRequest) (taskRes *taskAPI.StartResponse, retErr error) {
-
 	libmica.MicaCtl(libmica.MStart, req.ID)
-
 	return nil, nil
 }
 
