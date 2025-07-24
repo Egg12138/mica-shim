@@ -73,7 +73,7 @@ func (s *micaTaskService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) 
 		}
 	}
 
-	// NOTICE: remove first, then stop the client rtos
+	// NOTICE: remove in runtime first, then stop the client rtos
 	response, err := libmica.MicaCtl(libmica.MRemove, r.ID)
 	log.Debugf("delete id:%s execid:%s response:%s; mica error: %v", r.ID, r.ExecID, response, err)
 
@@ -89,13 +89,15 @@ func (s *micaTaskService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) 
 // Exec executes an additional process inside the task.
 func (*micaTaskService) Exec(ctx context.Context, r *taskAPI.ExecProcessRequest) (*ptypes.Empty, error) {
 	log.Debugf("exec id:%s execid:%s", r.ID, r.ExecID)
-	return nil, errdefs.ErrNotImplemented
+	log.Infof("Executing a new task is not implemented yet")
+	return nil, nil
 }
 
 // ResizePty resizes the pty of a process.
 func (*micaTaskService) ResizePty(ctx context.Context, r *taskAPI.ResizePtyRequest) (*ptypes.Empty, error) {
 	log.Debugf("resizepty id:%s execid:%s", r.ID, r.ExecID)
-	return nil, errdefs.ErrNotImplemented
+	log.Infof("resizepty is not implemented yet")
+	return nil, nil
 }
 
 // State returns the runtime state of a RTOS task process.
@@ -113,6 +115,7 @@ func (s *micaTaskService) State(ctx context.Context, r *taskAPI.StateRequest) (*
 	if !proc.exitTime.IsZero() {
 		status = tasktypes.Status_STOPPED
 	}
+
 
 	return &taskAPI.StateResponse{
 		ID:         r.ID,

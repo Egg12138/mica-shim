@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	core "mica-shim/core/oci"
 	defs "mica-shim/definitions"
 	"mica-shim/libmica"
 	log "mica-shim/logger"
@@ -158,8 +159,20 @@ type ContainerConfig struct {
 	pedestalConf string
 	os         string
 	ncpu       int    // requested CPU count (default = 1)
+	
 	cpuLimit   int    // CPU limit from OCI spec
 	cpusetCpus string // cpuset.cpus specification
+	cpuShares  uint64 // CPU shares (relative weight)
+	cpuQuota   int64  // CPU quota in microseconds
+	cpuPeriod  uint64 // CPU period in microseconds
+	
+	// Memory resource limits from OCI spec
+	memoryLimit       int64  // Memory limit in bytes
+	memoryReservation int64  // Memory soft limit in bytes
+	memorySwap        int64  // Memory + swap limit in bytes
+	memoryKernel      int64  // Kernel memory limit in bytes
+	memorySwappiness  *uint64 // Memory swappiness (0-100)
+	oomKillDisable    bool   // Whether to disable OOM killer
 	
 	// Runtime state
 	cpu int // allocated CPU (-1 if not allocated)
@@ -281,6 +294,18 @@ func parseContainerConfig(bundle string, ocispec specs.Spec, cType ContainerType
 		ncpu:         1,
 		cpuLimit:     0,
 		cpusetCpus:   "",
+		cpuShares:    0,
+		cpuQuota:     0,
+		cpuPeriod:    0,
+		
+		// Memory defaults
+		memoryLimit:       0,
+		memoryReservation: 0,
+		memorySwap:        0,
+		memoryKernel:      0,
+		memorySwappiness:  nil,
+		oomKillDisable:    false,
+		
 		cpu:          -1, // not allocated yet
 
 		mu: sync.RWMutex{},
@@ -298,6 +323,19 @@ func parseContainerConfig(bundle string, ocispec specs.Spec, cType ContainerType
 		return nil, err
 	}
 
+	// Parse Memory resources from OCI spec
+	if err := config.parseOCIMemoryResources(&ocispec); err != nil {
+		log.Debugf("failed to parse OCI Memory resources: %v", err)
+		return nil, err
+	}
+
+	// Validate resource limits against system constraints
+	if err := validateResourceLimits(config); err != nil {
+		log.Warnf("Resource validation warning: %v", err)
+		// Don't fail the container creation for resource validation warnings
+		// but log them for visibility
+	}
+
 	// Set default OS if not specified
 	if config.os == "" {
 		log.Warn("os is not set, default to zephyr")
@@ -305,6 +343,8 @@ func parseContainerConfig(bundle string, ocispec specs.Spec, cType ContainerType
 	}
 
 	log.Debugf("parsed container config: %+v", config)
+	log.Infof("Container resource limits - CPU: %s, Memory: %s", 
+		formatCPULimit(config), formatMemoryLimit(config))
 	return config, nil
 }
 
@@ -344,6 +384,11 @@ func SetupContainer(req *taskAPI.CreateTaskRequest) (_ *Container, retErr error)
 	detach := !req.Terminal
 	// spec, err := loadContainerConf(req)
 	spec, err := loadSpec(req.Bundle)
+	rtConfig, err := getRuntimeConfig(req, &spec)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load runtime config: %w", err)
+	}
+	log.Pretty("runtime config: %v", rtConfig)
 	enableTTy := spec.Process.Terminal
 	// when tty is disable, stdio use regular pipe, which containerd needs pipe io to log
 	disableOutput := detach && enableTTy
@@ -424,7 +469,6 @@ func SetupContainer(req *taskAPI.CreateTaskRequest) (_ *Container, retErr error)
 
 // A new container instance, initialized with complete configuration
 func newContainer(r *taskAPI.CreateTaskRequest, config *ContainerConfig) (*Container, error) {
-	log.Pretty(`container config parsed from bundle: %v`, config)
 
 	container := &Container{
 		bundle:   config.Bundle,
@@ -498,11 +542,19 @@ func (r *ContainerConfig) parseOCICPUResources(spec *specs.Spec) error {
 
 	// Parse CPU quota and period to get CPU limit
 	if cpu.Quota != nil && cpu.Period != nil && *cpu.Period > 0 {
+		r.cpuQuota = *cpu.Quota
+		r.cpuPeriod = *cpu.Period
 		cpuLimit := int(*cpu.Quota / int64(*cpu.Period))
 		if cpuLimit > 0 {
 			r.cpuLimit = cpuLimit
-			log.Debugf("Parsed CPU limit from quota/period: %d", cpuLimit)
+			log.Debugf("Parsed CPU limit from quota/period: %d (quota: %d, period: %d)", cpuLimit, *cpu.Quota, *cpu.Period)
 		}
+	}
+
+	// Parse CPU shares
+	if cpu.Shares != nil {
+		r.cpuShares = *cpu.Shares
+		log.Debugf("Parsed CPU shares: %d", *cpu.Shares)
 	}
 
 	// Parse cpuset.cpus for specific CPU assignment
@@ -514,6 +566,55 @@ func (r *ContainerConfig) parseOCICPUResources(spec *specs.Spec) error {
 	// Parse realtime CPU constraints if present
 	if cpu.RealtimeRuntime != nil {
 		log.Debugf("Realtime CPU runtime specified: %d", *cpu.RealtimeRuntime)
+	}
+
+	return nil
+}
+
+// parseOCIMemoryResources parses Memory resource limits from OCI spec
+func (r *ContainerConfig) parseOCIMemoryResources(spec *specs.Spec) error {
+	if spec.Linux == nil || spec.Linux.Resources == nil || spec.Linux.Resources.Memory == nil {
+		log.Debugf("No Memory resources specified in OCI spec")
+		return nil
+	}
+
+	memory := spec.Linux.Resources.Memory
+
+	// Parse memory limit
+	if memory.Limit != nil {
+		r.memoryLimit = *memory.Limit
+		log.Debugf("Parsed memory limit: %d bytes", *memory.Limit)
+	}
+
+	// Parse memory reservation (soft limit)
+	if memory.Reservation != nil {
+		r.memoryReservation = *memory.Reservation
+		log.Debugf("Parsed memory reservation: %d bytes", *memory.Reservation)
+	}
+
+	// Parse memory + swap limit
+	if memory.Swap != nil {
+		r.memorySwap = *memory.Swap
+		log.Debugf("Parsed memory swap limit: %d bytes", *memory.Swap)
+	}
+
+	// Parse kernel memory limit
+	if memory.Kernel != nil {
+		r.memoryKernel = *memory.Kernel
+		log.Debugf("Parsed kernel memory limit: %d bytes", *memory.Kernel)
+	}
+
+	// Parse memory swappiness
+	if memory.Swappiness != nil {
+		swappiness := uint64(*memory.Swappiness)
+		r.memorySwappiness = &swappiness
+		log.Debugf("Parsed memory swappiness: %d", *memory.Swappiness)
+	}
+
+	// Parse OOM killer disable flag
+	if memory.DisableOOMKiller != nil {
+		r.oomKillDisable = *memory.DisableOOMKiller
+		log.Debugf("Parsed OOM killer disable: %v", *memory.DisableOOMKiller)
 	}
 
 	return nil
@@ -614,6 +715,69 @@ func (r *ContainerConfig) CpusetCpus() string {
 	return r.cpusetCpus
 }
 
+// CPUShares returns the CPU shares (relative weight)
+func (r *ContainerConfig) CPUShares() uint64 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.cpuShares
+}
+
+// CPUQuota returns the CPU quota in microseconds
+func (r *ContainerConfig) CPUQuota() int64 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.cpuQuota
+}
+
+// CPUPeriod returns the CPU period in microseconds
+func (r *ContainerConfig) CPUPeriod() uint64 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.cpuPeriod
+}
+
+// MemoryLimit returns the memory limit in bytes
+func (r *ContainerConfig) MemoryLimit() int64 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.memoryLimit
+}
+
+// MemoryReservation returns the memory soft limit in bytes
+func (r *ContainerConfig) MemoryReservation() int64 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.memoryReservation
+}
+
+// MemorySwap returns the memory + swap limit in bytes
+func (r *ContainerConfig) MemorySwap() int64 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.memorySwap
+}
+
+// MemoryKernel returns the kernel memory limit in bytes
+func (r *ContainerConfig) MemoryKernel() int64 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.memoryKernel
+}
+
+// MemorySwappiness returns the memory swappiness setting (0-100)
+func (r *ContainerConfig) MemorySwappiness() *uint64 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.memorySwappiness
+}
+
+// OOMKillDisable returns whether OOM killer is disabled
+func (r *ContainerConfig) OOMKillDisable() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.oomKillDisable
+}
+
 //	ContainerConfig contains:
 //		extraLabels: map[string]string; additional labels
 //		relativePath: string; the resolved firmware path must be valid
@@ -663,4 +827,15 @@ func (c *Container) GetClientCPU() (int, error) {
 	}
 	log.Debugf("get clientcpu done.")
 	return c.config.cpu, nil
+}
+
+// FUTURE: configure runtime from :
+// 1. annotation
+// 2. config file
+func getRuntimeConfig(r *taskAPI.CreateTaskRequest, ocispec *specs.Spec) (*core.RuntimeConfig, error) {
+	// Parse runtime configuration from OCI spec annotations
+	runtimeConfig := core.ParseRuntimeConfig(ocispec.Annotations)
+	
+	log.Pretty("Parsed runtime config: %v", runtimeConfig)
+	return runtimeConfig, nil
 }

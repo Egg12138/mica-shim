@@ -3,13 +3,14 @@ package libmica
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"sync"
 	"syscall"
 	"time"
 
-	"mica-shim/io"
+	ioutils "mica-shim/io"
 	log "mica-shim/logger"
 )
 
@@ -24,17 +25,17 @@ const (
 
 // MicaIO handles stdio communication between containerd and mica PTY devices
 type MicaIO struct {
-	taskID   string     // 任务ID
-	stdin    *io.PipeIO // 标准输入管道
-	stdout   *io.PipeIO // 标准输出管道
-	stderr   *io.PipeIO // 标准错误管道
-	terminal bool       // 是否为终端模式
+	taskID   string               // Task identifier
+	stdin    *ioutils.PipeIO     // Stdin pipe
+	stdout   *ioutils.PipeIO     // Stdout pipe
+	stderr   *ioutils.PipeIO     // Stderr pipe
+	terminal bool                // Terminal mode flag
 
-	// PTY设备连接
-	ptyDevice string   // PTY设备路径
-	ptyFile   *os.File // PTY设备文件句柄
+	// PTY device connection
+	ptyDevice string   // PTY device path
+	ptyFile   *os.File // PTY device file handle
 
-	// runtime side
+	// Runtime state
 	ctx     context.Context
 	cancel  context.CancelFunc
 	done    chan struct{}
@@ -43,15 +44,59 @@ type MicaIO struct {
 	mu sync.RWMutex
 
 	micaClientConn net.Conn
+	
+	// Direct FIFO path for stdin forwarding
+	stdinFIFOPath string
 }
 
-// PTY device discovery result
+// PTYDiscoveryResult contains PTY device discovery result
 type PTYDiscoveryResult struct {
 	DevicePath string
 	Error      error
 }
 
-// NewMicaIO creates a new MicaIO instance for the given task
+// stdinFIFOReader handles stdin FIFO reading
+type stdinFIFOReader struct {
+	file   *os.File
+	taskID string
+}
+
+// newStdinFIFOReader creates a stdin FIFO reader
+func newStdinFIFOReader(stdinPath, taskID string) (*stdinFIFOReader, error) {
+	if stdinPath == "" {
+		return nil, fmt.Errorf("stdin path is empty")
+	}
+
+	file, err := os.OpenFile(stdinPath, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, fmt.Errorf("opening stdin FIFO %s: %w", stdinPath, err)
+	}
+
+	return &stdinFIFOReader{
+		file:   file,
+		taskID: taskID,
+	}, nil
+}
+
+// Read reads data from stdin FIFO
+func (r *stdinFIFOReader) Read(buf []byte) (int, error) {
+	return r.file.Read(buf)
+}
+
+// SetReadDeadline sets read deadline for stdin FIFO
+func (r *stdinFIFOReader) SetReadDeadline(t time.Time) error {
+	return r.file.SetReadDeadline(t)
+}
+
+// Close closes the stdin FIFO
+func (r *stdinFIFOReader) Close() error {
+	if r.file != nil {
+		return r.file.Close()
+	}
+	return nil
+}
+
+// NewMicaIO creates a new MicaIO instance
 func NewMicaIO(ctx context.Context, taskID string, stdin, stdout, stderr string, terminal bool) (*MicaIO, error) {
 	ctxWithCancel, cancel := context.WithCancel(ctx)
 
@@ -64,9 +109,20 @@ func NewMicaIO(ctx context.Context, taskID string, stdin, stdout, stderr string,
 		started:  false,
 	}
 
-	// Initialize PipeIO for stdout if provided
+	// Store stdin FIFO path for direct access
+	if stdin != "" {
+		mio.stdinFIFOPath = stdin
+		stdinPipe, err := ioutils.NewPipeIO(stdin)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("creating stdin pipe: %w", err)
+		}
+		mio.stdin = stdinPipe
+	}
+
+	// Initialize stdout pipe
 	if stdout != "" {
-		stdoutPipe, err := io.NewPipeIO(stdout)
+		stdoutPipe, err := ioutils.NewPipeIO(stdout)
 		if err != nil {
 			cancel()
 			return nil, fmt.Errorf("creating stdout pipe: %w", err)
@@ -74,9 +130,9 @@ func NewMicaIO(ctx context.Context, taskID string, stdin, stdout, stderr string,
 		mio.stdout = stdoutPipe
 	}
 
-	// Initialize PipeIO for stderr if provided
+	// Initialize stderr pipe
 	if stderr != "" {
-		stderrPipe, err := io.NewPipeIO(stderr)
+		stderrPipe, err := ioutils.NewPipeIO(stderr)
 		if err != nil {
 			cancel()
 			if mio.stdout != nil {
@@ -87,34 +143,16 @@ func NewMicaIO(ctx context.Context, taskID string, stdin, stdout, stderr string,
 		mio.stderr = stderrPipe
 	}
 
-	// Initialize PipeIO for stdin if provided
-	if stdin != "" {
-		stdinPipe, err := io.NewPipeIO(stdin)
-		if err != nil {
-			cancel()
-			if mio.stdout != nil {
-				mio.stdout.Close()
-			}
-			if mio.stderr != nil {
-				mio.stderr.Close()
-			}
-			return nil, fmt.Errorf("creating stdin pipe: %w", err)
-		}
-		mio.stdin = stdinPipe
-	}
-
 	return mio, nil
 }
 
-// discoverPTYDevice discovers the PTY device created by micad for this task
+// discoverPTYDevice discovers PTY device created by micad
 func (mio *MicaIO) discoverPTYDevice() (*PTYDiscoveryResult, error) {
 	log.Debugf("Starting PTY device discovery for task %s", mio.taskID)
 
-	// First, try to find any existing PTY devices
 	existingDevices := mio.scanExistingPTYDevices()
 
-	// For now, use a simple strategy: use the first available device
-	// TODO: Implement proper task-to-PTY mapping based on micad's assignment
+	// Use first available device (TODO: implement proper task-to-PTY mapping)
 	if len(existingDevices) > 0 {
 		selectedDevice := existingDevices[0]
 		log.Debugf("Selected PTY device %s for task %s", selectedDevice, mio.taskID)
@@ -137,7 +175,6 @@ func (mio *MicaIO) scanExistingPTYDevices() []string {
 	for i := 0; i < MaxPTYDevices; i++ {
 		ptyPath := fmt.Sprintf(PTYDevicePattern, i)
 		if stat, err := os.Stat(ptyPath); err == nil {
-			// Check if it's a character device (PTY)
 			if stat.Mode()&os.ModeCharDevice != 0 {
 				devices = append(devices, ptyPath)
 				log.Debugf("Found PTY device: %s", ptyPath)
@@ -180,7 +217,7 @@ func (mio *MicaIO) waitForPTYDeviceCreation() error {
 	}
 }
 
-// connectToPTY opens the PTY device for communication
+// connectToPTY opens PTY device for communication
 func (mio *MicaIO) connectToPTY() error {
 	if mio.ptyDevice == "" {
 		if err := mio.waitForPTYDeviceCreation(); err != nil {
@@ -188,7 +225,6 @@ func (mio *MicaIO) connectToPTY() error {
 		}
 	}
 
-	// Open the PTY device with read-write access
 	ptyFile, err := os.OpenFile(mio.ptyDevice, os.O_RDWR|syscall.O_NOCTTY, 0)
 	if err != nil {
 		return fmt.Errorf("opening PTY device %s: %w", mio.ptyDevice, err)
@@ -199,7 +235,7 @@ func (mio *MicaIO) connectToPTY() error {
 	return nil
 }
 
-// Start begins the IO forwarding between containerd and PTY device
+// Start begins IO forwarding between containerd and PTY device
 func (mio *MicaIO) Start() error {
 	mio.mu.Lock()
 	defer mio.mu.Unlock()
@@ -227,7 +263,7 @@ func (mio *MicaIO) Start() error {
 		}()
 	}
 
-	// Start stderr forwarding (if separate from stdout)
+	// Start stderr forwarding (PTY -> containerd)
 	if mio.stderr != nil && !mio.terminal {
 		wg.Add(1)
 		go func() {
@@ -239,7 +275,7 @@ func (mio *MicaIO) Start() error {
 	}
 
 	// Start stdin forwarding (containerd -> PTY)
-	if mio.stdin != nil {
+	if mio.stdinFIFOPath != "" {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -249,7 +285,7 @@ func (mio *MicaIO) Start() error {
 		}()
 	}
 
-	// Start the containerd pipe copying
+	// Start containerd pipe copying
 	if mio.stdout != nil {
 		wg.Add(1)
 		go func() {
@@ -270,17 +306,8 @@ func (mio *MicaIO) Start() error {
 		}()
 	}
 
-	if mio.stdin != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := mio.stdin.Copy(mio.ctx); err != nil {
-				log.Errorf("stdin pipe copy error for task %s: %v", mio.taskID, err)
-			}
-		}()
-	}
+	// Note: stdin.Copy() not used - we handle stdin via direct FIFO reading
 
-	// Wait for all goroutines to complete
 	go func() {
 		wg.Wait()
 		close(mio.done)
@@ -308,13 +335,12 @@ func (mio *MicaIO) forwardPTYToStdout() error {
 			log.Debugf("PTY->stdout forwarding stopped for task %s: context done", mio.taskID)
 			return mio.ctx.Err()
 		default:
-			// Set read timeout to allow context checking
 			mio.ptyFile.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
 
 			n, err := mio.ptyFile.Read(buf)
 			if err != nil {
 				if os.IsTimeout(err) {
-					continue // Timeout is expected, continue to check context
+					continue
 				}
 				log.Debugf("PTY read error for task %s: %v", mio.taskID, err)
 				return fmt.Errorf("reading from PTY: %w", err)
@@ -336,28 +362,70 @@ func (mio *MicaIO) forwardPTYToStderr() error {
 		return nil
 	}
 
-	// For terminal mode, stderr is typically combined with stdout
-	// For non-terminal mode, we could implement separate stderr handling
+	// Stderr is typically combined with stdout in terminal mode
 	log.Debugf("Stderr forwarding not implemented for task %s (terminal mode: %v)", mio.taskID, mio.terminal)
 	return nil
 }
 
 // forwardStdinToPTY forwards data from containerd stdin to PTY
 func (mio *MicaIO) forwardStdinToPTY() error {
-	if mio.ptyFile == nil || mio.stdin == nil {
+	if mio.ptyFile == nil {
 		return nil
 	}
 
 	log.Debugf("Starting stdin->PTY forwarding for task %s", mio.taskID)
 
-	// For now, we implement a basic stdin forwarding mechanism
-	// This requires more sophisticated handling depending on how stdin is provided
+	stdinReader, err := newStdinFIFOReader(mio.stdinFIFOPath, mio.taskID)
+	if err != nil {
+		return fmt.Errorf("creating stdin FIFO reader: %w", err)
+	}
+	defer stdinReader.Close()
 
-	// TODO: Implement proper stdin reading from containerd and writing to PTY
-	// This might require changes to the PipeIO interface or additional mechanisms
+	buf := make([]byte, 4096)
+	for {
+		select {
+		case <-mio.ctx.Done():
+			log.Debugf("stdin->PTY forwarding stopped for task %s: context done", mio.taskID)
+			return mio.ctx.Err()
+		default:
+			stdinReader.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
 
-	log.Debugf("Stdin->PTY forwarding placeholder for task %s", mio.taskID)
-	return nil
+			n, err := stdinReader.Read(buf)
+			if err != nil {
+				if os.IsTimeout(err) {
+					continue
+				}
+				if err == io.EOF {
+					log.Debugf("stdin EOF reached for task %s", mio.taskID)
+					return nil
+				}
+				log.Debugf("stdin read error for task %s: %v", mio.taskID, err)
+				return fmt.Errorf("reading from stdin: %w", err)
+			}
+
+			if n > 0 {
+				log.Debugf("Forwarding %d bytes from stdin to PTY for task %s", n, mio.taskID)
+				
+				// Write to PTY with retry mechanism
+				written := 0
+				for written < n {
+					mio.ptyFile.SetWriteDeadline(time.Now().Add(1 * time.Second))
+					
+					bytesWritten, err := mio.ptyFile.Write(buf[written:n])
+					if err != nil {
+						if os.IsTimeout(err) {
+							log.Debugf("PTY write timeout for task %s, retrying", mio.taskID)
+							continue
+						}
+						return fmt.Errorf("writing to PTY: %w", err)
+					}
+					written += bytesWritten
+				}
+				
+				log.Debugf("Successfully wrote %d bytes to PTY for task %s", written, mio.taskID)
+			}
+		}
+	}
 }
 
 // Wait waits for all IO operations to complete
@@ -411,21 +479,16 @@ func (mio *MicaIO) Close() error {
 	return nil
 }
 
-// GetPTYDevice returns the PTY device path (for debugging/info)
+// GetPTYDevice returns the PTY device path
 func (mio *MicaIO) GetPTYDevice() string {
 	mio.mu.RLock()
 	defer mio.mu.RUnlock()
 	return mio.ptyDevice
 }
 
-// IsStarted returns whether the MicaIO has been started
+// IsStarted returns whether MicaIO has been started
 func (mio *MicaIO) IsStarted() bool {
 	mio.mu.RLock()
 	defer mio.mu.RUnlock()
 	return mio.started
-}
-
-// GetTaskID returns the task ID
-func (mio *MicaIO) GetTaskID() string {
-	return mio.taskID
 }

@@ -98,6 +98,7 @@ func physicalMaxCPU() int {
 func getContainerCPULimit(info *ContainerConfig) int {
 	systemCPUs := runtime.NumCPU()
 	
+	log.Debugf("getContainerCPULimit: info = %v, systemCPUs = %d", info.cpuLimit, systemCPUs)
 	// If container has specific CPU limit from OCI spec, use it
 	if info != nil && info.cpuLimit > 0 {
 		log.Debugf("Using container CPU limit from OCI spec: %d", info.cpuLimit)
@@ -112,6 +113,176 @@ func getContainerCPULimit(info *ContainerConfig) int {
 	
 	log.Debugf("Using default CPU limit: %d (system CPUs: %d)", defaultLimit, systemCPUs)
 	return defaultLimit
+}
+
+// getContainerMemoryLimit returns the effective memory limit for a container
+// considering both OCI spec limits and system constraints
+func getContainerMemoryLimit(info *ContainerConfig) int64 {
+	// Get system memory information
+	systemMemoryBytes := getSystemMemoryBytes()
+	
+	// If container has specific memory limit from OCI spec, use it
+	if info != nil && info.memoryLimit > 0 {
+		log.Debugf("Using container memory limit from OCI spec: %d bytes", info.memoryLimit)
+		return min(info.memoryLimit, systemMemoryBytes)
+	}
+	
+	// Default fallback - use most available memory but reserve some for host
+	defaultLimit := systemMemoryBytes
+	if defaultLimit > 1024*1024*1024 { // If > 1GB, reserve 512MB for host
+		defaultLimit -= 512 * 1024 * 1024
+	} else if defaultLimit > 512*1024*1024 { // If > 512MB, reserve 256MB for host
+		defaultLimit -= 256 * 1024 * 1024
+	}
+	
+	log.Debugf("Using default memory limit: %d bytes (system memory: %d bytes)", defaultLimit, systemMemoryBytes)
+	return defaultLimit
+}
+
+// getSystemMemoryBytes returns the total system memory in bytes
+func getSystemMemoryBytes() int64 {
+	data, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		log.Warnf("failed to read /proc/meminfo, using default: %v", err)
+		return 2 * 1024 * 1024 * 1024 // Default to 2GB
+	}
+
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "MemTotal:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				if memKB, err := strconv.ParseInt(fields[1], 10, 64); err == nil {
+					return memKB * 1024 // Convert KB to bytes
+				}
+			}
+			break
+		}
+	}
+
+	log.Warnf("failed to parse MemTotal from /proc/meminfo, using default")
+	return 2 * 1024 * 1024 * 1024 // Default to 2GB
+}
+
+// validateResourceLimits validates container resource limits against system constraints
+func validateResourceLimits(config *ContainerConfig) error {
+	// Validate CPU limits
+	if config.cpuLimit > 0 {
+		systemCPUs := runtime.NumCPU()
+		if config.cpuLimit > systemCPUs {
+			return fmt.Errorf("container CPU limit %d exceeds system CPU count %d", config.cpuLimit, systemCPUs)
+		}
+	}
+
+	// Validate memory limits
+	if config.memoryLimit > 0 {
+		systemMemory := getSystemMemoryBytes()
+		if config.memoryLimit > systemMemory {
+			return fmt.Errorf("container memory limit %d bytes exceeds system memory %d bytes", config.memoryLimit, systemMemory)
+		}
+	}
+
+	// Validate memory swappiness
+	if config.memorySwappiness != nil && *config.memorySwappiness > 100 {
+		return fmt.Errorf("invalid memory swappiness value %d, must be 0-100", *config.memorySwappiness)
+	}
+
+	// Validate CPU period constraints (from Linux kernel documentation)
+	if config.cpuPeriod > 0 && (config.cpuPeriod < 1000 || config.cpuPeriod > 1000000) {
+		return fmt.Errorf("invalid CPU period %d, must be between 1000 and 1000000 microseconds", config.cpuPeriod)
+	}
+
+	// Validate CPU quota constraints
+	if config.cpuQuota > 0 && config.cpuPeriod > 0 && config.cpuQuota < 1000 {
+		return fmt.Errorf("invalid CPU quota %d, must be at least 1000 microseconds", config.cpuQuota)
+	}
+
+	return nil
+}
+
+// formatBytes formats bytes into human readable string
+func formatBytes(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+// formatCPULimit formats CPU limit information into human readable string
+func formatCPULimit(config *ContainerConfig) string {
+	if config == nil {
+		return "unlimited"
+	}
+
+	parts := []string{}
+	
+	if config.cpuLimit > 0 {
+		parts = append(parts, fmt.Sprintf("limit=%d cores", config.cpuLimit))
+	}
+	
+	if config.cpuQuota > 0 && config.cpuPeriod > 0 {
+		ratio := float64(config.cpuQuota) / float64(config.cpuPeriod)
+		parts = append(parts, fmt.Sprintf("quota=%.2f cores", ratio))
+	}
+	
+	if config.cpuShares > 0 {
+		parts = append(parts, fmt.Sprintf("shares=%d", config.cpuShares))
+	}
+	
+	if config.cpusetCpus != "" {
+		parts = append(parts, fmt.Sprintf("cpuset=%s", config.cpusetCpus))
+	}
+	
+	if len(parts) == 0 {
+		return "unlimited"
+	}
+	
+	return strings.Join(parts, ", ")
+}
+
+// formatMemoryLimit formats memory limit information into human readable string
+func formatMemoryLimit(config *ContainerConfig) string {
+	if config == nil {
+		return "unlimited"
+	}
+
+	parts := []string{}
+	
+	if config.memoryLimit > 0 {
+		parts = append(parts, fmt.Sprintf("limit=%s", formatBytes(config.memoryLimit)))
+	}
+	
+	if config.memoryReservation > 0 {
+		parts = append(parts, fmt.Sprintf("reservation=%s", formatBytes(config.memoryReservation)))
+	}
+	
+	if config.memorySwap > 0 {
+		parts = append(parts, fmt.Sprintf("swap=%s", formatBytes(config.memorySwap)))
+	}
+	
+	if config.memoryKernel > 0 {
+		parts = append(parts, fmt.Sprintf("kernel=%s", formatBytes(config.memoryKernel)))
+	}
+	
+	if config.memorySwappiness != nil {
+		parts = append(parts, fmt.Sprintf("swappiness=%d", *config.memorySwappiness))
+	}
+	
+	if config.oomKillDisable {
+		parts = append(parts, "oom-kill=disabled")
+	}
+	
+	if len(parts) == 0 {
+		return "unlimited"
+	}
+	
+	return strings.Join(parts, ", ")
 }
 
 // get the most CPU nums the machine provided and current pedestal manager supports
@@ -437,3 +608,4 @@ func resolvePath(path string) (string, error) {
 }
 
 func presetSandbox() {}
+

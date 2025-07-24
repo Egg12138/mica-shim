@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kr/pretty"
 	"github.com/sirupsen/logrus"
 )
 
@@ -219,5 +218,5 @@ func FDebugf(format string, args ...interface{}) error {
 }
 
 func Pretty(format string, args ...interface{}) {
-	Debug(pretty.Sprintf(format, args...))
+	Debugf(format, args...)
 }

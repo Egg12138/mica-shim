@@ -83,6 +83,9 @@
 * 我们是否需要reaper?
   > 不论containerd 是否重启，我们的client OS在运行上和shim， containerd都没亲子关系，完全是跑在另一个核上的由mica管理的实例
 
+## 资源生命周期分析与调整策略
+
+
 ## 📋 近期TODOs (优先级)
 
 ### 🔧 非功能性调整
@@ -96,18 +99,20 @@
 - [x] migrate to containerd 1.7.27
 - [x] container 相关结构语义化明确，减小耦合
 
+
+
 ###  核心添加
 
 1. shim API， 参数全对接，明确所有参数的处理策略:
-    - [ ] task CreateRequest, task CreateResponse
+    - [x] task CreateRequest, task CreateResponse
     - [ ] task StartRequest, task StartResponse
-    - [ ] contaienrd -> shim -> 
+    - [x] contaienrd -> shim -> 
 1. demo 添加：bundle 解析:
     - [ ] OCI zephyr-scratch 镜像
     - [x] fetch information from bundle 
     - [ ] 分配可用(目前不支持多核)CPU给clientOS
 1. image build tool 
-    - [ ] 独立可用；一键构建
+    - [x] 独立可用；一键构建
     - [ ] 继承到yocto 
 1. 核分配完善:
     1. create时的freeCPU/create分配但是没有启动过的enqHead/使用过的CPU enqTail
@@ -115,6 +120,7 @@
     3. 异常 CPU enqTailk
 1. container events
 1. pod IP
+1. client sock收回的问题；
 
 
 ###  其他事项
