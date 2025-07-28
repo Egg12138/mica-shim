@@ -1,6 +1,6 @@
 # Architecture 
 
-## Latest
+### Latest
 
 overview
 ![overview](./images/micashim-overview0623.png)
@@ -8,7 +8,96 @@ overview
 expanded
 ![expanded](./images/micashim-expaned0623.png)
 
-## Logs
+### Cloud-Edge Architecture Overview
+
+The following diagram shows mica-shim's role in a Kubernetes/KubeEdge environment:
+
+```mermaid
+%%{init: {'theme':'auto', 'flowchart':{'nodeSpacing': 15, 'rankSpacing': 30, 'curve': 'basis'}}}%%
+flowchart TB
+    Cloud[k8s/k3s in edge] --> Kubectl
+    Kubeedge[kubeedge edgecore] --> Kubectl
+    Kubectl[Kubelet on edge] -->|CRI| Edge[Containerd/iSulad]
+    Edge -->|shimv2| MicaShim[mica-runtime]
+   
+    subgraph mica
+        MicaShim --> Micad[Micad]
+    end
+
+    subgraph rtos
+        Micad --> RTOS
+        RTOS[RTOS on CPUs]
+    end
+    classDef cloud fill:#e1f5fe;
+    classDef edge fill:#e8f5e8;
+    classDef component fill:#f3e5f5;
+    classDef core fill:#f0088f40;
+    
+    class Kubectl cloud;
+    class Kubeedge cloud;
+    class Cloud cloud;
+    class Edge,Kubectl edge;
+    class MicaShim core;
+    class Micad,RTOS component;
+```
+
+#f0088f8c
+
+
+
+
+### Key Components
+1. **Kubernetes Cluster**: Manages container deployments
+2. **Edge Nodes**: Run container workloads
+3. **mica-shim**: Converts container requests to RTOS operations
+4. **Micad**: MICA daemon managing RTOS instances
+5. **RTOS**: Real-time OS instances on dedicated CPUs
+
+### Usage Case: 3-CPU Edge Device
+
+The following diagram shows a specific deployment scenario with 4 CPUs:
+
+```mermaid
+%%{init:{
+  'theme':'auto',
+  'flowchart':{
+    'nodeSpacing':10,
+    'rankSpacing':30,
+    'curve':'basis'
+}}}%%
+
+flowchart LR
+    Cloud["Cloud"] -->Edgecore
+
+    subgraph ControlCPU["CPU 0 - Control"]
+        Edgecore-->iSulad
+        iSulad[iSulad]-->Mica
+        Mica[MicaRuntime]
+    end
+
+    subgraph RTOSCPUs["CPUs 1-2 - RTOS"]
+        direction LR          %% 让内部节点横向排布
+        Mica -->RTOS1[RTOS1]
+        Mica -->RTOS2[RTOS2]
+
+        RTOS1 -.->Mica
+        RTOS2 -.->Mica
+
+    end
+
+    classDef cloud fill:#e1f5fe
+    classDef edge   fill:#e8f5e8
+    classDef rtos   fill:#f3e5f5
+    classDef core   fill:#f0088f40
+
+    class RTOS1,RTOS2,RTOS3 rtos
+    class Cloud cloud
+    class Mica core
+```
+
+## containerd
+
+### in-Eco role
 
 ### DEMO 0.2 0623 overview
 
@@ -87,8 +176,6 @@ flowchart LR
     style FirmwareAnnotation fill:#f5f5f5,stroke:#999,stroke-dasharray: 5 5
 ```
 
-
-
 ### DEMO 0.2 0623 expanded
 > shim : Converter(parer) + runtime 两个部分我们会整合在一起
 
@@ -159,61 +246,4 @@ flowchart TD
         OSAnnotation{{"org.openeuler.mica.client.os"}}
         FirmwareAnnotation{{"org.openeuler.mica.client.firmware"}}
         CPUAnnotation{{"org.openeuler.mica.client.cpu"}}
-        AutobootAnnotation{{"org.openeuler.mica.client.autoboot"}}
-    end
-    
-    HelloWorldApp -.-> Annotations
-    MicaShim -.-> BundleParser[OCI Bundle Parser]
-    BundleParser -.-> Annotations
-    BundleParser -.-> Components
-    
-    %% Container Ecosystem styles
-    style Containerd fill:#e1f5fe
-    
-    %% MICA Runtime styles (consistent for all runtime components)
-    style MicaShim fill:#f3e5f5
-    style RuntimeService fill:#f3e5f5
-    style MicaClient fill:#f3e5f5
-    style Components fill:#f3e5f5
-
-    
-    %% MICA Daemon styles
-    style MicaDaemon fill:#e8f5e8
-    style SocketListener fill:#e8f5e8
-    style MicaCore fill:#e8f5e8
-    style LinuxRPMsgServices fill:#e8f5e8
-    
-    %% RemoteProc Layer styles
-    style RemoteProcCore fill:#f0f4c3
-    style BaremetalRproc fill:#f0f4c3
-    style JailhouseRproc fill:#f0f4c3
-    
-    %% Kernel Interface styles
-    style McsDevice fill:#ffccbc
-    style JailhouseHypervisor fill:#ffccbc
-    style CPUControl fill:#ffccbc
-    style MemoryMapping fill:#ffccbc
-    style IPIInterrupts fill:#ffccbc
-    
-    %% Communication Infrastructure styles
-    style SharedMemoryHW fill:#e0f2f1
-    style RPMsgProtocol fill:#e0f2f1
-    
-    %% RTOS Core styles
-    style ZephyrRTOS fill:#fff3e0
-    style AppTasks fill:#fff3e0
-    style RTOSRPMsgServices fill:#fff3e0
-    style DebugInterface fill:#fff3e0
-    style RTOSResourceTable fill:#fff3e0
-    
-    %% OCI Images styles
-    style BaseImage fill:#fce4ec
-    style HelloWorldApp fill:#fce4ec
-    style DebugApp fill:#fce4ec
-    
-    %% Annotation styles (configuration data, not components)
-    style OSAnnotation fill:#f5f5f5,stroke:#999,stroke-dasharray: 5 5
-    style FirmwareAnnotation fill:#f5f5f5,stroke:#999,stroke-dasharray: 5 5
-    style CPUAnnotation fill:#f5f5f5,stroke:#999,stroke-dasharray: 5 5
-    style AutobootAnnotation fill:#f5f5f5,stroke:#999,stroke-dasharray: 5 5
-```
+        AutobootAnnotation
