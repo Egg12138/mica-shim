@@ -2,7 +2,7 @@
 
 <!-- code_chunk_output -->
 
-- [MICA Shim - Containerd Runtime Shim for MICA](#mica-shim---containerd-runtime-shim-for-mica)
+- [MICA Shim - Containerd Runtime Shim for Runtime Micran](#mica-shim---containerd-runtime-shim-for-mica)
   - [Current Progress](#current-progress)
   - [️ Roadmap](#️-roadmap)
   - [近期Issues](#近期issues)
@@ -20,24 +20,25 @@
 <!-- /code_chunk_output -->
 
 
-# MICA Shim - Containerd Runtime Shim for MICA
+# Micran - Containerd Runtime Shim for MICA
 
 ## Current Progress
 
 - [x] runc style 验证
 - [x] shim v2 框架
 - [x] libmica 的 通信和通信抽象
-- [ ] libmica: containerd rpc--> mica config, 任务配置对接
+- [x] libmica: containerd rpc--> mica config, 任务配置对接整理
 - [x] 确定Linux:RTOS clientos 1:1模型的必要性
 - [ ] pty
 - [x] 镜像规制考虑
+- [ ] 精准的板级镜像发布校验
 
 ## ️ Roadmap
 
 本项目的 Roadmap 不仅仅是 mica-shim 本身，还包括了部分 mica 侧的追加功能
 
 - [x] 能通过 isula 拉起 一个 dummy 镜像
-- [ ] 自如管理 基本镜像的： OS register, OS boot, Task start
+- [x] 自如管理 基本镜像的： OS register, OS boot, Task start
 - [x] 提供一个mica-from-scrach基础镜像,根据这个镜像来搭建混部容器镜像,并且可以根据这些镜像拉起服务
 - [x] Client OS 和 Client Task process 的明确分离管理
 - [ ] IO 接管
@@ -47,12 +48,9 @@
 ## 近期Issues
 
 * 最直接关键的问题：**信息 从哪来**：
-1. 从bundle来？那多数都是在image侧静态设定；这个镜像需要多少个核
-1. entry point
 1. 验证pod, (下次用minikube跑一个demo)
 1. pod IP;
 1. 1 node 1 micad N clients
-2. create: CPU需要调度选定的, firmware path 是完全可以静态的——runtime告诉micad 在哪里拿就好了——micad要有权限
 1. 探讨：暴露RTOS跑在哪个CPU上
     1. Downward API是有的
     2. Upward API 有吗？
@@ -62,16 +60,16 @@
 1. 我们现在是利用mica暴露的北向接口来实现。需不需要从南向的虚拟化底座来……
 4. reboot: 对于同一个镜像，同一个task，专门化的reboot代替Stop() + Start()会节省开销吗?
 5. 1:1的一个想法是用对应的init process来监控client OS本身的信息 (N:N:1 , N个容器，N个monitor process, 对应一个micad monitor)
-- [ ] 镜像规制1:`${RTOS}_APP:{VERSION}`
+- [ ] ~~镜像规制1:`${RTOS}_APP:{VERSION}`~~
     1. k8s侧基于 ped=xxx 来选择不同image, 有可能吗？runtime不应该做这件事！ -- 虽然我们可以：
       1. k8s pod apply : ped=zen, image=zephy:latest
       2. runtime resolve image annotations 
       3. call contaienrd client.GetImage(zephy-{ped}:latest) 
-      可以，但这样非常不
-- [x] 镜像规制2: `${RTOS}_APP:${PED}_${BSP}`: zephyr_hello-world:jailhouse_qemu  (platform作为metadata不暴露)
-    1. 镜像内加入 `io.mica.client.compatibility.zephyr="{VERSOIN}+"等来配置版本兼容性， runtime调用相关插件来手动检查
-    1. 如果k8s pod指定错了BSP怎么办？ inspect 首先是解析不镜像名了
-* kata container runtime: Why Rust? 在已经有一个runtime-golang的情况下为什么要开发runtime-rs? 对我们是否有启发
+      可以，但这样非常不好
+- [x] 镜像规制2: `{Registry}/{APP}-micran-{PED}:{VERSION}`: localhost:5000/zephyr-hello-world-micran-jailhouse:1.0  
+    1. 如果k8s pod指定错了BSP怎么办？ micran 会检查 Ped 匹配性
+    1. 更多信息应该封装到rootfs/client.conf中
+
 * 一些很侵入式的特殊行为，我认为应该分离出来，作为mica runtime的plugin
 
 * 需要提供请求转发吗？(--runtime=io.containerd.mica.v?，但不是混部容器的情况)
@@ -83,6 +81,12 @@
 * 我们是否需要reaper?
   > 不论containerd 是否重启，我们的client OS在运行上和shim， containerd都没亲子关系，完全是跑在另一个核上的由mica管理的实例
 
+* 未来的整合工作：
+    1. 分离 runtime + shim
+    1. runtime的归属
+        1. runtime 整合到 mica, 作为一个独立模块, 简短一个通讯链路
+        1. 作为一个独立模块但用Rust重写？Rust相比C会更适配云原生底座，性能和体积上比go适合嵌入式
+
 ## 资源生命周期分析与调整策略
 
 
@@ -92,9 +96,9 @@
 
 - [x] 调整logger模块：
   - [x] LocateDebugf -> FDebugf
-  - [x] 完全去掉LocateDebugf等，全部作为 Debugf:Debugf会同时给containerd;mica shim logFile;stdout都输出；但内容格式不同
+  - [x] 完全去掉LocateDebugf等，全部作为 Debugf:Debugf会同时给containerd; micran logFile;stdout都输出；但内容格式不同
 - [x] libmica 接口暴露过多，应减少，并且提供更好的抽象
-- [x] containerd_client 对mica-shim runtime运行
+- [x] containerd_client 对micran运行
 - [x] 优雅的错误处理
 - [x] migrate to containerd 1.7.27
 - [x] container 相关结构语义化明确，减小耦合

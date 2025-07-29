@@ -2,10 +2,6 @@
 # https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
 #
 # references
-mcs-src
-mcs
-prompts.md
-docs/mica-io-implementation.md
 
 # Binaries for programs and plugins
 *.exe
@@ -25,7 +21,6 @@ tests/containerd_client/containerd_client
 
 # Test binary, built with `go test -c`
 *.test
-prompts.md
 .local_devlog.md
 
 # Code coverage profiles and other test artifacts
@@ -44,13 +39,9 @@ go.work.sum
 # env file
 .env
 
-# Editor/IDE
-# .idea/
+# Editor/IDE and agents
+.idea/
 .vscode/
 .cursorignore
-cntr/cntr_flamegraph.svg
-flamegraph.svg
-cpu.prof
-core/taskService/init_process.go
 .cursor
-tests/logger/
+.clinerules
