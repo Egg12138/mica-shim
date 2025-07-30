@@ -7,9 +7,10 @@ const (
 	MicaSuccess         = "MICA-SUCCESS"
 	MicaFailed          = "MICA-FAILED"
 	MicaSocketName      = "mica-create.socket"
-	MicaCreatSocketPath = MicaSocketDir + "/" + MicaSocketName
+	MicaCreatSocketPath = MicaStateDir + "/" + MicaSocketName
 	MicaSocketBufSize   = 512
 	MicaSocketTimout    = 5 * time.Second
 
 	SHM_NAME = "/dev/shm/mica_free_cores"
+	IsDebug = true
 )

@@ -18,11 +18,12 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	if !isVersionRequest() {
+	if !notTaskRequest() {
 		if err := log.CleanDebugFile(); err != nil {
 			log.Errorf("failed to clean debug file: %v", err)
 		}
 	}
+
 
 	tasksvc.RegisterPlugin()
 	log.Debugf("args: %s", os.Args)
@@ -35,11 +36,12 @@ func main() {
 	shim.RunManager(ctx, tasksvc.NewManager(ShimName))
 }
 
-func isVersionRequest() bool {
+func notTaskRequest() bool {
 	for _, arg := range os.Args[1:] {
-		if arg == "-v" || arg == "--version" {
+		if arg == "-v" || arg == "--version" || arg == "-h" || arg == "--help" {
 			return true
 		}
 	}
 	return false
 }
+

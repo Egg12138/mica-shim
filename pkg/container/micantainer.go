@@ -15,7 +15,7 @@ import (
 	"mica-shim/pkg/libmica"
 	oci "mica-shim/pkg/oci"
 
-	taskAPI "github.com/containerd/containerd/api/runtime/task/v2"
+	"github.com/containerd/containerd/api/types"
 	"github.com/containerd/containerd/api/types/task"
 	"github.com/containerd/containerd/mount"
 	"github.com/opencontainers/runtime-spec/specs-go"
@@ -340,7 +340,6 @@ func parseContainerConfig(bundle string, ocispec specs.Spec, cType ContainerType
 		config.os = "zephyr"
 	}
 
-	log.Debugf("parsed container config: %+v", config)
 	log.Infof("Container resource limits - CPU: %s, Memory: %s",
 		formatCPULimit(config), formatMemoryLimit(config))
 	return config, nil
@@ -376,12 +375,10 @@ type Mount struct {
 	Options []string
 }
 
-func SetupContainer(req *taskAPI.CreateTaskRequest) (_ *Container, retErr error) {
-	// presetRootfs(req)
-	detach := !req.Terminal
-	// spec, err := loadContainerConf(req)
-	spec, err := loadSpec(req.Bundle)
-	rtConfig, err := getRuntimeConfig(req, &spec)
+func NewContainer(id, bundle string, rootfs []*types.Mount, terminal bool) (_ *Container, retErr error) {
+	detach := !terminal
+	spec, err := loadSpec(bundle)
+	rtConfig, err := getRuntimeConfig(&spec)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load runtime config: %w", err)
 	}
@@ -411,7 +408,7 @@ func SetupContainer(req *taskAPI.CreateTaskRequest) (_ *Container, retErr error)
 
 		var mounts []mount.Mount
 
-		for _, mnt := range req.Rootfs {
+		for _, mnt := range rootfs {
 			mounts = append(mounts, mount.Mount{
 				Type:    mnt.Type,
 				Source:  mnt.Source,
@@ -419,7 +416,8 @@ func SetupContainer(req *taskAPI.CreateTaskRequest) (_ *Container, retErr error)
 				Options: mnt.Options,
 			})
 
-			rootfsPath := filepath.Join(req.Bundle, "rootfs")
+			// NOTICE: Currently support internal rootfs only!
+			rootfsPath := filepath.Join(bundle, "rootfs")
 			if len(mounts) > 0 {
 				if err := os.Mkdir(rootfsPath, 0711); err != nil && !os.IsExist(err) {
 					return nil, err
@@ -446,8 +444,8 @@ func SetupContainer(req *taskAPI.CreateTaskRequest) (_ *Container, retErr error)
 	// preset for sandbox, pod...
 	presetSandbox()
 
-	// Use the new parseContainerConfig function
-	bundlePath, err := validBundle(req.ID, req.Bundle)
+	bundlePath, err := validBundleRootfs(id, bundle)
+	log.Debugf("bundle content: %s", walkDir(bundlePath))
 	if err != nil {
 		return nil, err
 	}
@@ -457,7 +455,7 @@ func SetupContainer(req *taskAPI.CreateTaskRequest) (_ *Container, retErr error)
 		return nil, fmt.Errorf("failed to parse container config: %w", err)
 	}
 
-	container, err := newContainer(req, config)
+	container, err := newContainer(id, config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create mica container instance: %w", err)
 	}
@@ -465,11 +463,11 @@ func SetupContainer(req *taskAPI.CreateTaskRequest) (_ *Container, retErr error)
 }
 
 // A new container instance, initialized with complete configuration
-func newContainer(r *taskAPI.CreateTaskRequest, config *ContainerConfig) (*Container, error) {
-
+// func newContainer(r *taskAPI.CreateTaskRequest, config *ContainerConfig) (*Container, error) {
+func newContainer(id string, config *ContainerConfig) (*Container, error) {
 	container := &Container{
 		bundle:   config.Bundle,
-		ID:       r.ID,
+		ID:       id,
 		io:       nil,
 		exitCode: 0,
 		cType:    config.Type,
@@ -785,7 +783,7 @@ func (c *Container) validMicaContainer() bool {
 
 	osValid := validOS(c.config.OS())
 	fwValid := validFirmware(c.bundle, c.config.FirmwarePath())
-	pedValid := hostPedMatched(c.config.Ped(), c.config.OS())
+	pedValid := hostPedMatched(c.config.Ped())
 	compatValid := validCompatibility(c.config)
 	judge := osValid && fwValid && pedValid && compatValid
 
@@ -826,10 +824,25 @@ func (c *Container) GetClientCPU() (int, error) {
 // FUTURE: configure runtime from :
 // 1. annotation
 // 2. config file
-func getRuntimeConfig(r *taskAPI.CreateTaskRequest, ocispec *specs.Spec) (*oci.RuntimeConfig, error) {
+func getRuntimeConfig(ocispec *specs.Spec) (*oci.RuntimeConfig, error) {
 	// Parse runtime configuration from OCI spec annotations
 	runtimeConfig := oci.ParseRuntimeConfig(ocispec.Annotations)
 
 	log.Pretty("Parsed runtime config: %v", runtimeConfig)
 	return runtimeConfig, nil
+}
+
+
+
+func LoadContainerState(bundle string) (*Container, error) {
+	statePath := filepath.Join(bundle, "state.json")
+	state, err := os.ReadFile(statePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read container state from %s: %w", statePath, err)
+	}
+	var container Container
+	if err := json.Unmarshal(state, &container); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal container state from %s: %w", statePath, err)
+	}
+	return &container, nil
 }

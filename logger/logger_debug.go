@@ -174,20 +174,31 @@ func FatalWithCleanup(cleanup func(), args ...interface{}) {
 	Log.Fatal(args...)
 }
 
+// BUG: 
+// 1. a write-protected dir was created
+// 2. multi-shims share the same log file
 func CleanDebugFile() error {
-	if err := os.MkdirAll(filepath.Dir(debugFileName), 0755); err != nil {
+	dir := filepath.Dir(debugFileName)
+	if err := os.Mkdir(dir, 0777); err != nil && !os.IsExist(err) {
+		Log.Errorf("failed to create debug log directory: %s", dir)
 		return err
 	}
 
 	f, err := os.OpenFile(debugFileName, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
+		Log.Errorf("failed to open debug log file: %s", debugFileName)
 		return err
 	}
 	defer f.Close()
 
+	// Write timestamp
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
-	_, err = fmt.Fprintf(f, "\n\n============ %s ============\n", timestamp)
-	return err
+	if _, err := fmt.Fprintf(f, "\n\n============ %s ============\n", timestamp); err != nil {
+		Log.WithError(err).Errorf("failed to write timestamp to debug log file: %s", debugFileName)
+		return err
+	}
+
+	return nil
 }
 
 // default depth=4

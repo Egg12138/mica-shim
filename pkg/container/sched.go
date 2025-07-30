@@ -104,16 +104,6 @@ func getDefaultMaxCPUs() int {
 	return systemCPUs
 }
 
-// lazy init CPUFrequencyMap
-func init() {
-	err := initSharedMemory(false)
-	if err != nil {
-		err = initSharedMemory(true)
-		if err != nil {
-			log.Fatalf("failed to init shared memory: %v", err)
-		}
-	}
-}
 
 func (q *FreeCPUs) dequeue() (uint32, bool) {
 	if q.head == q.tail {

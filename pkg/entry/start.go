@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	log "mica-shim/logger"
+	cntr "mica-shim/pkg/container"
 	"mica-shim/pkg/libmica"
 	"time"
 
@@ -13,39 +14,38 @@ import (
 
 // Start the client rtos with its entrypoint task and managing agent process
 func (s *micaTaskService) Start(ctx context.Context, r *taskAPI.StartRequest) (*taskAPI.StartResponse, error) {
-	log.Debugf("*** TASK START: Starting task %s (execid: %s)", r.ID, r.ExecID)
 
 	s.m.RLock()
 	defer s.m.RUnlock()
 
 	proc, ok := s.procs[r.ID]
-	log.Debugf("r.ID: %s, s has %d procs", r.ID, len(s.procs))
 	if !ok {
-		log.Debugf("*** TASK START: Task %s not found in procs map", r.ID)
 		return nil, fmt.Errorf("task not created: %w", errdefs.ErrNotFound)
 	}
-	log.Debugf("*** TASK START: Found task %s in procs map, PID: %d", r.ID, proc.pid)
 
 	// Step 1: Start the RTOS client via micad
 	// This will trigger PTY service creation in micad
-	log.Infof("Starting RTOS client for task %s", r.ID)
-	log.Debugf("*** TASK START: About to start RTOS client for task %s via micad", r.ID)
-	response, err := libmica.MicaCtl(libmica.MStart, r.ID)
-	log.Debugf("start id:%s execid:%s response:%s; mica error: %v", r.ID, r.ExecID, response, err)
-	log.Debugf("*** TASK START: MicaCtl response for task %s: %s, error: %v", r.ID, response, err)
+
+	// BUG: A fatal error that start request do not pass bundle to shim, we can not
+	// recover container state directly through bundle/state.json. 
+	container, err := loadContainerState(r.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load container state: %w", err)
+	}
+
+	err = start(container, ctx, r)
 
 	if err != nil {
 		log.Debugf("*** TASK START: Failed to start mica client for task %s: %v", r.ID, err)
 		return nil, fmt.Errorf("failed to start mica client: %w", err)
 	}
-	log.Debugf("*** TASK START: Successfully sent start command to micad for task %s", r.ID)
+
 
 	// Step 2: Wait a moment for micad to complete service registration and PTY creation
 	// This is necessary because micad creates PTY devices asynchronously after client start
 	log.Debugf("Waiting for micad to complete service initialization for task %s", r.ID)
-	log.Debugf("*** TASK START: Waiting 2 seconds for micad to create PTY services for task %s", r.ID)
 	time.Sleep(2 * time.Second) // Give micad time to create PTY services
-	fmt.Printf("A dummy execute output\n")
+
 	log.Debugf("*** TASK START: Wait period completed for task %s", r.ID)
 
 	// Step 3: Start MicaIO to handle PTY communication
@@ -76,9 +76,47 @@ func (s *micaTaskService) Start(ctx context.Context, r *taskAPI.StartRequest) (*
 	}, nil
 }
 
-func start(ctx context.Context, req *taskAPI.StartRequest) (taskRes *taskAPI.StartResponse, retErr error) {
+func start(container *cntr.Container, ctx context.Context, req *taskAPI.StartRequest) error {
 
-	libmica.MicaCtl(libmica.MStart, req.ID)
+	log.Pretty("start container %s: %v", container.ID, container)
+	conf, err := CreateMicaConf(container)
+	if err != nil {
+		return fmt.Errorf("failed to create mica client conf: %w", err)
+	}
+	res, err := libmica.MicaCreate(conf)
+	if err != nil || !success(res) {
+		return fmt.Errorf("failed to create mica client: %w", err)
+	}
+	log.Debugf("create mica client %s: %v", req.ID, res)
 
-	return nil, nil
+	res, err = libmica.MicaCtl(libmica.MStart, req.ID)
+	if err != nil || !success(res) {
+		return fmt.Errorf("failed to start mica client: %w", err)
+	}
+	log.Pretty("start mica client %s: %v", req.ID, res)
+
+	return nil
+}
+
+// 1. search bundle/.../<clientOSname>.elf
+// 2. if missing, log and search for binary in bundle recursively
+// TODO: Only copy values, the evaluation procedure is in the caller function
+// TALK: 这是预留的核，实际client可能更后面启动, 以及启动可能失败
+// TODO: 现在我们全部假定是单核RTOS, mica侧还未实现多核, 但是在镜像label中，我们可以指定核数量
+func CreateMicaConf(container *cntr.Container) (libmica.MicaClientConf, error) {
+	config := container.GetConfig()
+
+	firmware := config.FirmwarePath()
+	pedestal := config.Ped()
+	name := container.ID
+	// TODO: Calculate the CPU too late, we should calculate it in the container creation
+	cpu, err := container.GetClientCPU()
+	if err != nil {
+		return libmica.MicaClientConf{}, fmt.Errorf("failed to get client cpu: %w", err)
+	}
+	conf := libmica.MicaClientConf{}
+	log.Debugf("backed from GetClientCPU: %d", cpu)
+	conf.Init(uint32(cpu), name, firmware, pedestal.PedestalType.String(), pedestal.PedestalConf, false)
+	log.Pretty("MicaClientConf: %v", conf)
+	return conf, nil
 }

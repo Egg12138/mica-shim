@@ -3,14 +3,12 @@ package entry
 import (
 	"context"
 	"fmt"
-	defs "mica-shim/definitions"
 	log "mica-shim/logger"
 	cntr "mica-shim/pkg/container"
 	"mica-shim/pkg/libmica"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"syscall"
 	"time"
 
 	taskAPI "github.com/containerd/containerd/api/runtime/task/v2"
@@ -35,58 +33,28 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 		return nil, errdefs.ErrAlreadyExists
 	}
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		log.Debugf("*** TASK CREATE: Failed to get working directory for task %s: %v", r.ID, err)
-		return nil, fmt.Errorf("getting current working directory: %w", err)
-	}
-	log.Debugf("*** TASK CREATE: Current working directory: %s", cwd)
+	// cwd, err := os.Getwd()
+	// if err != nil {
+	// 	log.Debugf("*** TASK CREATE: Failed to get working directory for task %s: %v", r.ID, err)
+	// 	return nil, fmt.Errorf("getting current working directory: %w", err)
+	// }
+	// log.Debugf("*** TASK CREATE: Current working directory: %s", cwd)
 
 	// Parse runtime configurations
 
 	// Create mica client first - this registers with micad but doesn't start PTY services yet
-	log.Debugf("Creating mica client for task %s", r.ID)
-	log.Debugf("*** TASK CREATE: About to create mica client for task %s", r.ID)
-	_, err = create(ctx, r)
+	_, err := createContainer(ctx, r)
 	if err != nil {
 		log.Debugf("*** TASK CREATE: Failed to create mica client for task %s: %v", r.ID, err)
 		return nil, fmt.Errorf("creating mica client: %w", err)
 	}
-	log.Debugf("*** TASK CREATE: Successfully created mica client for task %s", r.ID)
 
-	// TODO: for debug display
-	bundle := r.Bundle
-	var bundleContent []os.DirEntry
-	if bundle != "" {
-		log.Debugf("*** TASK CREATE: Reading bundle directory: %s", bundle)
-		bundleContent, err = os.ReadDir(bundle)
-		if err != nil {
-			log.Debugf("*** TASK CREATE: Failed to read bundle directory %s: %v", bundle, err)
-			return nil, fmt.Errorf("reading bundle: %w", err)
-		}
-		log.Debugf("*** TASK CREATE: Bundle contains %d items", len(bundleContent))
-	}
+	// check micad 
+	// cmd := agent()
 
-	commandline := fmt.Sprintf("echo 'current CreateTaskRequest: %v; s.procs: %v; bundleContent: %v'", r, s.procs, bundleContent)
-	cmd := exec.CommandContext(ctx, "sh", "-c", commandline)
-	if _, err := os.Stat(filepath.Join(bundle, "config.json")); err == nil {
-		log.Debugf("*** TASK CREATE: Found config.json in bundle for task %s", r.ID)
-		commandline = fmt.Sprintf("cat %s", filepath.Join(bundle, "config.json"))
-		cmd = exec.CommandContext(ctx, "sh", "-c", commandline)
-	} else if _, err := os.Stat(filepath.Join(bundle, "config.v2.json")); err == nil {
-		log.Debugf("*** TASK CREATE: Found config.v2.json in bundle for task %s", r.ID)
-		commandline = fmt.Sprintf("cat %s", filepath.Join(bundle, "config.v2.json"))
-		cmd = exec.CommandContext(ctx, "sh", "-c", commandline)
-	} else {
-		log.Debugf("*** TASK CREATE: No config.json or config.v2.json found in bundle for task %s", r.ID)
-		commandline = fmt.Sprintf("echo 'no config.json or config.v2.json found in bundle: %s'", bundle)
-		cmd = exec.CommandContext(ctx, "sh", "-c", commandline)
-	}
-
-	// Initialize MicaIO for future PTY communication
-	// Note: PTY devices will be created later when mica client starts
-	log.Debugf("*** TASK CREATE: Creating MicaIO for task %s", r.ID)
-	log.Debugf("*** TASK CREATE: IO paths - stdin: %s, stdout: %s, stderr: %s", r.Stdin, r.Stdout, r.Stderr)
+	// // Initialize MicaIO for future PTY communication
+	// // Note: PTY devices will be created later when mica client starts
+	// log.Debugf("*** TASK CREATE: IO paths - stdin: %s, stdout: %s, stderr: %s", r.Stdin, r.Stdout, r.Stderr)
 	micaIO, err := libmica.NewMicaIO(ctx, r.ID, r.Stdin, r.Stdout, r.Stderr, r.Terminal)
 	if err != nil {
 		log.Debugf("*** TASK CREATE: Failed to create MicaIO for task %s: %v", r.ID, err)
@@ -94,60 +62,59 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 	}
 	log.Debugf("*** TASK CREATE: Successfully created MicaIO for task %s", r.ID)
 
-	// Start the MICA init process
-	// NOTICE: only if created successfully, handle pty
-	log.Debugf("*** TASK CREATE: Starting MICA init process for task %s", r.ID)
-	log.Debugf("*** TASK CREATE: Command to execute: %s", commandline)
-	if err := cmd.Start(); err != nil {
-		log.Debugf("*** TASK CREATE: Failed to start MICA init process for task %s: %v", r.ID, err)
-		micaIO.Close()
-		return nil, fmt.Errorf("starting MICA init process: %w", err)
-	}
+	// // Start the MICA init process
+	// // NOTICE: only if created successfully, handle pty
+	// log.Debugf("*** TASK CREATE: Starting MICA init process for task %s", r.ID)
+
+
+	// cmd.Start()
+	// pid := cmd.Process.Pid
+	// log.Debugf("Created MICA init process as agent, with PID %d for task %s", pid, r.ID)
+	
+
+	_, err = createContainer(ctx, r)
 
 	defer func() {
 		if retErr != nil {
 			log.Debugf("*** TASK CREATE: Error occurred, cleaning up resources for task %s", r.ID)
 			if err := micaIO.Close(); err != nil {
-				log.Debugf("Failed to close mica IO for PID %v: %v", cmd.Process.Pid, err)
+				log.Debugf("Failed to close mica IO for %s: %v", r.ID, err)
 			}
-			if cmd.Process != nil {
-				// Kill the MICA init process on error
-				if err := cmd.Process.Kill(); err != nil {
-					log.FDebugf("pid = %v, err = %v", cmd.Process.Pid, err)
-					log.Error("failed to kill MICA init process")
-					log.Debugf("*** TASK CREATE: Failed to kill MICA init process during cleanup for task %s: %v", r.ID, err)
-				}
-			}
+			// if cmd.Process != nil {
+			// 	// Kill the MICA init process on error
+			// 	if err := cmd.Process.Kill(); err != nil {
+			// 		log.FDebugf("pid = %v, err = %v", cmd.Process.Pid, err)
+			// 		log.Error("failed to kill MICA init process")
+			// 		log.Debugf("*** TASK CREATE: Failed to kill MICA init process during cleanup for task %s: %v", r.ID, err)
+			// 	}
+			// }
 		}
 	}()
 
-	pid := cmd.Process.Pid
-	log.Debugf("Created MICA init process with PID %d for task %s", pid, r.ID)
-	log.Debugf("*** TASK CREATE: MICA init process started with PID %d for task %s", pid, r.ID)
 
 	doneCtx, markDone := context.WithCancel(context.Background())
 
 	go func() {
 		defer markDone()
 
-		if err := cmd.Wait(); err != nil {
-			if _, ok := err.(*exec.ExitError); !ok {
-				log.Errorf("failed to wait for MICA init process %d", pid)
-			}
-		}
+		// if err := cmd.Wait(); err != nil {
+		// 	if _, ok := err.(*exec.ExitError); !ok {
+		// 		log.Errorf("failed to wait for MICA init process %d", pid)
+		// 	}
+		// }
 
 		exitStatus := 255
 
-		if cmd.ProcessState != nil {
-			switch unixWaitStatus := cmd.ProcessState.Sys().(syscall.WaitStatus); {
-			case cmd.ProcessState.Exited():
-				exitStatus = cmd.ProcessState.ExitCode()
-			case unixWaitStatus.Signaled():
-				exitStatus = exitCodeSignal + int(unixWaitStatus.Signal())
-			}
-		} else {
-			log.Warn("MICA init process wait returned without setting process state")
-		}
+		// if cmd.ProcessState != nil {
+			// switch unixWaitStatus := cmd.ProcessState.Sys().(syscall.WaitStatus); {
+			// case cmd.ProcessState.Exited():
+			// 	exitStatus = cmd.ProcessState.ExitCode()
+			// case unixWaitStatus.Signaled():
+			// 	exitStatus = exitCodeSignal + int(unixWaitStatus.Signal())
+			// }
+		// } else {
+		// 	log.Warn("MICA init process wait returned without setting process state")
+		// }
 
 		s.m.Lock()
 		defer s.m.Unlock()
@@ -170,6 +137,13 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 	}()
 
 	// Write PID file for containerd compatibility
+	cwd, err := os.Getwd()
+	// TODO: for future agent process
+	pid := 1
+	if err != nil {
+		log.Errorf("failed to get current working directory: %v", err)
+		return nil, fmt.Errorf("getting current working directory: %w", err)
+	}
 	pidPath := filepath.Join(filepath.Join(filepath.Dir(cwd), r.ID), initPidFile)
 	log.Debugf("we do created a pidFile: %s", pidPath)
 	if err := shim.WritePidFile(pidPath, pid); err != nil {
@@ -189,50 +163,54 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 	}, nil
 }
 
+// and mica client Agent process, helpful in CNI, container communications and so on
+// <containerID>.sock -> <containerID>.agent
+// But now, this is an dummy agent, it does nothing
+func agent() *exec.Cmd {
+	EchoAndSleepCommand := exec.CommandContext(context.Background(), "echo", "hello micran", "&&", "sleep", "1000")
+	EchoAndSleepCommand.Stdout = os.Stdout
+	EchoAndSleepCommand.Stderr = os.Stderr
+	EchoAndSleepCommand.Stdin = os.Stdin
+
+	// TODO: micad setup client socket, agent binds <containerID>.sock; 
+	return EchoAndSleepCommand
+}
+
 // setup the task and client os; without managing micataskservice
-func create(ctx context.Context, req *taskAPI.CreateTaskRequest) (taskRes *taskAPI.CreateTaskResponse, retErr error) {
-	container, err := cntr.SetupContainer(req)
-	if err != nil {
-		return nil, fmt.Errorf("%w", err)
-	}
-	conf, err := CreateMicaConf(container)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create mica create conf: %w", err)
+func createContainer(ctx context.Context, req *taskAPI.CreateTaskRequest) (taskRes *taskAPI.CreateTaskResponse, retErr error) {
+	// parsed from bundle 
+	container, err := cntr.NewContainer(req.ID, req.Bundle, req.Rootfs, req.Terminal)
+	if err != nil || container == nil{
+		return nil, fmt.Errorf("failed to init Container %w", err)
 	}
 
-	res, err := libmica.CreateMicaClient(conf)
+	err = setupMicranStateDir()
 	if err != nil {
-		return nil, fmt.Errorf("mica create: %w", err)
+		log.Debugf("failed to setup micran state directory: %w", err)
 	}
-	if res == defs.MicaSuccess {
-		taskRes = &taskAPI.CreateTaskResponse{
-			Pid: 1,
-		}
-		log.Debugf("mica create success")
+	if err = saveContainerState(container); err != nil {
+		return nil, fmt.Errorf("failed to save container state: %w", err)
 	}
 
-	return nil, nil
+	taskRes = &taskAPI.CreateTaskResponse{
+		Pid: 1,
+	}
+	// conf, err := CreateMicaConf(container)
+	// if err != nil {
+	// 	return nil, fmt.Errorf("failed to create mica create conf: %w", err)
+	// }
+
+	// res, err := libmica.CreateMicaClient(conf)
+	// if err != nil {
+	// 	return nil, fmt.Errorf("mica create: %w", err)
+	// }
+	// if res == defs.MicaSuccess {
+	// 	taskRes = &taskAPI.CreateTaskResponse{
+	// 		Pid: 1,
+	// 	}
+	// 	log.Debugf("mica create success")
+	// }
+
+	return taskRes, nil
 }
 
-// 1. search bundle/.../<clientOSname>.elf
-// 2. if missing, log and search for binary in bundle recursively
-// TODO: Only copy values, the evaluation procedure is in the caller function
-// TALK: 这是预留的核，实际client可能更后面启动, 以及启动可能失败
-// TODO: 现在我们全部假定是单核RTOS, mica侧还未实现多核, 但是在镜像label中，我们可以指定核数量
-func CreateMicaConf(container *cntr.Container) (libmica.MicaClientConf, error) {
-	config := container.GetConfig()
-
-	firmware := config.FirmwarePath()
-	pedestal := config.Ped()
-	name := container.ID
-	// TODO: Calculate the CPU too late, we should calculate it in the container creation
-	cpu, err := container.GetClientCPU()
-	if err != nil {
-		return libmica.MicaClientConf{}, fmt.Errorf("failed to get client cpu: %w", err)
-	}
-	conf := libmica.MicaClientConf{}
-	log.Debugf("backed from GetClientCPU: %d", cpu)
-	conf.Init(uint32(cpu), name, firmware, pedestal.PedestalType.String(), pedestal.PedestalConf, false)
-	log.Pretty("MicaClientConf: %v", conf)
-	return conf, nil
-}

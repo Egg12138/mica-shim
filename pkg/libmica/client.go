@@ -91,7 +91,7 @@ func MicaCtl(cmd MicaCommand, client string) (string, error) {
 		log.Debug("mica socket directory does not exist, please check if micad is running")
 		return "", fmt.Errorf("mica socket directory does not exist, please check if micad is running")
 	}
-	target := filepath.Join(defs.MicaSocketDir, client+".socket")
+	target := filepath.Join(defs.MicaStateDir, client+".socket")
 	log.Debugf("client socket path: %s", target)
 	s := newMicaSocket(target)
 	msg := string(cmd)

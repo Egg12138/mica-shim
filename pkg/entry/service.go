@@ -2,10 +2,16 @@ package entry
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
+	defs "mica-shim/definitions"
+	log "mica-shim/logger"
+	cntr "mica-shim/pkg/container"
 	"mica-shim/pkg/libmica"
 
 	taskAPI "github.com/containerd/containerd/api/runtime/task/v2"
@@ -78,5 +84,69 @@ var (
 // RegisterTTRPC registers this TTRPC service with the given TTRPC server.
 func (s *micaTaskService) RegisterTTRPC(srv *ttrpc.Server) error {
 	taskAPI.RegisterTaskService(srv, s)
+	return nil
+}
+
+// TODO: expand mica response system
+func success(response string) bool {
+	return response == defs.MicaSuccess 
+}
+
+
+func loadContainerState(id string) (*cntr.Container, error) {
+	// bundlestate:id == id?
+	cwd, err := os.Getwd()
+	if err == nil {
+		container, err := cntr.LoadContainerState(cwd)
+		if err == nil {
+			if id != container.ID {
+				return nil, fmt.Errorf("container id mismatch: %s != %s", id, container.ID)
+			}
+			return container, nil
+		}
+		log.Debugf("current working directory is not bundle, read container state from %s", defs.MicranStateDir)
+	}
+
+	container, err := cntr.LoadContainerState(defs.MicranStateDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load container state: %w", err)
+	}
+	if id != container.ID {
+		return nil, fmt.Errorf("container id mismatch: %s != %s", id, container.ID)
+	}
+	return container, nil
+}
+
+func setupMicranStateDir() error {
+	if err := os.MkdirAll(defs.MicranStateDir, 0755); err != nil {
+		return fmt.Errorf("failed to create micran state directory: %w", err)
+	}
+	return nil
+}
+
+func saveContainerState(c *cntr.Container) error {
+	bundle := c.GetConfig().Bundle
+	id := c.ID
+	
+	statePath := filepath.Join(bundle, "state.json")
+	state, err := json.Marshal(c)
+	if err != nil {
+		return fmt.Errorf("failed to marshal container state: %w", err)
+	}
+	if err := os.WriteFile(statePath, state, 0644); err != nil {
+		return fmt.Errorf("failed to write container state to %s: %w", statePath, err)
+	}
+
+	// join "defs.MicranStateDir/id.json"
+	statePath = filepath.Join(defs.MicranStateDir, id+".json")
+	state, err = json.Marshal(c)
+	if err != nil {
+		return fmt.Errorf("failed to marshal container state: %w", err)
+	}
+	if err := os.WriteFile(statePath, state, 0644); err != nil {
+		return fmt.Errorf("failed to write container state to %s: %w", statePath, err)
+	}
+
+	log.Debugf("saved container state to %s", statePath)
 	return nil
 }

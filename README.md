@@ -29,7 +29,9 @@
 - [x] libmica 的 通信和通信抽象
 - [x] libmica: containerd rpc--> mica config, 任务配置对接整理
 - [x] 确定Linux:RTOS clientos 1:1模型的必要性
+- [ ] mica支持长容器ID
 - [ ] pty
+- [ ] k8s Pod, Sandbox support
 - [x] 镜像规制考虑
 - [ ] 精准的板级镜像发布校验
 

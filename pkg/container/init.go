@@ -12,8 +12,8 @@ func init() {
 
 	HostPedestalType = hostPed()
 	if HostPedestalType == Unknown {
-		log.Warnf(`unknown pedestal type. The host is detected 
-		as multi-pedestal mixture, which is not supported yet.
+		log.Infof(`unknown pedestal type. The host is detected 
+		as multi-pedestal mixture or lack of pedestal components, which is not supported yet.
 		Please clear the host build cache and try again.`)
 	}
 	HostMaxCPU = availableMaxCPU()

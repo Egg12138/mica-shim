@@ -478,7 +478,6 @@ func detectJailhouse() int {
 func detectBaremetal() int {
 	// check loaded Kerkenl modules contains "mcs":
 	kernelRelease, err := os.ReadFile("/proc/sys/kernel/osrelease")
-	return 1
 	if err == nil {
 		release := strings.TrimSpace(string(kernelRelease))
 		mcsKoPath := fmt.Sprintf("/lib/modules/%s/extra/mcs.ko", release)
@@ -511,10 +510,11 @@ func hostPed() PedType {
 }
 
 // Currently, one host only support one pedestal type.
-func hostPedMatched(ped *Pedestal, os string) bool {
+func hostPedMatched(ped *Pedestal) bool {
 	ret := HostPedestalType == ped.PedestalType
-	log.Debugf("hostPedMatched: %v, %s, result: %v", ped, os, ret)
+	log.Debugf("hostPedMatched: %v ? result: %v", ped, ret)
 	log.Debugf("hostPedestalType: %v, ped.PedestalType: %v", HostPedestalType, ped.PedestalType)
+	if defs.IsDebug { return true }
 	return ret
 }
 
@@ -538,7 +538,7 @@ func setReadonly(path string) error {
 }
 
 // bundle is <CONTINAER_STATE_ROOT>/<container_id>
-func setupBundle(bundle string) error {
+func setInternalRootfs(bundle string) error {
 
 	// config := filepath.Join(bundle, "config.json")
 	rootfs := filepath.Join(bundle, "rootfs")
@@ -551,7 +551,7 @@ func setupBundle(bundle string) error {
 	return nil
 }
 
-func validBundle(containerID, bundlePath string) (string, error) {
+func validBundleRootfs(containerID, bundlePath string) (string, error) {
 	if containerID == "" {
 		return "", fmt.Errorf("container ID is empty")
 	}
@@ -560,32 +560,29 @@ func validBundle(containerID, bundlePath string) (string, error) {
 		return "", fmt.Errorf("missing bundle path")
 	}
 
-	// bundle path MUST be valid.
-	fileInfo, err := os.Stat(bundlePath)
-	if err != nil {
-		return "", fmt.Errorf("invalid bundle path '%s': %s", bundlePath, err)
-	}
-	if !fileInfo.IsDir() {
-		return "", fmt.Errorf("invalid bundle path '%s', it should be a directory", bundlePath)
-	}
-
-	rootfs := filepath.Join(bundlePath, "rootfs")
-	fileInfo, err = os.Stat(rootfs)
-	if err != nil {
-		return "", fmt.Errorf("%s requires rootfs in bundle, invalid rootfs path '%s': %s", defs.RuntimeName, rootfs, err)
-	}
-	if !fileInfo.IsDir() {
-		return "", fmt.Errorf("%s requires rootfs in bundle, invalid rootfs path '%s', it should be a directory", defs.RuntimeName, rootfs)
-	}
-
-	if err := setupBundle(bundlePath); err != nil {
-		return "", fmt.Errorf("failed to setup bundle: %w", err)
-	}
-
-	// get a valid expanded path
+	// resolve path first to handle symlinks before other checks
 	resolved, err := resolvePath(bundlePath)
 	if err != nil {
 		return "", err
+	}
+
+	fileInfo, err := os.Stat(resolved)
+	if err != nil {
+		return "", fmt.Errorf("invalid resolved bundle path '%s': %s", resolved, err)
+	}
+	if !fileInfo.IsDir() {
+		return "", fmt.Errorf("invalid resolved bundle path '%s', it should be a directory", resolved)
+	}
+
+	// always mkdir rootfs inside bundle, whatever containerd use externalrootfs or not
+	rootfs := filepath.Join(resolved, "rootfs")
+	fileInfo, err = os.Stat(rootfs)
+	if !fileInfo.IsDir() {
+		log.Infof("default rootfs path '%s' is not a directory, use external rootfs instead", rootfs)
+	}
+
+	if err := setInternalRootfs(resolved); err != nil {
+		return "", fmt.Errorf("failed to set internal rootfs \"%s\": %w", rootfs, err)
 	}
 
 	return resolved, nil
