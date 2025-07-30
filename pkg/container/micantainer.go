@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
-	core "mica-shim/core/oci"
 	defs "mica-shim/definitions"
-	"mica-shim/libmica"
 	log "mica-shim/logger"
+	"mica-shim/pkg/libmica"
+	oci "mica-shim/pkg/oci"
 
 	taskAPI "github.com/containerd/containerd/api/runtime/task/v2"
 	"github.com/containerd/containerd/api/types/task"
@@ -142,41 +142,40 @@ func parseConfigINI(bundle string) (map[string]string, error) {
 type ContainerConfig struct {
 	// OCI Specification
 	Spec specs.Spec
-	
-	// Bundle information  
+
+	// Bundle information
 	Bundle string
 	Type   ContainerType
 	Detach bool
-	
-	
+
 	// BUG: overlapped fields: remove MicaConf, leaving extracted MicaLabels and extraLabels
 	// Parsed configuration values
 	// Firmware and pedestal
 	// MICA-specific configurations from client.conf
-	extraLabels map[string]string
-	relativePath string  // relative firmware path to the bundle
+	extraLabels  map[string]string
+	relativePath string // relative firmware path to the bundle
 	pedestalType PedType
 	pedestalConf string
-	os         string
-	ncpu       int    // requested CPU count (default = 1)
-	
+	os           string
+	ncpu         int // requested CPU count (default = 1)
+
 	cpuLimit   int    // CPU limit from OCI spec
 	cpusetCpus string // cpuset.cpus specification
 	cpuShares  uint64 // CPU shares (relative weight)
 	cpuQuota   int64  // CPU quota in microseconds
 	cpuPeriod  uint64 // CPU period in microseconds
-	
+
 	// Memory resource limits from OCI spec
-	memoryLimit       int64  // Memory limit in bytes
-	memoryReservation int64  // Memory soft limit in bytes
-	memorySwap        int64  // Memory + swap limit in bytes
-	memoryKernel      int64  // Kernel memory limit in bytes
+	memoryLimit       int64   // Memory limit in bytes
+	memoryReservation int64   // Memory soft limit in bytes
+	memorySwap        int64   // Memory + swap limit in bytes
+	memoryKernel      int64   // Kernel memory limit in bytes
 	memorySwappiness  *uint64 // Memory swappiness (0-100)
-	oomKillDisable    bool   // Whether to disable OOM killer
-	
+	oomKillDisable    bool    // Whether to disable OOM killer
+
 	// Runtime state
 	cpu int // allocated CPU (-1 if not allocated)
-	
+
 	mu sync.RWMutex
 }
 
@@ -266,7 +265,6 @@ func loadSpec(bundle string) (specs.Spec, error) {
 	return ociSpec, nil
 }
 
-
 // The core container configuration parser
 // This function parses all configurations from the bundle and returns a complete ContainerConfig
 func parseContainerConfig(bundle string, ocispec specs.Spec, cType ContainerType, detach bool) (*ContainerConfig, error) {
@@ -297,7 +295,7 @@ func parseContainerConfig(bundle string, ocispec specs.Spec, cType ContainerType
 		cpuShares:    0,
 		cpuQuota:     0,
 		cpuPeriod:    0,
-		
+
 		// Memory defaults
 		memoryLimit:       0,
 		memoryReservation: 0,
@@ -305,8 +303,8 @@ func parseContainerConfig(bundle string, ocispec specs.Spec, cType ContainerType
 		memoryKernel:      0,
 		memorySwappiness:  nil,
 		oomKillDisable:    false,
-		
-		cpu:          -1, // not allocated yet
+
+		cpu: -1, // not allocated yet
 
 		mu: sync.RWMutex{},
 	}
@@ -343,7 +341,7 @@ func parseContainerConfig(bundle string, ocispec specs.Spec, cType ContainerType
 	}
 
 	log.Debugf("parsed container config: %+v", config)
-	log.Infof("Container resource limits - CPU: %s, Memory: %s", 
+	log.Infof("Container resource limits - CPU: %s, Memory: %s",
 		formatCPULimit(config), formatMemoryLimit(config))
 	return config, nil
 }
@@ -353,7 +351,6 @@ func (conf *ContainerConfig) containerInfoParse() (*ContainerConfig, error) {
 	log.Warn("containerInfoParse is deprecated, use parseContainerConfig instead")
 	return conf, nil
 }
-
 
 func getContainerType(spec *specs.Spec) (ContainerType, error) {
 	for _, key := range CRIContainerTypeKeyList {
@@ -454,12 +451,12 @@ func SetupContainer(req *taskAPI.CreateTaskRequest) (_ *Container, retErr error)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	config, err := parseContainerConfig(bundlePath, spec, ctype, disableOutput)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse container config: %w", err)
 	}
-	
+
 	container, err := newContainer(req, config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create mica container instance: %w", err)
@@ -637,7 +634,6 @@ func parseDockerConfigJSON(bundle string) (*ContainerConfig, error) {
 	return nil, nil
 }
 
-
 func parseiSuladContainerConfig(bundle string) (*ContainerConfig, error) {
 	// TODO: parse isulad container config
 	return nil, nil
@@ -776,16 +772,17 @@ func (r *ContainerConfig) OOMKillDisable() bool {
 	return r.oomKillDisable
 }
 
-//	ContainerConfig contains:
-//		extraLabels: map[string]string; additional labels
-//		relativePath: string; the resolved firmware path must be valid
-//		pedestal: *Pedestal; the pedestal type must be specified
-//		os: string; one of the allowed os
-//		ncpu: int; requested CPU count
-//		cpuLimit: int; CPU limit from OCI spec
-//		cpu: int; allocated CPU (-1 if not allocated)
+// ContainerConfig contains:
+//
+//	extraLabels: map[string]string; additional labels
+//	relativePath: string; the resolved firmware path must be valid
+//	pedestal: *Pedestal; the pedestal type must be specified
+//	os: string; one of the allowed os
+//	ncpu: int; requested CPU count
+//	cpuLimit: int; CPU limit from OCI spec
+//	cpu: int; allocated CPU (-1 if not allocated)
 func (c *Container) validMicaContainer() bool {
-	
+
 	osValid := validOS(c.config.OS())
 	fwValid := validFirmware(c.bundle, c.config.FirmwarePath())
 	pedValid := hostPedMatched(c.config.Ped(), c.config.OS())
@@ -829,10 +826,10 @@ func (c *Container) GetClientCPU() (int, error) {
 // FUTURE: configure runtime from :
 // 1. annotation
 // 2. config file
-func getRuntimeConfig(r *taskAPI.CreateTaskRequest, ocispec *specs.Spec) (*core.RuntimeConfig, error) {
+func getRuntimeConfig(r *taskAPI.CreateTaskRequest, ocispec *specs.Spec) (*oci.RuntimeConfig, error) {
 	// Parse runtime configuration from OCI spec annotations
-	runtimeConfig := core.ParseRuntimeConfig(ocispec.Annotations)
-	
+	runtimeConfig := oci.ParseRuntimeConfig(ocispec.Annotations)
+
 	log.Pretty("Parsed runtime config: %v", runtimeConfig)
 	return runtimeConfig, nil
 }

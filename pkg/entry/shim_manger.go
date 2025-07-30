@@ -1,4 +1,4 @@
-package core
+package entry
 
 import (
 	"context"
@@ -150,7 +150,6 @@ func (*manager) Start(ctx context.Context, containerID string, opts shim.StartOp
 
 	// TALK1: disable SchedCore compeltely? It depends (mica client needs cpu id as well)
 	// TALK0: is it needed to run an agent process on Linux representing
-
 
 	if err := cmd.Start(); err != nil {
 		sockF.Close()

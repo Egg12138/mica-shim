@@ -111,7 +111,6 @@ func Debug(args ...interface{}) {
 	Debugf("%v", args...)
 }
 
-
 // In debug mode, all debugf will duplicate the debug message to both debug file and stderr
 func Debugf(format string, args ...interface{}) {
 	debugf(format, 1, args...)
@@ -176,6 +175,10 @@ func FatalWithCleanup(cleanup func(), args ...interface{}) {
 }
 
 func CleanDebugFile() error {
+	if err := os.MkdirAll(filepath.Dir(debugFileName), 0755); err != nil {
+		return err
+	}
+
 	f, err := os.OpenFile(debugFileName, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
@@ -204,12 +207,10 @@ func getDebugInfoPrefix(depth int) string {
 		file = filepath.Base(file)
 		callee = fullFuncName
 		callee = "\033[32m" + callee + "\033[0m"
-		prefix += fmt.Sprintf("%s(),debug at [\033[33m%s:%d\033[0m] \n\t", callee, file, line)
+		prefix += fmt.Sprintf("%s(), @[\033[33m%s:%d\033[0m]  ", callee, file, line)
 	}
 	return prefix
 }
-
-
 
 // Used for those debug points needed to be traced call stack
 func FDebugf(format string, additionalDepth int, args ...interface{}) error {
@@ -223,7 +224,6 @@ func FDebugf(format string, additionalDepth int, args ...interface{}) error {
 	_, err = fmt.Fprintf(f, prefix+format+"\n", args...)
 	return err
 }
-
 
 // Pretty safely formats and logs complex structs with safeguards against memory issues
 // Costy
@@ -241,24 +241,24 @@ func safePrettyFormat(arg interface{}) interface{} {
 	if arg == nil {
 		return "<nil>"
 	}
-	
+
 	resultChan := make(chan interface{}, 1)
 	errorChan := make(chan error, 1)
-	
+
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
 				errorChan <- fmt.Errorf("panic during pretty formatting: %v", r)
 			}
 		}()
-		
+
 		resultStr := pretty.Sprint(arg)
-		
+
 		const maxSize = 10 * 1024
 		if len(resultStr) > maxSize {
 			resultStr = resultStr[:maxSize] + "\n... [TRUNCATED: output too large]"
 		}
-		
+
 		// Add indentation for better readability
 		lines := strings.Split(resultStr, "\n")
 		var indentedLines []string
@@ -270,10 +270,10 @@ func safePrettyFormat(arg interface{}) interface{} {
 			}
 		}
 		resultStr = strings.Join(indentedLines, "\n")
-		
+
 		resultChan <- resultStr
 	}()
-	
+
 	select {
 	case result := <-resultChan:
 		return result

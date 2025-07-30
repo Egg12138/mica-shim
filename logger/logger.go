@@ -167,7 +167,7 @@ func FatalWithCleanup(cleanup func(), args ...interface{}) {
 }
 
 // BUG: facing multiinstance issue, there will be an conflict when cleaning debug file
-// solution: 
+// solution:
 // create debug file with suffix <containerID>;
 // we need to parse ID in task service
 func CleanDebugFile() error {

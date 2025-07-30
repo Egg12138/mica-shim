@@ -1,12 +1,10 @@
 package defs
 
-import "time"
-
+// Configuration for mica clients
 const (
-	RuntimeName = "mica"
-	// MicaLabelPrefix = "org.openeuler.mica"
-	MicaAnnotationPrefix = "org.openeuler.mica" // used for runtime-level configurtaion
-	MicaLabelPrefix      = "io.mica"
+	DefaultNcpu          int = 1
+	MicaAnnotationPrefix     = "org.openeuler.mica" // used for runtime-level configurtaion
+	MicaLabelPrefix          = "io.mica"
 
 	DefaultClientConf = "client.conf"
 	// ini config keys in [Mica] section of client.conf
@@ -24,12 +22,9 @@ const (
 	// CPU            = "cpu"
 	// Name           = "name"
 
-	MicaSuccess         = "MICA-SUCCESS"
-	MicaFailed          = "MICA-FAILED"
-	MicaSocketName      = "mica-create.socket"
-	MicaCreatSocketPath = MicaSocketDir + "/" + MicaSocketName
-	MicaSocketBufSize   = 512
-	MicaSocketTimout    = 5 * time.Second
+)
 
-	SHM_NAME = "/dev/shm/mica_free_cores"
+var (
+	PreservedOS   = [...]string{"zephyr", "uniproton", "linux"}
+	OKSectionList = [...]string{"mica", "more"}
 )

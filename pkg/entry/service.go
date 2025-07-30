@@ -1,4 +1,4 @@
-package core
+package entry
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"mica-shim/libmica"
+	"mica-shim/pkg/libmica"
 
 	taskAPI "github.com/containerd/containerd/api/runtime/task/v2"
 	"github.com/containerd/containerd/pkg/shutdown"

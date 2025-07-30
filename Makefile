@@ -31,7 +31,7 @@ all: build
 
 build-prod:
 	@echo "🏭 Building production binary..."
-	go build ${RELEASE_BUILD_FLAGS} -o ${BIN_PROD} ./cmd
+	go build ${RELEASE_BUILD_FLAGS} -o ${BIN_PROD} .
 
 run-prod: build-prod
 	@echo "🏭 Running in production mode..."
@@ -43,7 +43,7 @@ test-prod:
 
 build:
 	@echo "🐛 Building debug binary..."
-	go build -tags debug ${DEV_BUILD_FLAGS} -o ${BIN} ./cmd
+	go build -tags debug ${DEV_BUILD_FLAGS} -o ${BIN} .
 
 # Temp target for amd64 to build arm64 binary
 build-arm64:

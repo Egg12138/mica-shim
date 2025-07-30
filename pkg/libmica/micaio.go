@@ -10,8 +10,8 @@ import (
 	"syscall"
 	"time"
 
-	ioutils "mica-shim/io"
 	log "mica-shim/logger"
+	ioutils "mica-shim/pkg/io"
 )
 
 // PTY device mapping and discovery constants
@@ -25,11 +25,11 @@ const (
 
 // MicaIO handles stdio communication between containerd and mica PTY devices
 type MicaIO struct {
-	taskID   string               // Task identifier
-	stdin    *ioutils.PipeIO     // Stdin pipe
-	stdout   *ioutils.PipeIO     // Stdout pipe
-	stderr   *ioutils.PipeIO     // Stderr pipe
-	terminal bool                // Terminal mode flag
+	taskID   string          // Task identifier
+	stdin    *ioutils.PipeIO // Stdin pipe
+	stdout   *ioutils.PipeIO // Stdout pipe
+	stderr   *ioutils.PipeIO // Stderr pipe
+	terminal bool            // Terminal mode flag
 
 	// PTY device connection
 	ptyDevice string   // PTY device path
@@ -44,7 +44,7 @@ type MicaIO struct {
 	mu sync.RWMutex
 
 	micaClientConn net.Conn
-	
+
 	// Direct FIFO path for stdin forwarding
 	stdinFIFOPath string
 }
@@ -405,12 +405,12 @@ func (mio *MicaIO) forwardStdinToPTY() error {
 
 			if n > 0 {
 				log.Debugf("Forwarding %d bytes from stdin to PTY for task %s", n, mio.taskID)
-				
+
 				// Write to PTY with retry mechanism
 				written := 0
 				for written < n {
 					mio.ptyFile.SetWriteDeadline(time.Now().Add(1 * time.Second))
-					
+
 					bytesWritten, err := mio.ptyFile.Write(buf[written:n])
 					if err != nil {
 						if os.IsTimeout(err) {
@@ -421,7 +421,7 @@ func (mio *MicaIO) forwardStdinToPTY() error {
 					}
 					written += bytesWritten
 				}
-				
+
 				log.Debugf("Successfully wrote %d bytes to PTY for task %s", written, mio.taskID)
 			}
 		}

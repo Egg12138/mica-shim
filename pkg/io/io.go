@@ -36,7 +36,7 @@ func NewPipeIO(dst string) (*PipeIO, error) {
 // Copy copies data from anonymous pipe to dst pipe until closed
 func (pio *PipeIO) Copy(ctx context.Context) error {
 	fmt.Printf("DEBUG: Starting Copy operation for destination: %s\n", pio.dst)
-	
+
 	ok, err := fifo.IsFifo(pio.dst)
 	if err != nil {
 		fmt.Printf("DEBUG: Error checking if %s is a fifo: %v\n", pio.dst, err)
@@ -71,7 +71,7 @@ func (pio *PipeIO) Copy(ctx context.Context) error {
 
 	fmt.Printf("DEBUG: Starting data copy from anonymous pipe to FIFO: %s\n", pio.dst)
 	b := make([]byte, 4096)
-	
+
 	// Custom copy with debug output
 	totalBytes := int64(0)
 	for {
@@ -85,7 +85,7 @@ func (pio *PipeIO) Copy(ctx context.Context) error {
 				data := b[:n]
 				dataStr := string(data)
 				fmt.Printf("DEBUG: *** PipeIO Copy: Read %d bytes from anonymous pipe for %s: %q\n", n, pio.dst, dataStr)
-				
+
 				// Special debug for Hello Zephyr
 				if containsHelloZephyr(dataStr) {
 					fmt.Printf("DEBUG: *** HELLO ZEPHYR DETECTED in PipeIO for %s: %q\n", pio.dst, dataStr)
@@ -101,7 +101,7 @@ func (pio *PipeIO) Copy(ctx context.Context) error {
 				totalBytes += int64(written)
 				fmt.Printf("DEBUG: *** PipeIO Copy: Wrote %d bytes to FIFO %s, total: %d\n", written, pio.dst, totalBytes)
 			}
-			
+
 			if readErr != nil {
 				if readErr == io.EOF {
 					fmt.Printf("DEBUG: Copy completed for %s, total bytes: %d\n", pio.dst, totalBytes)

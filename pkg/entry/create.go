@@ -1,11 +1,12 @@
-package core
+package entry
 
 import (
 	"context"
 	"fmt"
-	"mica-shim/cntr"
-	"mica-shim/libmica"
+	defs "mica-shim/definitions"
 	log "mica-shim/logger"
+	cntr "mica-shim/pkg/container"
+	"mica-shim/pkg/libmica"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,10 +25,9 @@ import (
 // 2. as an agent, managing something needed in future(may be removed or not)
 // TALK: the init process receives signals from containerd,
 func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) (_ *taskAPI.CreateTaskResponse, retErr error) {
-	log.Debugf("*** TASK CREATE: Starting task creation for %s", r.ID)
-	log.Debugf("*** TASK CREATE: Request details - Bundle: %s, Stdin: %s, Stdout: %s, Stderr: %s, Terminal: %v", 
+	log.Debugf("*** TASK CREATE: Request details - Bundle: %s, Stdin: %s, Stdout: %s, Stderr: %s, Terminal: %v",
 		r.Bundle, r.Stdin, r.Stdout, r.Stderr, r.Terminal)
-	
+
 	s.m.Lock()
 	defer s.m.Unlock()
 	if _, ok := s.procs[r.ID]; ok {
@@ -41,7 +41,7 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 		return nil, fmt.Errorf("getting current working directory: %w", err)
 	}
 	log.Debugf("*** TASK CREATE: Current working directory: %s", cwd)
-	
+
 	// Parse runtime configurations
 
 	// Create mica client first - this registers with micad but doesn't start PTY services yet
@@ -66,7 +66,7 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 		}
 		log.Debugf("*** TASK CREATE: Bundle contains %d items", len(bundleContent))
 	}
-	
+
 	commandline := fmt.Sprintf("echo 'current CreateTaskRequest: %v; s.procs: %v; bundleContent: %v'", r, s.procs, bundleContent)
 	cmd := exec.CommandContext(ctx, "sh", "-c", commandline)
 	if _, err := os.Stat(filepath.Join(bundle, "config.json")); err == nil {
@@ -187,6 +187,31 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 	return &taskAPI.CreateTaskResponse{
 		Pid: uint32(pid),
 	}, nil
+}
+
+// setup the task and client os; without managing micataskservice
+func create(ctx context.Context, req *taskAPI.CreateTaskRequest) (taskRes *taskAPI.CreateTaskResponse, retErr error) {
+	container, err := cntr.SetupContainer(req)
+	if err != nil {
+		return nil, fmt.Errorf("%w", err)
+	}
+	conf, err := CreateMicaConf(container)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create mica create conf: %w", err)
+	}
+
+	res, err := libmica.CreateMicaClient(conf)
+	if err != nil {
+		return nil, fmt.Errorf("mica create: %w", err)
+	}
+	if res == defs.MicaSuccess {
+		taskRes = &taskAPI.CreateTaskResponse{
+			Pid: 1,
+		}
+		log.Debugf("mica create success")
+	}
+
+	return nil, nil
 }
 
 // 1. search bundle/.../<clientOSname>.elf

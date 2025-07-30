@@ -39,7 +39,7 @@ func TestStdinFIFOReaderEmptyPath(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error for empty stdin path, got nil")
 	}
-	
+
 	expectedMsg := "stdin path is empty"
 	if err.Error() != expectedMsg {
 		t.Errorf("Expected error message '%s', got '%s'", expectedMsg, err.Error())
@@ -50,7 +50,7 @@ func TestStdinFIFOReaderEmptyPath(t *testing.T) {
 func TestMicaIOWithStdin(t *testing.T) {
 	ctx := context.Background()
 	tempFIFO := "/tmp/test_stdin_fifo_micaio"
-	
+
 	// Create temporary FIFOs for testing
 	if err := syscall.Mkfifo(tempFIFO, 0666); err != nil {
 		t.Fatalf("Failed to create test FIFO: %v", err)
@@ -101,7 +101,7 @@ func TestMicaIOWithoutStdin(t *testing.T) {
 func TestStdinForwardingWithoutPTY(t *testing.T) {
 	ctx := context.Background()
 	tempFIFO := "/tmp/test_stdin_fifo_no_pty"
-	
+
 	if err := syscall.Mkfifo(tempFIFO, 0666); err != nil {
 		t.Fatalf("Failed to create test FIFO: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestStdinForwardingWithoutPTY(t *testing.T) {
 // TestStdinForwardingErrorHandling tests error handling in stdin forwarding
 func TestStdinForwardingErrorHandling(t *testing.T) {
 	ctx := context.Background()
-	
+
 	micaIO := &MicaIO{
 		taskID:        "test-task",
 		ctx:           ctx,
@@ -137,7 +137,7 @@ func TestStdinForwardingErrorHandling(t *testing.T) {
 	}
 	defer os.Remove(tempFile.Name())
 	defer tempFile.Close()
-	
+
 	micaIO.ptyFile = tempFile
 
 	// Try to forward stdin with nonexistent FIFO path
@@ -152,4 +152,4 @@ func BenchmarkStdinForwarding(b *testing.B) {
 	// This would require a more complex setup with actual PTY devices
 	// For now, we'll skip this benchmark
 	b.Skip("Benchmark requires full PTY setup")
-} 
+}

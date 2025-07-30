@@ -6,7 +6,7 @@ import (
 	"time"
 
 	defs "mica-shim/definitions"
-	"mica-shim/libmica"
+	"mica-shim/pkg/libmica"
 
 	"k8s.io/apimachinery/pkg/util/rand"
 )

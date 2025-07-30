@@ -1,10 +1,10 @@
-package core
+package entry
 
 import (
 	"context"
 	"fmt"
-	"mica-shim/libmica"
 	log "mica-shim/logger"
+	"mica-shim/pkg/libmica"
 	"time"
 
 	taskAPI "github.com/containerd/containerd/api/runtime/task/v2"
@@ -74,4 +74,11 @@ func (s *micaTaskService) Start(ctx context.Context, r *taskAPI.StartRequest) (*
 	return &taskAPI.StartResponse{
 		Pid: uint32(proc.pid),
 	}, nil
+}
+
+func start(ctx context.Context, req *taskAPI.StartRequest) (taskRes *taskAPI.StartResponse, retErr error) {
+
+	libmica.MicaCtl(libmica.MStart, req.ID)
+
+	return nil, nil
 }

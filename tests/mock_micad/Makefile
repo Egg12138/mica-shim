@@ -1,25 +1,43 @@
+# Makefile for Enhanced Mock Micad
+#
+# This builds the mock_micad with RTOS IO simulation support
+
 CC = gcc
-CFLAGS = -Wall -Wextra -g
-LDFLAGS = 
+CFLAGS = -Wall -Wextra -std=gnu99 -O2 -g
+LDFLAGS = -pthread -lrt
 
-BUILD_DIRS := ../../builds/
 TARGET = mock_micad
-SRCS = mock_micad.c
-OBJS = $(SRCS:.c=.o)
+SRC = mock_micad.c
 
-.PHONY: all clean simple
+.PHONY: all clean
 
 all: $(TARGET)
 
-simple: CFLAGS += -DSIMPLE_MODE
-simple: $(OBJS)
-	$(CC) $(OBJS) -o simple-$(TARGET) $(LDFLAGS)
-
-$(TARGET): $(OBJS)
-	$(CC) $(OBJS) -o $(BUILD_DIRS)$(TARGET) $(LDFLAGS)
-
-%.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@
+$(TARGET): $(SRC)
+	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
 clean:
-	rm -f $(OBJS) $(TARGET) 
+	rm -f $(TARGET)
+
+test: $(TARGET)
+	@echo "Testing mock_micad..."
+	./$(TARGET) -q &
+	@sleep 2
+	@echo "Mock micad is running. Press Ctrl+C to stop."
+	@read -p "Press Enter to stop test..."
+	@pkill -f mock_micad || true
+
+help:
+	@echo "Mock Micad Build System"
+	@echo ""
+	@echo "Targets:"
+	@echo "  all    - Build mock_micad"  
+	@echo "  clean  - Remove build artifacts"
+	@echo "  test   - Test mock_micad execution"
+	@echo "  help   - Show this help message"
+	@echo ""
+	@echo "Usage:"
+	@echo "  make           # Build mock_micad"
+	@echo "  make test      # Test execution"
+	@echo "  ./mock_micad   # Run with response mode"
+	@echo "  ./mock_micad -q # Run in quiet mode (no responses)" 

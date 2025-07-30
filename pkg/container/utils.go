@@ -85,7 +85,7 @@ func physicalMaxCPURobust() int {
 }
 
 // physical Max CPU in the perspective of container runtime!
-// the range of CPU cores mica-shim can see, is limited by containerd! 
+// the range of CPU cores mica-shim can see, is limited by containerd!
 func physicalMaxCPU() int {
 	// TODO: this is a dummy CPU core limitation, we will parse the CPU core limitation
 	// in the future
@@ -97,10 +97,10 @@ func physicalMaxCPU() int {
 // considering both OCI spec limits and system constraints
 func getContainerCPULimit(cfg *ContainerConfig) int {
 	systemCPUs := runtime.NumCPU()
-	
-		// If container has specific CPU limit from OCI spec, use it
+
+	// If container has specific CPU limit from OCI spec, use it
 	if cfg != nil {
-	log.Debugf(`cpu config:
+		log.Debugf(`cpu config:
 		cpuLimit: %d, 
 		cpuPeriod: %d, 
 		cpuQuota: %d, 
@@ -113,13 +113,13 @@ func getContainerCPULimit(cfg *ContainerConfig) int {
 		log.Debugf("Using container CPU limit from OCI spec: %d", cfg.cpuLimit)
 		return min(cfg.cpuLimit, systemCPUs)
 	}
-	
+
 	// Default fallback - use all available CPUs but reserve one for host
 	defaultLimit := systemCPUs
 	if defaultLimit > 1 {
 		defaultLimit -= 1
 	}
-	
+
 	log.Debugf("Using default CPU limit: %d (system CPUs: %d)", defaultLimit, systemCPUs)
 	return defaultLimit
 }
@@ -129,13 +129,13 @@ func getContainerCPULimit(cfg *ContainerConfig) int {
 func getContainerMemoryLimit(info *ContainerConfig) int64 {
 	// Get system memory information
 	systemMemoryBytes := getSystemMemoryBytes()
-	
+
 	// If container has specific memory limit from OCI spec, use it
 	if info != nil && info.memoryLimit > 0 {
 		log.Debugf("Using container memory limit from OCI spec: %d bytes", info.memoryLimit)
 		return min(info.memoryLimit, systemMemoryBytes)
 	}
-	
+
 	// Default fallback - use most available memory but reserve some for host
 	defaultLimit := systemMemoryBytes
 	if defaultLimit > 1024*1024*1024 { // If > 1GB, reserve 512MB for host
@@ -143,7 +143,7 @@ func getContainerMemoryLimit(info *ContainerConfig) int64 {
 	} else if defaultLimit > 512*1024*1024 { // If > 512MB, reserve 256MB for host
 		defaultLimit -= 256 * 1024 * 1024
 	}
-	
+
 	log.Debugf("Using default memory limit: %d bytes (system memory: %d bytes)", defaultLimit, systemMemoryBytes)
 	return defaultLimit
 }
@@ -230,28 +230,28 @@ func formatCPULimit(config *ContainerConfig) string {
 	}
 
 	parts := []string{}
-	
+
 	if config.cpuLimit > 0 {
 		parts = append(parts, fmt.Sprintf("limit=%d cores", config.cpuLimit))
 	}
-	
+
 	if config.cpuQuota > 0 && config.cpuPeriod > 0 {
 		ratio := float64(config.cpuQuota) / float64(config.cpuPeriod)
 		parts = append(parts, fmt.Sprintf("quota=%.2f cores", ratio))
 	}
-	
+
 	if config.cpuShares > 0 {
 		parts = append(parts, fmt.Sprintf("shares=%d", config.cpuShares))
 	}
-	
+
 	if config.cpusetCpus != "" {
 		parts = append(parts, fmt.Sprintf("cpuset=%s", config.cpusetCpus))
 	}
-	
+
 	if len(parts) == 0 {
 		return "unlimited"
 	}
-	
+
 	return strings.Join(parts, ", ")
 }
 
@@ -262,35 +262,35 @@ func formatMemoryLimit(config *ContainerConfig) string {
 	}
 
 	parts := []string{}
-	
+
 	if config.memoryLimit > 0 {
 		parts = append(parts, fmt.Sprintf("limit=%s", formatBytes(config.memoryLimit)))
 	}
-	
+
 	if config.memoryReservation > 0 {
 		parts = append(parts, fmt.Sprintf("reservation=%s", formatBytes(config.memoryReservation)))
 	}
-	
+
 	if config.memorySwap > 0 {
 		parts = append(parts, fmt.Sprintf("swap=%s", formatBytes(config.memorySwap)))
 	}
-	
+
 	if config.memoryKernel > 0 {
 		parts = append(parts, fmt.Sprintf("kernel=%s", formatBytes(config.memoryKernel)))
 	}
-	
+
 	if config.memorySwappiness != nil {
 		parts = append(parts, fmt.Sprintf("swappiness=%d", *config.memorySwappiness))
 	}
-	
+
 	if config.oomKillDisable {
 		parts = append(parts, "oom-kill=disabled")
 	}
-	
+
 	if len(parts) == 0 {
 		return "unlimited"
 	}
-	
+
 	return strings.Join(parts, ", ")
 }
 
@@ -617,4 +617,3 @@ func resolvePath(path string) (string, error) {
 }
 
 func presetSandbox() {}
-

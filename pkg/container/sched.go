@@ -208,7 +208,6 @@ func getNCPU(bundle string) uint32 {
 	return 1
 }
 
-
 // Test helper functions for accessing private state
 func GetQueueSize() uint32 {
 	if shmData == nil {

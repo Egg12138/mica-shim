@@ -16,12 +16,12 @@
    limitations under the License.
 */
 
-package core
+package entry
 
 import (
 	"context"
 	"fmt"
-	"mica-shim/libmica"
+	"mica-shim/pkg/libmica"
 	"os"
 	"sync"
 	"syscall"
@@ -115,7 +115,6 @@ func (s *micaTaskService) State(ctx context.Context, r *taskAPI.StateRequest) (*
 	if !proc.exitTime.IsZero() {
 		status = tasktypes.Status_STOPPED
 	}
-
 
 	return &taskAPI.StateResponse{
 		ID:         r.ID,

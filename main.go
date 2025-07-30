@@ -2,12 +2,11 @@ package main
 
 import (
 	"context"
-	tasksvc "mica-shim/core/taskService"
+	tasksvc "mica-shim/pkg/entry"
 	"os/signal"
 	"syscall"
 
 	log "mica-shim/logger"
-
 	"os"
 
 	"github.com/containerd/containerd/runtime/v2/shim"
@@ -31,7 +30,7 @@ func main() {
 
 	// NOTICE: as we consider, the next edition of containerd we focus on is containerd 2.x
 	// according to the comments in containerd 1.7.27, shim.Run and shim.RunManager are removed
-	// Hence we do not need to do a huge workload to support the new shim interface
+	// Hence we do not need to do a great workload to support the new shim interface
 	// Use RunManager for backwards compatibility with existing Manager interface
 	shim.RunManager(ctx, tasksvc.NewManager(ShimName))
 }
