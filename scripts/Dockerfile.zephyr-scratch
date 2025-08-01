@@ -1,0 +1,13 @@
+# this image is built as zephyr-mica-scratch:latest
+#FROM mica-scratch
+FROM scratch
+
+# For image builder based on scratch image, these labels can be overridden 
+# but some of which are not recommended to be overridden
+
+# override the default labels
+LABEL org.opencontainer.image.description="Zephyr scratch image"
+LABEL org.openeuler.mica.pedestal="baremetal"
+LABEL org.openeuler.mica.pedestal_conf=""
+LABEL org.openeuler.mica.compatibility.openamp="2023.04+"
+LABEL org.openeuler.mica.compatibility.zephyr="3.7.1+"
