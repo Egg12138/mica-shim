@@ -59,7 +59,6 @@ func initSharedMemory(create bool) error {
 
 	if create {
 		if err := fd.Truncate(int64(SHM_SIZE)); err != nil {
-			log.Debugf("failed to truncate shared memory: %v", err)
 			return err
 		}
 	}
@@ -67,7 +66,6 @@ func initSharedMemory(create bool) error {
 	prot := syscall.PROT_READ | syscall.PROT_WRITE
 	data, err := syscall.Mmap(int(fd.Fd()), 0, SHM_SIZE, prot, syscall.MAP_SHARED)
 	if err != nil {
-		log.Debugf("failed to mmap shared memory: %v", err)
 		return err
 	}
 
@@ -86,7 +84,6 @@ func initSharedMemory(create bool) error {
 		}
 		shmData.tail = maxCPUs
 
-		log.Debugf("initialized CPU queue with %d CPUs", maxCPUs)
 	} else {
 		maxCPUs = shmData.size
 	}
@@ -170,7 +167,7 @@ func releaseUnusedCPU(cpu uint32) {
 		return
 	}
 
-	log.Debugf("released unused CPU %d to head", cpu)
+
 }
 
 func releaseUsedCPU(cpu uint32) {
@@ -187,7 +184,7 @@ func releaseUsedCPU(cpu uint32) {
 		return
 	}
 
-	log.Debugf("released used CPU %d to tail", cpu)
+
 }
 
 // get CPU number the RTOS wanna take

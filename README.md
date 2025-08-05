@@ -30,6 +30,12 @@
 - [x] libmica: containerd rpc--> mica config, 任务配置对接整理
 - [x] 确定Linux:RTOS clientos 1:1模型的必要性
 - [ ] mica支持长容器ID
+- [ ] basic micran state storage
+- [ ] 完善micran state存储
+> 由于我们在create中不再创建mica client而是放到 start()中，所以我们创建容器后需要存放状态信息，目前有几个考虑，分三步：
+> 1. 双state.json副本, 一个位于bundle, 一个位于micran state dir
+> 1. 在micran state dir中维护一个db,存储state信息，提高性能
+> 1. 整个bundle都转到 micran state dir
 - [ ] pty
 - [ ] k8s Pod, Sandbox support
 - [x] 镜像规制考虑
@@ -42,17 +48,16 @@
 - [x] 能通过 isula 拉起 一个 dummy 镜像
 - [x] 自如管理 基本镜像的： OS register, OS boot, Task start
 - [x] 提供一个mica-from-scrach基础镜像,根据这个镜像来搭建混部容器镜像,并且可以根据这些镜像拉起服务
-- [x] Client OS 和 Client Task process 的明确分离管理
+- [x] Client OS 和 Shim Task process 的明确分离管理
 - [ ] IO 接管
 - [ ] 持久化
 - [ ] 网络
+- [ ] 保证mica daemon 和 micran 生命周期不一致时容器状态的一致性
 
 ## 近期Issues
 
-* 最直接关键的问题：**信息 从哪来**：
 1. 验证pod, (下次用minikube跑一个demo)
 1. pod IP;
-1. 1 node 1 micad N clients
 1. 探讨：暴露RTOS跑在哪个CPU上
     1. Downward API是有的
     2. Upward API 有吗？
@@ -79,7 +84,8 @@
 * shim和runtime是否分离, runtime是否划到micad scope?
   > 我打算合并shim&runtime, 这会使shim和runtime的实现更加自由；并且shim&runtime调试可以独立于mica的编译
 * init process 我们要不要实现？
-  > demo中我们跑着一个init process，想用它来 "代表" client OS 本身的状态
+  > 未来需要，现在不需要
+
 * 我们是否需要reaper?
   > 不论containerd 是否重启，我们的client OS在运行上和shim， containerd都没亲子关系，完全是跑在另一个核上的由mica管理的实例
 

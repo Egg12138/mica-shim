@@ -29,7 +29,6 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 	s.m.Lock()
 	defer s.m.Unlock()
 	if _, ok := s.procs[r.ID]; ok {
-		log.Debugf("*** TASK CREATE: Task %s already exists, returning ErrAlreadyExists", r.ID)
 		return nil, errdefs.ErrAlreadyExists
 	}
 
@@ -45,7 +44,6 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 	// Create mica client first - this registers with micad but doesn't start PTY services yet
 	_, err := createContainer(ctx, r)
 	if err != nil {
-		log.Debugf("*** TASK CREATE: Failed to create mica client for task %s: %v", r.ID, err)
 		return nil, fmt.Errorf("creating mica client: %w", err)
 	}
 
@@ -57,7 +55,6 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 	// log.Debugf("*** TASK CREATE: IO paths - stdin: %s, stdout: %s, stderr: %s", r.Stdin, r.Stdout, r.Stderr)
 	micaIO, err := libmica.NewMicaIO(ctx, r.ID, r.Stdin, r.Stdout, r.Stderr, r.Terminal)
 	if err != nil {
-		log.Debugf("*** TASK CREATE: Failed to create MicaIO for task %s: %v", r.ID, err)
 		return nil, fmt.Errorf("creating mica IO: %w", err)
 	}
 	log.Debugf("*** TASK CREATE: Successfully created MicaIO for task %s", r.ID)
@@ -70,13 +67,10 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 	// cmd.Start()
 	// pid := cmd.Process.Pid
 	// log.Debugf("Created MICA init process as agent, with PID %d for task %s", pid, r.ID)
-	
 
-	_, err = createContainer(ctx, r)
 
 	defer func() {
 		if retErr != nil {
-			log.Debugf("*** TASK CREATE: Error occurred, cleaning up resources for task %s", r.ID)
 			if err := micaIO.Close(); err != nil {
 				log.Debugf("Failed to close mica IO for %s: %v", r.ID, err)
 			}
@@ -145,7 +139,6 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 		return nil, fmt.Errorf("getting current working directory: %w", err)
 	}
 	pidPath := filepath.Join(filepath.Join(filepath.Dir(cwd), r.ID), initPidFile)
-	log.Debugf("we do created a pidFile: %s", pidPath)
 	if err := shim.WritePidFile(pidPath, pid); err != nil {
 		return nil, fmt.Errorf("writing pid file of MICA init process: %w", err)
 	}
@@ -179,15 +172,16 @@ func agent() *exec.Cmd {
 // setup the task and client os; without managing micataskservice
 func createContainer(ctx context.Context, req *taskAPI.CreateTaskRequest) (taskRes *taskAPI.CreateTaskResponse, retErr error) {
 	// parsed from bundle 
+	err := setupMicranStateDir()
+	if err != nil {
+		log.Debugf("failed to setup micran state directory: %w", err)
+	}
+
 	container, err := cntr.NewContainer(req.ID, req.Bundle, req.Rootfs, req.Terminal)
 	if err != nil || container == nil{
 		return nil, fmt.Errorf("failed to init Container %w", err)
 	}
 
-	err = setupMicranStateDir()
-	if err != nil {
-		log.Debugf("failed to setup micran state directory: %w", err)
-	}
 	if err = saveContainerState(container); err != nil {
 		return nil, fmt.Errorf("failed to save container state: %w", err)
 	}

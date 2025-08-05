@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	cgroups "github.com/containerd/cgroups/v3"
 	ctrAnnotations "github.com/containerd/containerd/pkg/cri/annotations"
 	podmanAnnotations "github.com/containers/podman/v4/pkg/annotations"
 	dockershimAnnotations "github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/annotations/dockershim"
@@ -110,7 +111,6 @@ func getContainerCPULimit(cfg *ContainerConfig) int {
 
 	}
 	if cfg != nil && cfg.cpuLimit > 0 {
-		log.Debugf("Using container CPU limit from OCI spec: %d", cfg.cpuLimit)
 		return min(cfg.cpuLimit, systemCPUs)
 	}
 
@@ -120,7 +120,6 @@ func getContainerCPULimit(cfg *ContainerConfig) int {
 		defaultLimit -= 1
 	}
 
-	log.Debugf("Using default CPU limit: %d (system CPUs: %d)", defaultLimit, systemCPUs)
 	return defaultLimit
 }
 
@@ -306,7 +305,6 @@ func availableMaxCPU() int {
 	if m > 1 {
 		m -= 1
 	}
-	log.Debugf("availableMaxCPU: %d", m)
 	return m
 }
 
@@ -376,19 +374,16 @@ func allocCPUWithLimit(ncpu int, config *ContainerConfig) (int, error) {
 // check OS value matches
 func validOS(os string) bool {
 	ret := inList(defs.PreservedOS[:], os)
-	log.Debugf("validating OS: %s, result: %v", os, ret)
 	return ret
 }
 
 func validFirmware(root, firmware string) bool {
 	// <bundle>/rootfs/<firmware>
-	log.Debugf("validating firmware: %s", firmware)
-	resolved, err := resolvePath(filepath.Join(root, firmware))
+	resolved, err := ResolvePath(filepath.Join(root, firmware))
 	if err != nil {
 		return false
 	}
 	ret := fileExists(resolved)
-	log.Debugf("current firmware path is: %s. valid = %v", resolved, ret)
 	return ret
 }
 
@@ -512,8 +507,6 @@ func hostPed() PedType {
 // Currently, one host only support one pedestal type.
 func hostPedMatched(ped *Pedestal) bool {
 	ret := HostPedestalType == ped.PedestalType
-	log.Debugf("hostPedMatched: %v ? result: %v", ped, ret)
-	log.Debugf("hostPedestalType: %v, ped.PedestalType: %v", HostPedestalType, ped.PedestalType)
 	if defs.IsDebug { return true }
 	return ret
 }
@@ -561,7 +554,7 @@ func validBundleRootfs(containerID, bundlePath string) (string, error) {
 	}
 
 	// resolve path first to handle symlinks before other checks
-	resolved, err := resolvePath(bundlePath)
+	resolved, err := ResolvePath(bundlePath)
 	if err != nil {
 		return "", err
 	}
@@ -588,11 +581,10 @@ func validBundleRootfs(containerID, bundlePath string) (string, error) {
 	return resolved, nil
 }
 
-// resolvePath returns the fully resolved and expanded value of the
+// ResolvePath returns the fully resolved and expanded value of the
 // specified path.
-func resolvePath(path string) (string, error) {
+func ResolvePath(path string) (string, error) {
 	if path == "" {
-		log.Debugf("path must be specified")
 		return "", fmt.Errorf("path must be specified")
 	}
 
@@ -614,3 +606,7 @@ func resolvePath(path string) (string, error) {
 }
 
 func presetSandbox() {}
+
+func cgroupV1() bool {
+	return cgroups.Mode() == cgroups.Legacy || cgroups.Mode() == cgroups.Hybrid
+}

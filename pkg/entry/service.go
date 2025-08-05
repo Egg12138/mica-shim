@@ -96,6 +96,7 @@ func success(response string) bool {
 func loadContainerState(id string) (*cntr.Container, error) {
 	// bundlestate:id == id?
 	cwd, err := os.Getwd()
+	log.Debugf("cwd: %s", cwd)
 	if err == nil {
 		container, err := cntr.LoadContainerState(cwd)
 		if err == nil {
@@ -104,7 +105,6 @@ func loadContainerState(id string) (*cntr.Container, error) {
 			}
 			return container, nil
 		}
-		log.Debugf("current working directory is not bundle, read container state from %s", defs.MicranStateDir)
 	}
 
 	container, err := cntr.LoadContainerState(defs.MicranStateDir)
@@ -130,6 +130,7 @@ func saveContainerState(c *cntr.Container) error {
 	
 	statePath := filepath.Join(bundle, "state.json")
 	state, err := json.Marshal(c)
+	log.Pretty("save container %v as state %v", c, state)
 	if err != nil {
 		return fmt.Errorf("failed to marshal container state: %w", err)
 	}
@@ -137,7 +138,7 @@ func saveContainerState(c *cntr.Container) error {
 		return fmt.Errorf("failed to write container state to %s: %w", statePath, err)
 	}
 
-	// join "defs.MicranStateDir/id.json"
+	// join "defs.MicranStateDir/<id>.json"
 	statePath = filepath.Join(defs.MicranStateDir, id+".json")
 	state, err = json.Marshal(c)
 	if err != nil {

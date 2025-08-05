@@ -3,6 +3,7 @@ module mica-shim
 go 1.24
 
 require (
+	github.com/containerd/cgroups/v3 v3.0.2
 	github.com/containerd/containerd v1.7.27
 	github.com/containerd/containerd/api v1.8.0
 	github.com/containerd/fifo v1.1.0
@@ -20,7 +21,6 @@ require (
 	github.com/AdamKorcz/go-118-fuzz-build v0.0.0-20230306123547-8075edf89bb0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/Microsoft/hcsshim v0.12.0 // indirect
-	github.com/containerd/cgroups/v3 v3.0.2 // indirect
 	github.com/containerd/console v1.0.4 // indirect
 	github.com/containerd/continuity v0.4.4 // indirect
 	github.com/containerd/errdefs v0.3.0 // indirect

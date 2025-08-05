@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	defs "mica-shim/definitions"
-	log "mica-shim/logger"
 	"path/filepath"
 )
 
@@ -88,11 +87,9 @@ func MicaCreate(config MicaClientConf) (string, error) {
 
 func MicaCtl(cmd MicaCommand, client string) (string, error) {
 	if !validSocketPath(defs.MicaCreatSocketPath) {
-		log.Debug("mica socket directory does not exist, please check if micad is running")
 		return "", fmt.Errorf("mica socket directory does not exist, please check if micad is running")
 	}
 	target := filepath.Join(defs.MicaStateDir, client+".socket")
-	log.Debugf("client socket path: %s", target)
 	s := newMicaSocket(target)
 	msg := string(cmd)
 	return s.handleMsg([]byte(msg))
@@ -106,7 +103,6 @@ func NewMicaCreateMsg(cpu uint32, name string, path string, ped string, pedCfg s
 }
 
 func CreateMicaClient(conf MicaClientConf) (string, error) {
-	log.Debugf("create mica client conf: %+v", conf)
 	s := newMicaSocket(defs.MicaCreatSocketPath)
 	// we do not deref s here, because it is dropped in handleMsg()
 	msg := conf.pack()

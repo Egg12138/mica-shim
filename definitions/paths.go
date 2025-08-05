@@ -7,5 +7,5 @@ const (
 	MicaConfDir        = "/etc/mica"
 	MicaStateDir      = "/run/mica"
 	MicranStateDir    = "/run/micran"
-	MicaContainersRoot = "/run/mica/containers"
+	MicaContainersRoot = "/run/micran/containers"
 )

@@ -52,7 +52,6 @@ type MicaContainer struct {
 
 // Delete deletes a task.
 func (s *micaTaskService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*taskAPI.DeleteResponse, error) {
-	log.Debugf("delete id:%s execid:%s", r.ID, r.ExecID)
 
 	s.m.Lock()
 	defer s.m.Unlock()
@@ -88,21 +87,18 @@ func (s *micaTaskService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) 
 
 // Exec executes an additional process inside the task.
 func (*micaTaskService) Exec(ctx context.Context, r *taskAPI.ExecProcessRequest) (*ptypes.Empty, error) {
-	log.Debugf("exec id:%s execid:%s", r.ID, r.ExecID)
 	log.Infof("Executing a new task is not implemented yet")
 	return nil, nil
 }
 
 // ResizePty resizes the pty of a process.
 func (*micaTaskService) ResizePty(ctx context.Context, r *taskAPI.ResizePtyRequest) (*ptypes.Empty, error) {
-	log.Debugf("resizepty id:%s execid:%s", r.ID, r.ExecID)
 	log.Infof("resizepty is not implemented yet")
 	return nil, nil
 }
 
 // State returns the runtime state of a RTOS task process.
 func (s *micaTaskService) State(ctx context.Context, r *taskAPI.StateRequest) (*taskAPI.StateResponse, error) {
-	log.Debugf("state id:%s execid:%s", r.ID, r.ExecID)
 
 	s.m.RLock()
 	defer s.m.RUnlock()
@@ -128,19 +124,16 @@ func (s *micaTaskService) State(ctx context.Context, r *taskAPI.StateRequest) (*
 
 // NOTICE: mica does not provide pause/resume feature
 func (*micaTaskService) Pause(ctx context.Context, r *taskAPI.PauseRequest) (*ptypes.Empty, error) {
-	log.Debugf("pause id:%s", r.ID)
 	return nil, errdefs.ErrNotImplemented
 }
 
 // NOTICE: mica does not provide pause/resume feature
 func (*micaTaskService) Resume(ctx context.Context, r *taskAPI.ResumeRequest) (*ptypes.Empty, error) {
-	log.Debugf("resume id:%s", r.ID)
 	return nil, errdefs.ErrNotImplemented
 }
 
 // Kill kills a process.
 func (s *micaTaskService) Kill(ctx context.Context, r *taskAPI.KillRequest) (*ptypes.Empty, error) {
-	log.Debugf("kill id:%s execid:%s", r.ID, r.ExecID)
 
 	s.m.RLock()
 	defer s.m.RUnlock()
@@ -182,7 +175,6 @@ func (*micaTaskService) CloseIO(ctx context.Context, r *taskAPI.CloseIORequest) 
 
 // Checkpoint creates a checkpoint of a task.
 func (*micaTaskService) Checkpoint(ctx context.Context, r *taskAPI.CheckpointTaskRequest) (*ptypes.Empty, error) {
-	log.Debugf("checkpoint id:%s", r.ID)
 	return nil, errdefs.ErrNotImplemented
 }
 

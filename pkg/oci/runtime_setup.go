@@ -2,7 +2,6 @@ package core
 
 import (
 	defs "mica-shim/definitions"
-	log "mica-shim/logger"
 	"strconv"
 	"strings"
 )
@@ -43,55 +42,46 @@ func NewRuntimeSpec() *RuntimeConfig {
 }
 
 func (r *RuntimeConfig) SetDebug(debug bool) *RuntimeConfig {
-	log.Debugf("Setting debug to %v", debug)
 	r.Debug = debug
 	return r
 }
 
 func (r *RuntimeConfig) SetSandboxCPUs(cpu uint32) *RuntimeConfig {
-	log.Debugf("Setting sandbox CPUs to %d", cpu)
 	r.SandboxCPUs = cpu
 	return r
 }
 
 func (r *RuntimeConfig) SetSandboxMemMB(mem uint32) *RuntimeConfig {
-	log.Debugf("Setting sandbox memory to %dMB", mem)
 	r.SandboxMemMB = mem
 	return r
 }
 
 func (r *RuntimeConfig) SetMaxContainerCPUs(cpu uint32) *RuntimeConfig {
-	log.Debugf("Setting max container CPUs to %d", cpu)
 	r.MaxContainerCPUs = cpu
 	return r
 }
 
 func (r *RuntimeConfig) SetMaxContainerMemMB(mem uint32) *RuntimeConfig {
-	log.Debugf("Setting max container memory to %dMB", mem)
 	r.MaxContainerMemMB = mem
 	return r
 }
 
 func (r *RuntimeConfig) SetCPUSchedulerPolicy(policy string) *RuntimeConfig {
-	log.Debugf("Setting CPU scheduler policy to %s", policy)
 	r.CPUSchedulerPolicy = policy
 	return r
 }
 
 func (r *RuntimeConfig) SetMemoryOvercommit(allow bool) *RuntimeConfig {
-	log.Debugf("Setting memory overcommit to %v", allow)
 	r.MemoryOvercommit = allow
 	return r
 }
 
 func (r *RuntimeConfig) SetDefaultPedestal(pedestal string) *RuntimeConfig {
-	log.Debugf("Setting default pedestal to %s", pedestal)
 	r.DefaultPedestal = pedestal
 	return r
 }
 
 func (r *RuntimeConfig) SetEnableResourceLimit(enable bool) *RuntimeConfig {
-	log.Debugf("Setting enable resource limit to %v", enable)
 	r.EnableResourceLimit = enable
 	return r
 }

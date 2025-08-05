@@ -52,7 +52,6 @@ func (ms *micaSocket) close() error {
 }
 
 func (ms *micaSocket) tx(data []byte) error {
-	log.Debugf("Sending message to MicaSocket: %s", string(data))
 	if ms.conn == nil {
 		return errors.New("socket not connected")
 	}
@@ -61,7 +60,6 @@ func (ms *micaSocket) tx(data []byte) error {
 }
 
 func (ms *micaSocket) rx() (string, error) {
-	log.Debugf("Receiving message from MicaSocket")
 	if ms.conn == nil {
 		return "", errors.New("socket not connected")
 	}
@@ -134,13 +132,10 @@ func (ms *micaSocket) handleMsg(msg []byte) (string, error) {
 
 	switch response {
 	case defs.MicaSuccess:
-		log.Debugf("Command executed successfully: %s", response)
 		return response, nil
 	case defs.MicaFailed:
-		log.Debugf("Command failed: %s", response)
 		return response, fmt.Errorf("mica daemon reported failure")
 	default:
-		log.Debugf("Received unexpected response: %s", response)
 		return response, fmt.Errorf("unexpected response format: %s", response)
 	}
 }

@@ -101,8 +101,7 @@ func start(container *cntr.Container, ctx context.Context, req *taskAPI.StartReq
 // 1. search bundle/.../<clientOSname>.elf
 // 2. if missing, log and search for binary in bundle recursively
 // TODO: Only copy values, the evaluation procedure is in the caller function
-// TALK: 这是预留的核，实际client可能更后面启动, 以及启动可能失败
-// TODO: 现在我们全部假定是单核RTOS, mica侧还未实现多核, 但是在镜像label中，我们可以指定核数量
+// TALK: mica does not support multi-core yet, so we only support single core for now.
 func CreateMicaConf(container *cntr.Container) (libmica.MicaClientConf, error) {
 	config := container.GetConfig()
 

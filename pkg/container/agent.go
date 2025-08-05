@@ -1,9 +1,8 @@
 package cntr
 
-import (
-	log "mica-shim/logger"
-)
-
+// Fork a new process as client agent
+// * socket pair IPC, <id>.socket <--> agent
+// * socket pair IPC, { micran } <--> agent
 func Agent() {
-	log.Debugf("agent")
+	// Agent function
 }

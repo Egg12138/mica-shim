@@ -78,7 +78,6 @@ func parseConfigINI(bundle string) (map[string]string, error) {
 
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		// If config file doesn't exist, return empty map (not an error)
-		log.Debugf("No %s found under bundle %s", defs.DefaultClientConf, bundle)
 		return make(map[string]string), nil
 	}
 
@@ -133,7 +132,6 @@ func parseConfigINI(bundle string) (map[string]string, error) {
 		return nil, fmt.Errorf("error reading mica config file: %v", err)
 	}
 
-	log.Debugf("Parsed MICA config from %s: %+v", configPath, parsedFields)
 	return parsedFields, nil
 }
 
@@ -309,21 +307,15 @@ func parseContainerConfig(bundle string, ocispec specs.Spec, cType ContainerType
 		mu: sync.RWMutex{},
 	}
 
-	// Parse MICA-specific labels
 	if err := config.parseMicaLabels(micaConf); err != nil {
-		log.Debugf("failed to parse mica labels: %v", err)
 		return nil, err
 	}
 
-	// Parse CPU resources from OCI spec
 	if err := config.parseOCICPUResources(&ocispec); err != nil {
-		log.Debugf("failed to parse OCI CPU resources: %v", err)
 		return nil, err
 	}
 
-	// Parse Memory resources from OCI spec
 	if err := config.parseOCIMemoryResources(&ocispec); err != nil {
-		log.Debugf("failed to parse OCI Memory resources: %v", err)
 		return nil, err
 	}
 
@@ -343,12 +335,6 @@ func parseContainerConfig(bundle string, ocispec specs.Spec, cType ContainerType
 	log.Infof("Container resource limits - CPU: %s, Memory: %s",
 		formatCPULimit(config), formatMemoryLimit(config))
 	return config, nil
-}
-
-// deprecated: containerInfoParse is now replaced by parseContainerConfig
-func (conf *ContainerConfig) containerInfoParse() (*ContainerConfig, error) {
-	log.Warn("containerInfoParse is deprecated, use parseContainerConfig instead")
-	return conf, nil
 }
 
 func getContainerType(spec *specs.Spec) (ContainerType, error) {
@@ -445,7 +431,6 @@ func NewContainer(id, bundle string, rootfs []*types.Mount, terminal bool) (_ *C
 	presetSandbox()
 
 	bundlePath, err := validBundleRootfs(id, bundle)
-	log.Debugf("bundle content: %s", walkDir(bundlePath))
 	if err != nil {
 		return nil, err
 	}
@@ -474,7 +459,6 @@ func newContainer(id string, config *ContainerConfig) (*Container, error) {
 		config:   config,
 		// status: remain empty
 	}
-	log.Debugf("new container: %+v", container)
 
 	if !container.validMicaContainer() {
 		return nil, fmt.Errorf("invalid mica container: %+v", container)
@@ -486,9 +470,6 @@ func newContainer(id string, config *ContainerConfig) (*Container, error) {
 // Do not handle unmatched labels here
 func (r *ContainerConfig) parseMicaLabels(labels map[string]string) error {
 	// TODO: make sure we do can find the firmware path in container bundle
-	// Parse firmware path
-	// preserved os:
-	// "zephyr", "uniproton", "linux"
 
 	for k, v := range labels {
 		switch k {
@@ -502,7 +483,6 @@ func (r *ContainerConfig) parseMicaLabels(labels map[string]string) error {
 			if v == "" {
 				return fmt.Errorf("missing os label")
 			}
-			log.Debugf("current os label: %s", v)
 			if !validOS(v) {
 				return fmt.Errorf("invalid os label: %s", v)
 			}
@@ -592,9 +572,11 @@ func (r *ContainerConfig) parseOCIMemoryResources(spec *specs.Spec) error {
 	}
 
 	// Parse kernel memory limit
-	if memory.Kernel != nil {
-		r.memoryKernel = *memory.Kernel
-		log.Debugf("Parsed kernel memory limit: %d bytes", *memory.Kernel)
+	if cgroupV1() {
+		if memory.Kernel != nil {
+			r.memoryKernel = *memory.Kernel
+			log.Debugf("Parsed kernel memory limit: %d bytes", *memory.Kernel)
+		}
 	}
 
 	// Parse memory swappiness

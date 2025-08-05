@@ -7,5 +7,5 @@ const (
 	MicaConfDir        = "/tmp/mica/conf"
 	MicaStateDir      = "/tmp/mica"
 	MicranStateDir    = "/tmp/micran"
-	MicaContainersRoot = "/tmp/mica/containers"
+	MicaContainersRoot = "/tmp/micran/containers"
 )
