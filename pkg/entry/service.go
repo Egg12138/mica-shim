@@ -2,17 +2,15 @@ package entry
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
 	defs "mica-shim/definitions"
-	log "mica-shim/logger"
 	cntr "mica-shim/pkg/container"
+
 	"mica-shim/pkg/libmica"
+	core "mica-shim/pkg/oci"
 
 	taskAPI "github.com/containerd/containerd/api/runtime/task/v2"
 	"github.com/containerd/containerd/pkg/shutdown"
@@ -23,8 +21,9 @@ import (
 // shutdown.Service is used to facilitate shutdown by through callback
 func newTaskService(ss shutdown.Service) (*micaTaskService, error) {
 	s := &micaTaskService{
-		procs: make(initProcByTaskID, 1),
-		ss:    ss,
+		// procs:     make(Micantainers, 1),
+		procs:     make(initProcByTaskID, 1),
+		ss:        ss,
 	}
 
 	sockAddr, err := shim.ReadAddress("address")
@@ -53,7 +52,8 @@ func newTaskService(ss shutdown.Service) (*micaTaskService, error) {
 	return s, nil
 }
 
-// initProcByTaskID maps init (parent) processes to their associated task by ID.
+// Micantainers maps init (parent) processes to their associated task by ID.
+type Micantainers map[string]*cntr.Container
 type initProcByTaskID map[string]*initProcess
 
 // initProcess encapsulates information about an init (parent) process.
@@ -69,16 +69,34 @@ type initProcess struct {
 	micaIO     *libmica.MicaIO // IO handler for PTY communication
 }
 
+// deprecated: will be removed, replaced by shimService
 // micaTaskService is an implementation of a containerd taskAPI.TaskService
 // which prints the current time at regular intervals.
 type micaTaskService struct {
 	m     sync.RWMutex
-	procs initProcByTaskID
-	ss    shutdown.Service
+	// procs Micantainers
+	procs map[string]*initProcess
+	// namespace string
+	ss        shutdown.Service
+}
+
+type shimService struct {
+	ctx        context.Context
+	containers Micantainers
+	namespace  string
+	events     chan interface{}
+	cancel     func()
+	config     *core.RuntimeConfig
+	// TODO: pedRuntimeInfo is a placeholder for now
+	pedRuntimeInfo uint32
+	shimPid        uint32
+	eventSendMutex sync.Mutex
+	m              sync.Mutex
 }
 
 var (
 	_ taskAPI.TaskService = (*micaTaskService)(nil)
+	_ taskAPI.TaskService = (*shimService)(nil)
 )
 
 // RegisterTTRPC registers this TTRPC service with the given TTRPC server.
@@ -87,67 +105,12 @@ func (s *micaTaskService) RegisterTTRPC(srv *ttrpc.Server) error {
 	return nil
 }
 
+func (s *shimService) RegisterTTRPC(srv *ttrpc.Server) error {
+	taskAPI.RegisterTaskService(srv, s)
+	return nil
+}
+
 // TODO: expand mica response system
 func success(response string) bool {
-	return response == defs.MicaSuccess 
-}
-
-
-func loadContainerState(id string) (*cntr.Container, error) {
-	// bundlestate:id == id?
-	cwd, err := os.Getwd()
-	log.Debugf("cwd: %s", cwd)
-	if err == nil {
-		container, err := cntr.LoadContainerState(cwd)
-		if err == nil {
-			if id != container.ID {
-				return nil, fmt.Errorf("container id mismatch: %s != %s", id, container.ID)
-			}
-			return container, nil
-		}
-	}
-
-	container, err := cntr.LoadContainerState(defs.MicranStateDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load container state: %w", err)
-	}
-	if id != container.ID {
-		return nil, fmt.Errorf("container id mismatch: %s != %s", id, container.ID)
-	}
-	return container, nil
-}
-
-func setupMicranStateDir() error {
-	if err := os.MkdirAll(defs.MicranStateDir, 0755); err != nil {
-		return fmt.Errorf("failed to create micran state directory: %w", err)
-	}
-	return nil
-}
-
-func saveContainerState(c *cntr.Container) error {
-	bundle := c.GetConfig().Bundle
-	id := c.ID
-	
-	statePath := filepath.Join(bundle, "state.json")
-	state, err := json.Marshal(c)
-	log.Pretty("save container %v as state %v", c, state)
-	if err != nil {
-		return fmt.Errorf("failed to marshal container state: %w", err)
-	}
-	if err := os.WriteFile(statePath, state, 0644); err != nil {
-		return fmt.Errorf("failed to write container state to %s: %w", statePath, err)
-	}
-
-	// join "defs.MicranStateDir/<id>.json"
-	statePath = filepath.Join(defs.MicranStateDir, id+".json")
-	state, err = json.Marshal(c)
-	if err != nil {
-		return fmt.Errorf("failed to marshal container state: %w", err)
-	}
-	if err := os.WriteFile(statePath, state, 0644); err != nil {
-		return fmt.Errorf("failed to write container state to %s: %w", statePath, err)
-	}
-
-	log.Debugf("saved container state to %s", statePath)
-	return nil
+	return response == defs.MicaSuccess
 }
