@@ -27,7 +27,7 @@ func (s *micaTaskService) Start(ctx context.Context, r *taskAPI.StartRequest) (*
 	// This will trigger PTY service creation in micad
 
 	// BUG: A fatal error that start request do not pass bundle to shim, we can not
-	// recover container state directly through bundle/state.json. 
+	// recover container state directly through bundle/state.json.
 	container, err := loadContainerState(r.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load container state: %w", err)
@@ -39,7 +39,6 @@ func (s *micaTaskService) Start(ctx context.Context, r *taskAPI.StartRequest) (*
 		log.Debugf("*** TASK START: Failed to start mica client for task %s: %v", r.ID, err)
 		return nil, fmt.Errorf("failed to start mica client: %w", err)
 	}
-
 
 	// Step 2: Wait a moment for micad to complete service registration and PTY creation
 	// This is necessary because micad creates PTY devices asynchronously after client start

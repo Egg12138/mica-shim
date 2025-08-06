@@ -507,7 +507,9 @@ func hostPed() PedType {
 // Currently, one host only support one pedestal type.
 func hostPedMatched(ped *Pedestal) bool {
 	ret := HostPedestalType == ped.PedestalType
-	if defs.IsDebug { return true }
+	if defs.IsDebug {
+		return true
+	}
 	return ret
 }
 

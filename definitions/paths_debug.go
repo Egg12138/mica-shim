@@ -4,8 +4,9 @@
 package defs
 
 const (
-	MicaConfDir        = "/tmp/mica/conf"
-	MicaStateDir      = "/tmp/mica"
-	MicranStateDir    = "/tmp/micran"
-	MicaContainersRoot = "/tmp/micran/containers"
+	MicaConfDir          = "/tmp/mica/conf"
+	MicaStateDir         = "/tmp/mica"
+	MicranStateDir       = "/tmp/micran"
+	MicaContainersRoot   = "/tmp/micran/containers"
+	MicantainerStateFile = "state.json"
 )

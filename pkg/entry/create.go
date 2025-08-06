@@ -205,6 +205,42 @@ func createContainer(ctx context.Context, req *taskAPI.CreateTaskRequest) (taskR
 	// 	log.Debugf("mica create success")
 	// }
 
-	return taskRes, nil
+	// return taskRes, nil
 }
 
+func loadContainerState(id string) (*specs.State, error) {
+	// bundlestate:id == id?
+	cwd, err := os.Getwd()
+	log.Debugf("cwd: %s", cwd)
+	if err == nil {
+		if state, err := utils.LoadStateFromDir(cwd); err == nil {
+			return state, nil
+		}
+		log.Debugf("failed to load container state from %s: %v. Try read from micran state dir", cwd, err)
+	}
+
+	stateDir := filepath.Join(defs.MicranStateDir, id)
+	container, err := utils.LoadStateFromDir(stateDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load container state: %w", err)
+	}
+	if id != container.ID {
+		return nil, fmt.Errorf("container id mismatch: %s != %s", id, container.ID)
+	}
+	return container, nil
+}
+
+func setupMicranStateDir() error {
+	if err := os.MkdirAll(defs.MicranStateDir, 0755); err != nil {
+		return fmt.Errorf("failed to create micran state directory: %w", err)
+	}
+	return nil
+}
+
+func saveContainerState(c *cntr.Container) error {
+	if err := os.MkdirAll(filepath.Join(defs.MicranStateDir, c.ID), 0o755); err != nil {
+		log.Debugf("failed to create <%s> state directory: %v", c.ID)
+		return err
+	}
+	return c.SaveState()
+}

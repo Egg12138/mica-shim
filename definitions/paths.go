@@ -5,7 +5,9 @@ package defs
 
 const (
 	MicaConfDir        = "/etc/mica"
-	MicaStateDir      = "/run/mica"
-	MicranStateDir    = "/run/micran"
+	MicaStateDir       = "/run/mica"
+	MicranStateDir     = "/run/micran"
 	MicaContainersRoot = "/run/micran/containers"
+
+	MicantainerStateFile = "state.json"
 )

@@ -7,6 +7,6 @@ var HostMaxCPU int
 func init() {
 
 	HostPedestalType = hostPed()
-	
+
 	HostMaxCPU = availableMaxCPU()
 }

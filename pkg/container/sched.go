@@ -101,7 +101,6 @@ func getDefaultMaxCPUs() int {
 	return systemCPUs
 }
 
-
 func (q *FreeCPUs) dequeue() (uint32, bool) {
 	if q.head == q.tail {
 		return 0, false
@@ -167,7 +166,6 @@ func releaseUnusedCPU(cpu uint32) {
 		return
 	}
 
-
 }
 
 func releaseUsedCPU(cpu uint32) {
@@ -183,7 +181,6 @@ func releaseUsedCPU(cpu uint32) {
 		log.Errorf("failed to release used CPU %d: queue full", cpu)
 		return
 	}
-
 
 }
 

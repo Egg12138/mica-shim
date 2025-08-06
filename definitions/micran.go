@@ -12,5 +12,5 @@ const (
 	MicaSocketTimout    = 5 * time.Second
 
 	SHM_NAME = "/dev/shm/mica_free_cores"
-	IsDebug = true
+	IsDebug  = true
 )
