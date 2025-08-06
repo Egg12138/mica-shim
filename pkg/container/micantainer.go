@@ -12,6 +12,7 @@ import (
 
 	defs "mica-shim/definitions"
 	log "mica-shim/logger"
+	"mica-shim/pkg/fileutils"
 	"mica-shim/pkg/libmica"
 	oci "mica-shim/pkg/oci"
 
@@ -21,7 +22,6 @@ import (
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
-// alternative: docker, containerd, isulad
 // high level container engine
 var (
 	HighLevelCE    = "containerd"
@@ -239,6 +239,10 @@ func (ct ContainerType) IsRegularContainer() bool {
 
 func (ct ContainerType) CanBeSandbox() bool {
 	return ct == Regular || ct == SideCar
+}
+
+// TALK: is it needed to add a sandbox state field inside container struct?
+type SandboxState struct {
 }
 
 type Container struct {
@@ -619,6 +623,8 @@ func parseiSuladContainerConfig(bundle string) (*ContainerConfig, error) {
 	return nil, nil
 }
 
+// **************** Setters and Getters ****************
+
 func (r *ContainerConfig) FirmwarePath() string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -752,6 +758,35 @@ func (r *ContainerConfig) OOMKillDisable() bool {
 	return r.oomKillDisable
 }
 
+func (c *Container) SetStatus(status task.Status) {
+	c.status = status
+}
+
+func (c *Container) Status() task.Status {
+	return c.status
+}
+
+type State struct {
+	ID      string      `json:"id"`
+	ShortID string      `json:"short_id"`
+	Status  task.Status `json:"status"`
+	Bundle  string      `json:"bundle"`
+	Ped     string      `json:"ped"`
+	OS      string      `json:"os"`
+}
+
+func (c *Container) State() *State {
+	s := &State{
+		ID:      c.ID,
+		Status:  c.status,
+		Bundle:  c.bundle,
+		Ped:     c.config.PedestalType().String(),
+		OS:      c.config.OS(),
+		ShortID: fileutils.ShortID(c.ID),
+	}
+	return s
+}
+
 // ContainerConfig contains:
 //
 //	extraLabels: map[string]string; additional labels
@@ -814,17 +849,36 @@ func getRuntimeConfig(ocispec *specs.Spec) (*oci.RuntimeConfig, error) {
 	return runtimeConfig, nil
 }
 
-
-
-func LoadContainerState(bundle string) (*Container, error) {
-	statePath := filepath.Join(bundle, "state.json")
-	state, err := os.ReadFile(statePath)
+func saveStateTo(file string, state *State) error {
+	stateBytes, err := json.Marshal(state)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read container state from %s: %w", statePath, err)
+		return fmt.Errorf("failed to marshal container state: %w", err)
 	}
-	var container Container
-	if err := json.Unmarshal(state, &container); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal container state from %s: %w", statePath, err)
+	return os.WriteFile(file, stateBytes, 0644)
+}
+
+func (c *Container) SaveState() error {
+	failed, failed1 := false, false
+	var err error
+	var err1 error
+	st := c.State()
+	stateInBundle := filepath.Join(c.bundle, defs.MicantainerStateFile)
+	stateInMicranDir := filepath.Join(defs.MicranStateDir, c.ID, defs.MicantainerStateFile)
+
+	if err = saveStateTo(stateInBundle, st); err != nil {
+		failed = true
+		err = fmt.Errorf("failed to save state to <%s>: %w", stateInBundle, err)
+		log.Debugf("failed to save state to <%s>: %v", stateInBundle, err)
 	}
-	return &container, nil
+
+	if err1 = saveStateTo(stateInMicranDir, st); err1 != nil {
+		failed1 = true
+		err1 = fmt.Errorf("failed to save state to <%s>: %w", stateInBundle, err1)
+		log.Debugf("failed to save state to <%s>: %v", stateInMicranDir, err1)
+	}
+
+	if failed1 && failed {
+		return fmt.Errorf("failed to save container state: %w, %w", err, err1)
+	}
+	return nil
 }

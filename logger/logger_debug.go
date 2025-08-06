@@ -16,7 +16,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-const debugFileName = "/tmp/mica/mica-runtime.log"
+const debugFileName = "/tmp/micran/runtime.log"
 
 var (
 	Log = logrus.New()
@@ -174,7 +174,7 @@ func FatalWithCleanup(cleanup func(), args ...interface{}) {
 	Log.Fatal(args...)
 }
 
-// BUG: 
+// BUG:
 // 1. a write-protected dir was created
 // 2. multi-shims share the same log file
 func CleanDebugFile() error {

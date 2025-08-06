@@ -24,7 +24,6 @@ func main() {
 		}
 	}
 
-
 	tasksvc.RegisterPlugin()
 	log.Debugf("args: %s", os.Args)
 	log.Debugf("tasksvc registered")
@@ -44,4 +43,3 @@ func notTaskRequest() bool {
 	}
 	return false
 }
-
