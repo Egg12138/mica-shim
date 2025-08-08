@@ -208,6 +208,8 @@ func getDebugInfoPrefix(depth int) string {
 	if ok {
 		fullFuncName := runtime.FuncForPC(pc_parent).Name()
 		funcName := filepath.Base(fullFuncName)
+		splited := strings.Split(funcName, ".")
+		funcName = splited[len(splited)-1]
 		prefix += fmt.Sprintf(" \033[34m%s()\033[0m --> ", funcName)
 	}
 	pc, _, _, ok := runtime.Caller(depth)

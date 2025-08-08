@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	defs "mica-shim/definitions"
+	"mica-shim/pkg/fileutils"
 	"path/filepath"
 )
 
@@ -52,6 +53,7 @@ type MicaClientConf struct {
 
 func (m *MicaClientConf) Init(cpu uint32, name string, path string, ped string, pedCfg string, debug bool) {
 	m.cpu = cpu
+	name = fileutils.ShortID(name)
 	copy(m.name[:], name)
 	copy(m.path[:], path)
 	copy(m.ped[:], ped)
@@ -89,6 +91,7 @@ func MicaCtl(cmd MicaCommand, client string) (string, error) {
 	if !validSocketPath(defs.MicaCreatSocketPath) {
 		return "", fmt.Errorf("mica socket directory does not exist, please check if micad is running")
 	}
+	client = fileutils.ShortID(client)
 	target := filepath.Join(defs.MicaStateDir, client+".socket")
 	s := newMicaSocket(target)
 	msg := string(cmd)

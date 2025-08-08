@@ -43,6 +43,9 @@
 #define RPMSG_TYPE_PTY 3
 #define RPMSG_TYPE_DEBUG 4
 
+#define INFO(fmt, ...) printf("[INFO] " fmt "\n", ##__VA_ARGS__)
+#define WARN(fmt, ...) printf("!WARN! " fmt "\n", ##__VA_ARGS__)
+
 /* Message format matching mica.py's CreateMsg */
 struct create_msg {
 	uint32_t cpu;
@@ -122,6 +125,8 @@ struct listen_unit {
 /* Function prototypes */
 static void handle_client(int client_fd);
 static void handle_client_ctrl(int client_fd, struct listen_unit *unit);
+static int remove_socket(const char *client_name);
+static void cleanup_listeners(void);
 
 /* RTOS IO Function prototypes */
 static int create_rtos_instance(const char *name, uint32_t cpu_id);
@@ -157,6 +162,7 @@ static void signal_handler(int signum)
 	if (signum == SIGINT || signum == SIGTERM) {
 		printf("\nReceived signal %d, shutting down...\n", signum);
 		is_running = false;
+		cleanup_listeners();
 	}
 }
 
@@ -275,6 +281,10 @@ static void remove_client(const char *name)
 		entry = entry->next;
 	}
 	pthread_mutex_unlock(&client_mutex);
+	if (remove_socket(name)) {
+		WARN("Failed to remove socket for client: %s\n", name);
+
+	}
 }
 
 static int setup_socket(const char *socket_path)
@@ -326,6 +336,26 @@ static int setup_socket(const char *socket_path)
 	}
 
 	return server_fd;
+}
+
+static int remove_socket(const char *client_name)
+{
+	char socket_path[128];
+	snprintf(socket_path, sizeof(socket_path), "%s/%s.socket", SOCKET_DIR, client_name);
+	struct sockaddr_un server_addr;
+	int fd;
+
+	fd = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (fd < 0) {
+		perror("socket creation failed");
+		return -1;
+	}
+	INFO("close fd");
+	close(fd);
+	INFO("unlink socket_path");
+	unlink(socket_path);
+	return 0;
+	
 }
 
 static int create_client_socket(const char *client_name)
@@ -935,25 +965,26 @@ static void handle_client_ctrl(int client_fd, struct listen_unit *unit)
 
 	/* Handle different control commands */
 	if (strncmp(buffer, "start", 5) == 0) {
-		printf("Starting client: %s\n", client_name);
+		INFO("Starting client: %s\n", client_name);
 	} else if (strncmp(buffer, "stop", 4) == 0) {
-		printf("Stopping client: %s\n", client_name);
+		INFO("Stopping client: %s\n", client_name);
 	} else if (strncmp(buffer, "status", 6) == 0) {
-		printf("Getting status for client: %s\n", client_name);
+		INFO("Getting status for client: %s\n", client_name);
 	} else if (strncmp(buffer, "rm", 2) == 0) {
-		printf("Removing client: %s\n", client_name);
+		INFO("Removing client: %s\n", client_name);
 		/* Remove RTOS instance */
 		destroy_rtos_instance(client_name);
 		/* Remove from client list and cleanup */
 		remove_client(client_name);
 		/* The actual socket cleanup happens in the caller */
 	} else {
-		printf("Unknown command for client '%s': %s\n", client_name, buffer);
+		INFO("Unknown command for client '%s': %s\n", client_name, buffer);
 	}
 
 	if (send_response) {
 		safe_send(client_fd, RESPONSE_SUCCESS, strlen(RESPONSE_SUCCESS));
 	}
+	printf(">>");
 }
 
 #ifdef SIMPLE_MODE
@@ -1008,9 +1039,9 @@ static void handle_client(int client_fd)
 
 		/* Check if client already exists */
 		if (client_exists(client_name)) {
-			printf("Client '%s' already exists, do not re-create it\n", client_name);
+			printf("Client '%s' already exists, do not register it\n", client_name);
 			if (send_response) {
-				safe_send(client_fd, RESPONSE_SUCCESS, strlen(RESPONSE_FAILED));
+				safe_send(client_fd, RESPONSE_FAILED, strlen(RESPONSE_FAILED));
 			}
 			return;
 		} else {

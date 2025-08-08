@@ -107,11 +107,11 @@ func getContainerCPULimit(cfg *ContainerConfig) int {
 		cpuQuota: %d, 
 		cpuShares: %d, 
 		cpusetCpus: %s, 
-		`, cfg, cfg.cpuLimit, cfg.cpuPeriod, cfg.cpuQuota, cfg.cpuShares, cfg.cpusetCpus)
+		`,cfg.CpuLimit, cfg.CpuPeriod, cfg.CpuQuota, cfg.CpuShares, cfg.CpusetCpus)
 
 	}
-	if cfg != nil && cfg.cpuLimit > 0 {
-		return min(cfg.cpuLimit, systemCPUs)
+	if cfg != nil && cfg.CpuLimit > 0 {
+		return min(cfg.CpuLimit, systemCPUs)
 	}
 
 	// Default fallback - use all available CPUs but reserve one for host
@@ -130,9 +130,9 @@ func getContainerMemoryLimit(info *ContainerConfig) int64 {
 	systemMemoryBytes := getSystemMemoryBytes()
 
 	// If container has specific memory limit from OCI spec, use it
-	if info != nil && info.memoryLimit > 0 {
-		log.Debugf("Using container memory limit from OCI spec: %d bytes", info.memoryLimit)
-		return min(info.memoryLimit, systemMemoryBytes)
+	if info != nil && info.MemoryLimit > 0 {
+		log.Debugf("Using container memory limit from OCI spec: %d bytes", info.MemoryLimit)
+		return min(info.MemoryLimit, systemMemoryBytes)
 	}
 
 	// Default fallback - use most available memory but reserve some for host
@@ -175,34 +175,34 @@ func getSystemMemoryBytes() int64 {
 // validateResourceLimits validates container resource limits against system constraints
 func validateResourceLimits(config *ContainerConfig) error {
 	// Validate CPU limits
-	if config.cpuLimit > 0 {
+	if config.CpuLimit > 0 {
 		systemCPUs := runtime.NumCPU()
-		if config.cpuLimit > systemCPUs {
-			return fmt.Errorf("container CPU limit %d exceeds system CPU count %d", config.cpuLimit, systemCPUs)
+		if config.CpuLimit > systemCPUs {
+			return fmt.Errorf("container CPU limit %d exceeds system CPU count %d", config.CpuLimit, systemCPUs)
 		}
 	}
 
 	// Validate memory limits
-	if config.memoryLimit > 0 {
+	if config.MemoryLimit > 0 {
 		systemMemory := getSystemMemoryBytes()
-		if config.memoryLimit > systemMemory {
-			return fmt.Errorf("container memory limit %d bytes exceeds system memory %d bytes", config.memoryLimit, systemMemory)
+		if config.MemoryLimit > systemMemory {
+			return fmt.Errorf("container memory limit %d bytes exceeds system memory %d bytes", config.MemoryLimit, systemMemory)
 		}
 	}
 
 	// Validate memory swappiness
-	if config.memorySwappiness != nil && *config.memorySwappiness > 100 {
-		return fmt.Errorf("invalid memory swappiness value %d, must be 0-100", *config.memorySwappiness)
+	if config.MemorySwappiness != nil && *config.MemorySwappiness > 100 {
+		return fmt.Errorf("invalid memory swappiness value %d, must be 0-100", *config.MemorySwappiness)
 	}
 
 	// Validate CPU period constraints (from Linux kernel documentation)
-	if config.cpuPeriod > 0 && (config.cpuPeriod < 1000 || config.cpuPeriod > 1000000) {
-		return fmt.Errorf("invalid CPU period %d, must be between 1000 and 1000000 microseconds", config.cpuPeriod)
+	if config.CpuPeriod > 0 && (config.CpuPeriod < 1000 || config.CpuPeriod > 1000000) {
+		return fmt.Errorf("invalid CPU period %d, must be between 1000 and 1000000 microseconds", config.CpuPeriod)
 	}
 
 	// Validate CPU quota constraints
-	if config.cpuQuota > 0 && config.cpuPeriod > 0 && config.cpuQuota < 1000 {
-		return fmt.Errorf("invalid CPU quota %d, must be at least 1000 microseconds", config.cpuQuota)
+	if config.CpuQuota > 0 && config.CpuPeriod > 0 && config.CpuQuota < 1000 {
+		return fmt.Errorf("invalid CPU quota %d, must be at least 1000 microseconds", config.CpuQuota)
 	}
 
 	return nil
@@ -230,21 +230,21 @@ func formatCPULimit(config *ContainerConfig) string {
 
 	parts := []string{}
 
-	if config.cpuLimit > 0 {
-		parts = append(parts, fmt.Sprintf("limit=%d cores", config.cpuLimit))
+	if config.CpuLimit > 0 {
+		parts = append(parts, fmt.Sprintf("limit=%d cores", config.CpuLimit))
 	}
 
-	if config.cpuQuota > 0 && config.cpuPeriod > 0 {
-		ratio := float64(config.cpuQuota) / float64(config.cpuPeriod)
+	if config.CpuQuota > 0 && config.CpuPeriod > 0 {
+		ratio := float64(config.CpuQuota) / float64(config.CpuPeriod)
 		parts = append(parts, fmt.Sprintf("quota=%.2f cores", ratio))
 	}
 
-	if config.cpuShares > 0 {
-		parts = append(parts, fmt.Sprintf("shares=%d", config.cpuShares))
+	if config.CpuShares > 0 {
+		parts = append(parts, fmt.Sprintf("shares=%d", config.CpuShares))
 	}
 
-	if config.cpusetCpus != "" {
-		parts = append(parts, fmt.Sprintf("cpuset=%s", config.cpusetCpus))
+	if config.CpusetCpus != "" {
+		parts = append(parts, fmt.Sprintf("cpuset=%s", config.CpusetCpus))
 	}
 
 	if len(parts) == 0 {
@@ -262,27 +262,27 @@ func formatMemoryLimit(config *ContainerConfig) string {
 
 	parts := []string{}
 
-	if config.memoryLimit > 0 {
-		parts = append(parts, fmt.Sprintf("limit=%s", formatBytes(config.memoryLimit)))
+	if config.MemoryLimit > 0 {
+		parts = append(parts, fmt.Sprintf("limit=%s", formatBytes(config.MemoryLimit)))
 	}
 
-	if config.memoryReservation > 0 {
-		parts = append(parts, fmt.Sprintf("reservation=%s", formatBytes(config.memoryReservation)))
+	if config.MemoryReservation > 0 {
+		parts = append(parts, fmt.Sprintf("reservation=%s", formatBytes(config.MemoryReservation)))
 	}
 
-	if config.memorySwap > 0 {
-		parts = append(parts, fmt.Sprintf("swap=%s", formatBytes(config.memorySwap)))
+	if config.MemorySwap > 0 {
+		parts = append(parts, fmt.Sprintf("swap=%s", formatBytes(config.MemorySwap)))
 	}
 
-	if config.memoryKernel > 0 {
-		parts = append(parts, fmt.Sprintf("kernel=%s", formatBytes(config.memoryKernel)))
+	if config.MemoryKernel > 0 {
+		parts = append(parts, fmt.Sprintf("kernel=%s", formatBytes(config.MemoryKernel)))
 	}
 
-	if config.memorySwappiness != nil {
-		parts = append(parts, fmt.Sprintf("swappiness=%d", *config.memorySwappiness))
+	if config.MemorySwappiness != nil {
+		parts = append(parts, fmt.Sprintf("swappiness=%d", *config.MemorySwappiness))
 	}
 
-	if config.oomKillDisable {
+	if config.OomKillDisable {
 		parts = append(parts, "oom-kill=disabled")
 	}
 
@@ -357,10 +357,10 @@ func allocCPUWithLimit(ncpu int, config *ContainerConfig) (int, error) {
 	}
 
 	// Handle cpuset.cpus if specified
-	if config != nil && config.CpusetCpus() != "" {
+	if config != nil && config.CpusetCpus != "" {
 		// For now, log the cpuset requirement but use simple allocation
 		// TODO: Implement proper cpuset.cpus parsing and allocation
-		log.Infof("Container specifies cpuset.cpus: %s", config.CpusetCpus())
+		log.Infof("Container specifies cpuset.cpus: %s", config.CpusetCpus)
 	}
 
 	// Simple round-robin allocation based on current time within the allowed range
@@ -572,8 +572,12 @@ func validBundleRootfs(containerID, bundlePath string) (string, error) {
 	// always mkdir rootfs inside bundle, whatever containerd use externalrootfs or not
 	rootfs := filepath.Join(resolved, "rootfs")
 	fileInfo, err = os.Stat(rootfs)
-	if !fileInfo.IsDir() {
-		log.Infof("default rootfs path '%s' is not a directory, use external rootfs instead", rootfs)
+
+	if err != nil && !os.IsNotExist(err) {
+		log.Warnf("failed to stat rootfs")
+	}
+	if !fileInfo.IsDir() || os.IsNotExist(err) {
+		log.Warnf("rootfs path under '%s' is not a directory", resolved)
 	}
 
 	if err := setInternalRootfs(resolved); err != nil {

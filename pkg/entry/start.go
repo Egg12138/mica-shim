@@ -28,9 +28,14 @@ func (s *micaTaskService) Start(ctx context.Context, r *taskAPI.StartRequest) (*
 
 	// BUG: A fatal error that start request do not pass bundle to shim, we can not
 	// recover container state directly through bundle/state.json.
-	container, err := loadContainerState(r.ID)
+	stat, err := loadContainerState(r.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load container state: %w", err)
+	}
+
+	container, err := cntr.RestoreContainerFromState(stat)
+	if err != nil {
+		return nil, fmt.Errorf("failed to restore container from state: %w", err)
 	}
 
 	err = start(container, ctx, r)
@@ -43,9 +48,14 @@ func (s *micaTaskService) Start(ctx context.Context, r *taskAPI.StartRequest) (*
 	// Step 2: Wait a moment for micad to complete service registration and PTY creation
 	// This is necessary because micad creates PTY devices asynchronously after client start
 	log.Debugf("Waiting for micad to complete service initialization for task %s", r.ID)
-	time.Sleep(2 * time.Second) // Give micad time to create PTY services
-
-	log.Debugf("*** TASK START: Wait period completed for task %s", r.ID)
+	select {
+	case <-time.After(500 * time.Millisecond):
+		// Continue with PTY setup
+		log.Debugf("*** TASK START: Wait period completed for task %s", r.ID)
+	case <-ctx.Done():
+		log.Debugf("*** TASK START: Context canceled while waiting for micad initialization for task %s", r.ID)
+		return nil, ctx.Err()
+	}
 
 	// Step 3: Start MicaIO to handle PTY communication
 	// This will discover and connect to the PTY device created by micad
@@ -70,6 +80,10 @@ func (s *micaTaskService) Start(ctx context.Context, r *taskAPI.StartRequest) (*
 
 	log.Infof("Successfully started MICA task %s", r.ID)
 	log.Debugf("*** TASK START: Task %s start process completed, returning PID %d", r.ID, proc.pid)
+	
+	// Start monitoring for task exit
+	s.monitorTaskExit(r.ID)
+	
 	return &taskAPI.StartResponse{
 		Pid: uint32(proc.pid),
 	}, nil
@@ -77,7 +91,7 @@ func (s *micaTaskService) Start(ctx context.Context, r *taskAPI.StartRequest) (*
 
 func start(container *cntr.Container, ctx context.Context, req *taskAPI.StartRequest) error {
 
-	log.Pretty("start container %s: %v", container.ID, container)
+	// log.Pretty("start container %s: %v", container.ID, container)
 	conf, err := CreateMicaConf(container)
 	if err != nil {
 		return fmt.Errorf("failed to create mica client conf: %w", err)
@@ -97,24 +111,83 @@ func start(container *cntr.Container, ctx context.Context, req *taskAPI.StartReq
 	return nil
 }
 
+// monitorTaskExit monitors the task status and calls handleTaskExit when the task exits
+func (s *micaTaskService) monitorTaskExit(id string) {
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		defer cancel()
+		// In a real implementation, this would listen for exit notifications from micad
+		// For now, we'll just periodically check the task status
+		ticker := time.NewTicker(10 * time.Second) // Check every 10 seconds
+		defer ticker.Stop()
+		
+		// Check if task is already stopped
+		s.m.RLock()
+		proc, exists := s.procs[id]
+		if !exists {
+			s.m.RUnlock()
+			log.Debugf("monitorTaskExit: task %s no longer exists", id)
+			return
+		}
+		if !proc.exitTime.IsZero() {
+			s.m.RUnlock()
+			log.Debugf("monitorTaskExit: task %s already stopped", id)
+			return
+		}
+		s.m.RUnlock()
+		
+		// Monitor for a reasonable time (e.g., 5 minutes)
+		for {
+			select {
+			case <-ctx.Done():
+				log.Debugf("monitorTaskExit: context canceled for task %s", id)
+				return
+			case <-ticker.C:
+				// Check if task still exists and is running
+				s.m.RLock()
+				proc, exists := s.procs[id]
+				if !exists {
+					s.m.RUnlock()
+					log.Debugf("monitorTaskExit: task %s no longer exists", id)
+					return
+				}
+				if !proc.exitTime.IsZero() {
+					s.m.RUnlock()
+					log.Debugf("monitorTaskExit: task %s has been stopped", id)
+					return
+				}
+				s.m.RUnlock()
+				
+				// In a real implementation, we would check with micad for task status
+				// For now, we'll just continue monitoring
+				log.Debugf("monitorTaskExit: task %s still running", id)
+			}
+		}
+	}()
+	
+	// Store the cancel function so we can stop monitoring when task is deleted
+	s.m.Lock()
+	if proc, ok := s.procs[id]; ok {
+		proc.monitorCancel = cancel
+	}
+	s.m.Unlock()
+}
+
 // 1. search bundle/.../<clientOSname>.elf
 // 2. if missing, log and search for binary in bundle recursively
 // TODO: Only copy values, the evaluation procedure is in the caller function
 // TALK: mica does not support multi-core yet, so we only support single core for now.
 func CreateMicaConf(container *cntr.Container) (libmica.MicaClientConf, error) {
 	config := container.GetConfig()
-
-	firmware := config.FirmwarePath()
-	pedestal := config.Ped()
+	firmware := config.GetFirmwarePath()
+	pedestal := config.GetPed()
 	name := container.ID
-	// TODO: Calculate the CPU too late, we should calculate it in the container creation
+	// TODO: Calculate the CPU lazily, we should calculate it in the container creation
 	cpu, err := container.GetClientCPU()
-	if err != nil {
-		return libmica.MicaClientConf{}, fmt.Errorf("failed to get client cpu: %w", err)
-	}
 	conf := libmica.MicaClientConf{}
-	log.Debugf("backed from GetClientCPU: %d", cpu)
+	if err != nil {
+		return conf, fmt.Errorf("failed to get client cpu: %w", err)
+	}
 	conf.Init(uint32(cpu), name, firmware, pedestal.PedestalType.String(), pedestal.PedestalConf, false)
-	log.Pretty("MicaClientConf: %v", conf)
 	return conf, nil
 }

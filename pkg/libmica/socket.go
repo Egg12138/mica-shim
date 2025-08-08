@@ -29,12 +29,10 @@ func validSocketPath(socketPath string) bool {
 }
 
 func newMicaSocket(socketPath string) *micaSocket {
-	log.Debug("Creating new MicaSocket")
 	return &micaSocket{socketPath: socketPath}
 }
 
 func (ms *micaSocket) connect() error {
-	log.Debug("Connecting to MicaSocket")
 	conn, err := net.Dial("unix", ms.socketPath)
 	if err != nil {
 		log.Error("Failed to connect to MicaSocket", "error: ", err)
@@ -71,7 +69,6 @@ func (ms *micaSocket) rx() (string, error) {
 
 	for {
 		n, err := ms.conn.Read(buf)
-		log.Debugf("Received %d bytes chunk from %s", n, ms.conn.RemoteAddr())
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 				return "", errors.New("timeout while waiting for micad response")
@@ -84,7 +81,6 @@ func (ms *micaSocket) rx() (string, error) {
 		}
 
 		responseBuffer += string(buf[:n])
-		log.Debugf("Complete Response buffer: %s", responseBuffer)
 
 		if strings.Contains(responseBuffer, defs.MicaFailed) {
 			parts := strings.Split(responseBuffer, defs.MicaFailed)
@@ -110,13 +106,11 @@ func (ms *micaSocket) rx() (string, error) {
 // Because mica daemon print clients information by its own format, which is not
 // compatible with containerd
 func (ms *micaSocket) handleMsg(msg []byte) (string, error) {
-	log.Debugf("Handling message with socket: %s", ms.socketPath)
 
 	if err := ms.connect(); err != nil {
 		return "", fmt.Errorf("failed to connect to socket: %v", err)
 	}
 	defer func() {
-		log.Debugf("Closing socket: %s\n", ms.socketPath)
 		ms.close()
 	}()
 
@@ -125,7 +119,6 @@ func (ms *micaSocket) handleMsg(msg []byte) (string, error) {
 	}
 
 	response, err := ms.rx()
-	log.Debugf("Received response: %s, error: %v", response, err)
 	if err != nil {
 		return "", fmt.Errorf("failed to receive response: %v", err)
 	}

@@ -4,12 +4,10 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"time"
 
 	defs "mica-shim/definitions"
 	cntr "mica-shim/pkg/container"
 
-	"mica-shim/pkg/libmica"
 	core "mica-shim/pkg/oci"
 
 	taskAPI "github.com/containerd/containerd/api/runtime/task/v2"
@@ -22,8 +20,8 @@ import (
 func newTaskService(ss shutdown.Service) (*micaTaskService, error) {
 	s := &micaTaskService{
 		// procs:     make(Micantainers, 1),
-		procs:     make(initProcByTaskID, 1),
-		ss:        ss,
+		procs: make(initProcByTaskID, 1),
+		ss:    ss,
 	}
 
 	sockAddr, err := shim.ReadAddress("address")
@@ -59,25 +57,26 @@ type initProcByTaskID map[string]*initProcess
 // initProcess encapsulates information about an init (parent) process.
 // TODO: handle the init process, there it is just a placeholder
 // TALK: init process **represent** the process in RTOS
-type initProcess struct {
-	// TALK: for one rtos container, make agent process(in Linux) as the init process?
-	pid        int
-	doneCtx    context.Context
-	exitTime   time.Time
-	exitStatus int
-	stdout     string
-	micaIO     *libmica.MicaIO // IO handler for PTY communication
-}
+// type initProcess struct {
+// 	// TALK: for one rtos container, make agent process(in Linux) as the init process?
+// 	pid        int
+// 	doneCtx    context.Context
+// 	doneCancel context.CancelFunc
+// 	exitTime   time.Time
+// 	exitStatus int
+// 	stdout     string
+// 	micaIO     *libmica.MicaIO // IO handler for PTY communication
+// }
 
 // deprecated: will be removed, replaced by shimService
 // micaTaskService is an implementation of a containerd taskAPI.TaskService
 // which prints the current time at regular intervals.
 type micaTaskService struct {
-	m     sync.RWMutex
+	m sync.RWMutex
 	// procs Micantainers
 	procs map[string]*initProcess
 	// namespace string
-	ss        shutdown.Service
+	ss shutdown.Service
 }
 
 type shimService struct {
