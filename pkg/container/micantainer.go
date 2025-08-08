@@ -12,7 +12,6 @@ import (
 
 	defs "mica-shim/definitions"
 	log "mica-shim/logger"
-	"mica-shim/pkg/fileutils"
 	"mica-shim/pkg/libmica"
 	oci "mica-shim/pkg/oci"
 
@@ -139,40 +138,39 @@ func parseConfigINI(bundle string) (map[string]string, error) {
 // This includes OCI spec, MICA-specific configurations, and runtime state
 type ContainerConfig struct {
 	// OCI Specification
-	Spec specs.Spec
+	Spec specs.Spec `json:"spec"`
 
 	// Bundle information
-	Bundle string
-	Type   ContainerType
-	Detach bool
+	Bundle string        `json:"bundle"`
+	Type   ContainerType `json:"type"`
+	Detach bool          `json:"detach"`
 
-	// BUG: overlapped fields: remove MicaConf, leaving extracted MicaLabels and extraLabels
+	// BUG: overlapped fields: remove MicaConf, leaving extracted MicaLabels and ExtraLabels
 	// Parsed configuration values
 	// Firmware and pedestal
 	// MICA-specific configurations from client.conf
-	extraLabels  map[string]string
-	relativePath string // relative firmware path to the bundle
-	pedestalType PedType
-	pedestalConf string
-	os           string
-	ncpu         int // requested CPU count (default = 1)
+	ExtraLabels  map[string]string `json:"extra_labels"`
+	RelativePath string            `json:"relative_path"`
+	PedestalType PedType           `json:"pedestal_type"`
+	PedestalConf string            `json:"pedestal_conf"`
+	OS           string            `json:"os"`
+	NCpu         int               `json:"ncpu"` // requested CPU count (default = 1)
 
-	cpuLimit   int    // CPU limit from OCI spec
-	cpusetCpus string // cpuset.cpus specification
-	cpuShares  uint64 // CPU shares (relative weight)
-	cpuQuota   int64  // CPU quota in microseconds
-	cpuPeriod  uint64 // CPU period in microseconds
+	CpuLimit   int    `json:"cpu_limit"`   // CPU limit from OCI spec
+	CpusetCpus string `json:"cpuset_cpus"` // cpuset.cpus specification
+	CpuShares  uint64 `json:"cpu_shares"`  // CPU shares (relative weight)
+	CpuQuota   int64  `json:"cpu_quota"`   // CPU quota in microseconds
+	CpuPeriod  uint64 `json:"cpu_period"`  // CPU period in microseconds
 
 	// Memory resource limits from OCI spec
-	memoryLimit       int64   // Memory limit in bytes
-	memoryReservation int64   // Memory soft limit in bytes
-	memorySwap        int64   // Memory + swap limit in bytes
-	memoryKernel      int64   // Kernel memory limit in bytes
-	memorySwappiness  *uint64 // Memory swappiness (0-100)
-	oomKillDisable    bool    // Whether to disable OOM killer
+	MemoryLimit       int64   `json:"memory_limit"`       // Memory limit in bytes
+	MemoryReservation int64   `json:"memory_reservation"` // Memory soft limit in bytes
+	MemorySwap        int64   `json:"memory_swap"`        // Memory + swap limit in bytes
+	MemoryKernel      int64   `json:"memory_kernel"`      // Kernel memory limit in bytes
+	MemorySwappiness  *uint64 `json:"memory_swappiness"`  // Memory swappiness (0-100)
+	OomKillDisable    bool    `json:"oom_kill_disable"`   // Whether to disable OOM killer
 
-	// Runtime state
-	cpu int // allocated CPU (-1 if not allocated)
+	cpu int  // allocated CPU (-1 if not allocated) after stat loaded
 
 	mu sync.RWMutex
 }
@@ -246,12 +244,17 @@ type SandboxState struct {
 }
 
 type Container struct {
-	bundle   string
+	// dynamic fields
 	exitTime time.Time
-	ID       string
 	io       *libmica.MicaIO
 	exitCode uint32
+
+	// states:
+	// static fields
+	bundle  string
+	ID      string
 	// int32: RUNNING, STOPPED, PAUSED, PAUSING, CREATED, UNKNOWN...
+	// preset static fields
 	status task.Status
 	cType  ContainerType
 	config *ContainerConfig // single source of configuration truth
@@ -284,27 +287,27 @@ func parseContainerConfig(bundle string, ocispec specs.Spec, cType ContainerType
 		Detach: detach,
 
 		// MICA configuration
-		extraLabels: make(map[string]string),
+		ExtraLabels: make(map[string]string),
 
 		// Initialize with defaults
-		relativePath: "",
-		pedestalType: Unknown,
-		pedestalConf: "",
-		os:           "",
-		ncpu:         1,
-		cpuLimit:     0,
-		cpusetCpus:   "",
-		cpuShares:    0,
-		cpuQuota:     0,
-		cpuPeriod:    0,
+		RelativePath: "",
+		PedestalType: Unknown,
+		PedestalConf: "",
+		OS:           "",
+		NCpu:         1,
+		CpuLimit:     0,
+		CpusetCpus:   "",
+		CpuShares:    0,
+		CpuQuota:     0,
+		CpuPeriod:    0,
 
 		// Memory defaults
-		memoryLimit:       0,
-		memoryReservation: 0,
-		memorySwap:        0,
-		memoryKernel:      0,
-		memorySwappiness:  nil,
-		oomKillDisable:    false,
+		MemoryLimit:       0,
+		MemoryReservation: 0,
+		MemorySwap:        0,
+		MemoryKernel:      0,
+		MemorySwappiness:  nil,
+		OomKillDisable:    false,
 
 		cpu: -1, // not allocated yet
 
@@ -331,9 +334,9 @@ func parseContainerConfig(bundle string, ocispec specs.Spec, cType ContainerType
 	}
 
 	// Set default OS if not specified
-	if config.os == "" {
+	if config.OS == "" {
 		log.Warn("os is not set, default to zephyr")
-		config.os = "zephyr"
+		config.OS = "zephyr"
 	}
 
 	log.Infof("Container resource limits - CPU: %s, Memory: %s",
@@ -368,7 +371,10 @@ type Mount struct {
 func NewContainer(id, bundle string, rootfs []*types.Mount, terminal bool) (_ *Container, retErr error) {
 	detach := !terminal
 	spec, err := loadSpec(bundle)
-	rtConfig, err := getRuntimeConfig(&spec)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load oci spec: %w", err)
+	}
+	rtConfig, err := getRuntimeConfig(spec)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load runtime config: %w", err)
 	}
@@ -379,9 +385,6 @@ func NewContainer(id, bundle string, rootfs []*types.Mount, terminal bool) (_ *C
 	// TALK: act like kata?
 	// runtimeConfig, err := parseRuntimeConfig(r, spec.Annotations)
 
-	if err != nil {
-		return nil, fmt.Errorf("failed to load container spec: %w", err)
-	}
 	ctype, err := getContainerType(&spec)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get container type: %w", err)
@@ -478,11 +481,11 @@ func (r *ContainerConfig) parseMicaLabels(labels map[string]string) error {
 	for k, v := range labels {
 		switch k {
 		case defs.Firmware:
-			r.relativePath = filepath.Join("rootfs", v)
+			r.RelativePath = filepath.Join("rootfs", v)
 		case defs.Pedestal:
-			r.pedestalType = ParsePedType(v)
+			r.PedestalType = ParsePedType(v)
 		case defs.PedestalConf:
-			r.pedestalConf = v
+			r.PedestalConf = v
 		case defs.OS:
 			if v == "" {
 				return fmt.Errorf("missing os label")
@@ -490,23 +493,23 @@ func (r *ContainerConfig) parseMicaLabels(labels map[string]string) error {
 			if !validOS(v) {
 				return fmt.Errorf("invalid os label: %s", v)
 			}
-			r.os = v
+			r.OS = v
 		case defs.Ncpu:
-			r.ncpu = getNcpu(v)
+			r.NCpu = getNcpu(v)
 		default:
 			if strings.HasPrefix(k, prefix) {
-				r.extraLabels[k] = v
+				r.ExtraLabels[k] = v
 			}
 		}
 	}
 	log.Debugf(`parsed mica client conf: 
 		relativePath = %s,
-		pedestalType = %s,
-		pedestalConf = %s,
+		PedestalType = %s,
+		PedestalConf = %s,
 		os = %s,
 		ncpu = %d,
 		:: extra mappings = %v
-	`, r.relativePath, r.pedestalType, r.pedestalConf, r.os, r.ncpu, r.extraLabels)
+	`, r.RelativePath, r.PedestalType, r.PedestalConf, r.OS, r.NCpu, r.ExtraLabels)
 	return nil
 }
 
@@ -521,23 +524,23 @@ func (r *ContainerConfig) parseOCICPUResources(spec *specs.Spec) error {
 
 	// Parse CPU quota and period to get CPU limit
 	if cpu.Quota != nil && cpu.Period != nil && *cpu.Period > 0 {
-		r.cpuQuota = *cpu.Quota
-		r.cpuPeriod = *cpu.Period
+		r.CpuQuota = *cpu.Quota
+		r.CpuPeriod = *cpu.Period
 		cpuLimit := int(*cpu.Quota / int64(*cpu.Period))
 		if cpuLimit > 0 {
-			r.cpuLimit = cpuLimit
+			r.CpuLimit = cpuLimit
 			log.Debugf("Parsed CPU limit from quota/period: %d (quota: %d, period: %d)", cpuLimit, *cpu.Quota, *cpu.Period)
 		}
 	}
 
 	if cpu.Shares != nil {
-		r.cpuShares = *cpu.Shares
+		r.CpuShares = *cpu.Shares
 		log.Debugf("Parsed CPU shares: %d", *cpu.Shares)
 	}
 
 	if cpu.Cpus != "" {
-		r.cpusetCpus = cpu.Cpus
-		log.Debugf("Parsed cpuset.cpus: %s", r.cpusetCpus)
+		r.CpusetCpus = cpu.Cpus
+		log.Debugf("Parsed cpuset.cpus: %s", r.CpusetCpus)
 	}
 
 	// Parse realtime CPU constraints if present
@@ -559,26 +562,26 @@ func (r *ContainerConfig) parseOCIMemoryResources(spec *specs.Spec) error {
 
 	// Parse memory limit
 	if memory.Limit != nil {
-		r.memoryLimit = *memory.Limit
+		r.MemoryLimit = *memory.Limit
 		log.Debugf("Parsed memory limit: %d bytes", *memory.Limit)
 	}
 
 	// Parse memory reservation (soft limit)
 	if memory.Reservation != nil {
-		r.memoryReservation = *memory.Reservation
+		r.MemoryReservation = *memory.Reservation
 		log.Debugf("Parsed memory reservation: %d bytes", *memory.Reservation)
 	}
 
 	// Parse memory + swap limit
 	if memory.Swap != nil {
-		r.memorySwap = *memory.Swap
+		r.MemorySwap = *memory.Swap
 		log.Debugf("Parsed memory swap limit: %d bytes", *memory.Swap)
 	}
 
 	// Parse kernel memory limit
 	if cgroupV1() {
 		if memory.Kernel != nil {
-			r.memoryKernel = *memory.Kernel
+			r.MemoryKernel = *memory.Kernel
 			log.Debugf("Parsed kernel memory limit: %d bytes", *memory.Kernel)
 		}
 	}
@@ -586,13 +589,13 @@ func (r *ContainerConfig) parseOCIMemoryResources(spec *specs.Spec) error {
 	// Parse memory swappiness
 	if memory.Swappiness != nil {
 		swappiness := uint64(*memory.Swappiness)
-		r.memorySwappiness = &swappiness
+		r.MemorySwappiness = &swappiness
 		log.Debugf("Parsed memory swappiness: %d", *memory.Swappiness)
 	}
 
 	// Parse OOM killer disable flag
 	if memory.DisableOOMKiller != nil {
-		r.oomKillDisable = *memory.DisableOOMKiller
+		r.OomKillDisable = *memory.DisableOOMKiller
 		log.Debugf("Parsed OOM killer disable: %v", *memory.DisableOOMKiller)
 	}
 
@@ -625,54 +628,54 @@ func parseiSuladContainerConfig(bundle string) (*ContainerConfig, error) {
 
 // **************** Setters and Getters ****************
 
-func (r *ContainerConfig) FirmwarePath() string {
+func (r *ContainerConfig) GetFirmwarePath() string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	log.Debugf("relative FirmwarePath: %s", r.relativePath)
-	return r.relativePath
+	log.Debugf("relative FirmwarePath: %s", r.RelativePath)
+	return r.RelativePath
 }
 
 // Pedestal returns the pedestal information
-func (r *ContainerConfig) Ped() *Pedestal {
+func (r *ContainerConfig) GetPed() *Pedestal {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return &Pedestal{
-		PedestalType: r.pedestalType,
-		PedestalConf: r.pedestalConf,
+		PedestalType: r.PedestalType,
+		PedestalConf: r.PedestalConf,
 	}
 }
 
 // PedestalType returns the pedestal type
-func (r *ContainerConfig) PedestalType() PedType {
+func (r *ContainerConfig) GetPedestalType() PedType {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.pedestalType
+	return r.PedestalType
 }
 
 // PedestalConf returns the pedestal configuration
-func (r *ContainerConfig) PedestalConf() string {
+func (r *ContainerConfig) GetPedestalConf() string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.pedestalConf
+	return r.PedestalConf
 }
 
-func (r *ContainerConfig) OS() string {
+func (r *ContainerConfig) GetOS() string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.os
+	return r.OS
 }
 
 // GetCompatibility returns compatibility information for a specific component
 func (r *ContainerConfig) Compatibility(component string) string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.extraLabels[defs.Compat]
+	return r.ExtraLabels[defs.Compat]
 }
 
 func (r *ContainerConfig) GetAllLabelsRef() *map[string]string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	labels := &r.extraLabels
+	labels := &r.ExtraLabels
 	return labels
 }
 
@@ -681,81 +684,12 @@ func (r *ContainerConfig) cpuUnset() bool {
 	return r.cpu == -1
 }
 
-// CPULimit returns the effective CPU limit for this container
-func (r *ContainerConfig) CPULimit() int {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.cpuLimit
-}
-
-// CpusetCpus returns the cpuset.cpus specification
-func (r *ContainerConfig) CpusetCpus() string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.cpusetCpus
-}
-
-// CPUShares returns the CPU shares (relative weight)
-func (r *ContainerConfig) CPUShares() uint64 {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.cpuShares
-}
-
-// CPUQuota returns the CPU quota in microseconds
-func (r *ContainerConfig) CPUQuota() int64 {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.cpuQuota
-}
-
-// CPUPeriod returns the CPU period in microseconds
-func (r *ContainerConfig) CPUPeriod() uint64 {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.cpuPeriod
-}
-
-// MemoryLimit returns the memory limit in bytes
-func (r *ContainerConfig) MemoryLimit() int64 {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.memoryLimit
-}
-
-// MemoryReservation returns the memory soft limit in bytes
-func (r *ContainerConfig) MemoryReservation() int64 {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.memoryReservation
-}
-
-// MemorySwap returns the memory + swap limit in bytes
-func (r *ContainerConfig) MemorySwap() int64 {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.memorySwap
-}
-
-// MemoryKernel returns the kernel memory limit in bytes
-func (r *ContainerConfig) MemoryKernel() int64 {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.memoryKernel
-}
-
-// MemorySwappiness returns the memory swappiness setting (0-100)
-func (r *ContainerConfig) MemorySwappiness() *uint64 {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.memorySwappiness
-}
-
-// OOMKillDisable returns whether OOM killer is disabled
-func (r *ContainerConfig) OOMKillDisable() bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.oomKillDisable
+type State struct {
+	Bundle  string           `json:"bundle"`
+	ID      string           `json:"id"`
+	Status  task.Status      `json:"status"`
+	CType   ContainerType    `json:"c_type"`
+	Config  *ContainerConfig `json:"config"`
 }
 
 func (c *Container) SetStatus(status task.Status) {
@@ -766,23 +700,13 @@ func (c *Container) Status() task.Status {
 	return c.status
 }
 
-type State struct {
-	ID      string      `json:"id"`
-	ShortID string      `json:"short_id"`
-	Status  task.Status `json:"status"`
-	Bundle  string      `json:"bundle"`
-	Ped     string      `json:"ped"`
-	OS      string      `json:"os"`
-}
-
 func (c *Container) State() *State {
 	s := &State{
 		ID:      c.ID,
 		Status:  c.status,
 		Bundle:  c.bundle,
-		Ped:     c.config.PedestalType().String(),
-		OS:      c.config.OS(),
-		ShortID: fileutils.ShortID(c.ID),
+		CType:   c.cType,
+		Config:  c.config,
 	}
 	return s
 }
@@ -798,9 +722,9 @@ func (c *Container) State() *State {
 //	cpu: int; allocated CPU (-1 if not allocated)
 func (c *Container) validMicaContainer() bool {
 
-	osValid := validOS(c.config.OS())
-	fwValid := validFirmware(c.bundle, c.config.FirmwarePath())
-	pedValid := hostPedMatched(c.config.Ped())
+	osValid := validOS(c.config.GetOS())
+	fwValid := validFirmware(c.bundle, c.config.GetFirmwarePath())
+	pedValid := hostPedMatched(c.config.GetPed())
 	compatValid := validCompatibility(c.config)
 	judge := osValid && fwValid && pedValid && compatValid
 
@@ -820,7 +744,7 @@ func (c *Container) GetConfig() *ContainerConfig {
 
 func (c *Container) allocClientCPU() error {
 	// Use container-specific CPU limit instead of global HostMaxCPU
-	cpu, err := allocCPUWithLimit(c.config.ncpu, c.config)
+	cpu, err := allocCPUWithLimit(c.config.NCpu, c.config)
 	if err != nil {
 		return err
 	}
@@ -838,25 +762,7 @@ func (c *Container) GetClientCPU() (int, error) {
 	return c.config.cpu, nil
 }
 
-// FUTURE: configure runtime from :
-// 1. annotation
-// 2. config file
-func getRuntimeConfig(ocispec *specs.Spec) (*oci.RuntimeConfig, error) {
-	// Parse runtime configuration from OCI spec annotations
-	runtimeConfig := oci.ParseRuntimeConfig(ocispec.Annotations)
-
-	log.Pretty("Parsed runtime config: %v", runtimeConfig)
-	return runtimeConfig, nil
-}
-
-func saveStateTo(file string, state *State) error {
-	stateBytes, err := json.Marshal(state)
-	if err != nil {
-		return fmt.Errorf("failed to marshal container state: %w", err)
-	}
-	return os.WriteFile(file, stateBytes, 0644)
-}
-
+// Container::<static fields>
 func (c *Container) SaveState() error {
 	failed, failed1 := false, false
 	var err error
@@ -881,4 +787,59 @@ func (c *Container) SaveState() error {
 		return fmt.Errorf("failed to save container state: %w, %w", err, err1)
 	}
 	return nil
+}
+
+// FUTURE: configure runtime from :
+// 1. annotation
+// 2. config file
+func getRuntimeConfig(ocispec specs.Spec) (*oci.RuntimeConfig, error) {
+	// Parse runtime configuration from OCI spec annotations
+	runtimeConfig := oci.ParseRuntimeConfig(ocispec.Annotations)
+
+	log.Pretty("Parsed runtime config: %v", runtimeConfig)
+	return runtimeConfig, nil
+}
+
+func saveStateTo(file string, state *State) error {
+	log.Debugf("save state %v", state)
+	stateBytes, err := json.Marshal(state)
+	if err != nil {
+		return fmt.Errorf("failed to marshal container state: %w", err)
+	}
+	return os.WriteFile(file, stateBytes, 0644)
+}
+
+func RestoreContainerFromState(state *State) (*Container, error) {
+	bundle := state.Bundle
+	id := state.ID
+	status := state.Status
+	cType := state.CType
+	config := state.Config
+	config.cpu = -1
+	log.Debugf("restored container from state %v", state)
+	container := &Container{
+		exitTime: time.Time{},
+		exitCode: 0,
+		io:       nil,
+		bundle:  bundle,
+		ID:      id,
+		status:  status,
+		cType:   cType,
+		config:  config,
+	}
+	return container, nil
+
+}
+
+func LoadStateFromDir(baseDir string) (*State, error) {
+	var state State
+	statePath := filepath.Join(baseDir, defs.MicantainerStateFile)
+	stateBytes, err := os.ReadFile(statePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read container state from %s: %w", statePath, err)
+	}
+	if err := json.Unmarshal(stateBytes, &state); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal container state from %s: %w", statePath, err)
+	}
+	return &state, nil
 }

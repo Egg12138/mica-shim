@@ -168,9 +168,18 @@ func (*manager) Start(ctx context.Context, containerID string, opts shim.StartOp
 
 	// NOTICE: cmd.Process is the process of the shim, which we should handle properly
 	go func() {
-		if err := cmd.Wait(); err != nil {
-			if _, ok := err.(*exec.ExitError); !ok {
-				log.G(ctx).WithError(err).Errorf("failed to wait for shim process %d", cmd.Process.Pid)
+		select {
+		case <-ctx.Done():
+			log.G(ctx).Debugf("context canceled while waiting for shim process %d", cmd.Process.Pid)
+		case err := <-func() chan error {
+			ch := make(chan error, 1)
+			go func() { ch <- cmd.Wait() }()
+			return ch
+		}():
+			if err != nil {
+				if _, ok := err.(*exec.ExitError); !ok {
+					log.G(ctx).WithError(err).Errorf("failed to wait for shim process %d", cmd.Process.Pid)
+				}
 			}
 		}
 	}()

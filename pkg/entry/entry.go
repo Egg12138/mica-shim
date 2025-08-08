@@ -21,10 +21,12 @@ package entry
 import (
 	"context"
 	"fmt"
+	"mica-shim/pkg/fileutils"
 	"mica-shim/pkg/libmica"
 	"os"
 	"sync"
 	"syscall"
+	"time"
 
 	log "mica-shim/logger"
 
@@ -50,6 +52,20 @@ type MicaContainer struct {
 	m          sync.RWMutex
 }
 
+type initProcess struct {
+	pid           int
+	exitTime      time.Time
+	exitStatus    int
+	stdout        string
+	stderr        string
+	doneCtx       context.Context
+	doneCancel    context.CancelFunc
+	micaIO        *libmica.MicaIO
+	lifecycleCtx  context.Context
+	lifecycleCancel context.CancelFunc
+	monitorCancel context.CancelFunc
+}
+
 // Delete deletes a task.
 func (s *micaTaskService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*taskAPI.DeleteResponse, error) {
 
@@ -65,6 +81,16 @@ func (s *micaTaskService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) 
 		return nil, errdefs.ToGRPCf(errdefs.ErrFailedPrecondition, "init process %d is not done yet", client.pid)
 	}
 
+	// Cancel lifecycle context to stop any pending operations
+	if client.lifecycleCancel != nil {
+		client.lifecycleCancel()
+	}
+	
+	// Cancel monitoring context
+	if client.monitorCancel != nil {
+		client.monitorCancel()
+	}
+	
 	// Clean up MicaIO resources
 	if client.micaIO != nil {
 		if err := client.micaIO.Close(); err != nil {
@@ -76,7 +102,22 @@ func (s *micaTaskService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) 
 	response, err := libmica.MicaCtl(libmica.MRemove, r.ID)
 	log.Debugf("delete id:%s execid:%s response:%s; mica error: %v", r.ID, r.ExecID, response, err)
 
-	delete(s.procs, r.ID)
+	if err != nil {
+		log.Errorf("delete id:%s execid:%s - failed to send remove command to micad: %v", r.ID, r.ExecID, err)
+		return nil, fmt.Errorf("failed to remove task: %w", err)
+	}
+
+	if !success(response) {
+		log.Errorf("delete id:%s execid:%s - micad returned failure: %s", r.ID, r.ExecID, response)
+		return nil, fmt.Errorf("micad failed to remove task: %s", response)
+	}
+
+	log.Debugf("delete id:%s execid:%s - successfully removed task from micad", r.ID, r.ExecID)
+
+	// delete(s.procs, r.ID)
+	if err := fileutils.RemoveExternalStatFile(r.ID); err != nil {
+		log.Errorf("failed to remove external state file: %v", err)
+	}
 
 	return &taskAPI.DeleteResponse{
 		Pid:        uint32(client.pid),
@@ -138,13 +179,44 @@ func (s *micaTaskService) Kill(ctx context.Context, r *taskAPI.KillRequest) (*pt
 	s.m.RLock()
 	defer s.m.RUnlock()
 
-	response, err := libmica.MicaCtl(libmica.MStop, r.ID)
-	log.Debugf("kill id:%s execid:%s response:%s; mica error: %v", r.ID, r.ExecID, response, err)
-
 	proc, ok := s.procs[r.ID]
 	if !ok {
 		return nil, fmt.Errorf("task not created: %w", errdefs.ErrNotFound)
 	}
+
+	if !proc.exitTime.IsZero() {
+		log.Debugf("kill id:%s execid:%s - task already stopped", r.ID, r.ExecID)
+		return &ptypes.Empty{}, nil
+	}
+
+	response, err := libmica.MicaCtl(libmica.MStop, r.ID)
+	log.Debugf("kill id:%s execid:%s response:%s; mica error: %v", r.ID, r.ExecID, response, err)
+
+	if err != nil {
+		log.Errorf("kill id:%s execid:%s - failed to send stop command to micad: %v", r.ID, r.ExecID, err)
+		return nil, fmt.Errorf("failed to stop task: %w", err)
+	}
+
+	if !success(response) {
+		log.Errorf("kill id:%s execid:%s - micad returned failure: %s", r.ID, r.ExecID, response)
+		return nil, fmt.Errorf("micad failed to stop task: %s", response)
+	}
+
+	log.Debugf("kill id:%s execid:%s - successfully sent stop command to micad", r.ID, r.ExecID)
+
+	// Mark the task as exited when killed
+	// In a real implementation, this would be done when micad notifies us of the actual exit
+	// For now, we'll simulate this by calling handleTaskExit directly
+	go func() {
+		// Give micad a moment to process the stop command
+		select {
+		case <-time.After(100 * time.Millisecond):
+			log.Debugf("goroutine in kill() - calling handleTaskExit for id:%s", r.ID)
+			s.handleTaskExit(r.ID, int(r.Signal))
+		case <-proc.lifecycleCtx.Done():
+			log.Debugf("kill delayed exit canceled for task %s", r.ID)
+		}
+	}()
 
 	if proc.pid > 0 {
 		p, _ := os.FindProcess(proc.pid)
@@ -153,7 +225,7 @@ func (s *micaTaskService) Kill(ctx context.Context, r *taskAPI.KillRequest) (*pt
 		if err := p.Signal(syscall.Signal(0)); err == nil {
 			sig := syscall.Signal(r.Signal)
 			if err := p.Signal(sig); err != nil {
-				return nil, fmt.Errorf("sending %s to init process: %w", sig, err)
+				log.Warnf("failed to send signal %s to init process %d: %v", sig, proc.pid, err)
 			}
 		}
 	}
@@ -221,40 +293,57 @@ func (*micaTaskService) Update(ctx context.Context, r *taskAPI.UpdateTaskRequest
 	return nil, errdefs.ErrNotImplemented
 }
 
+
+func (s *micaTaskService) handleTaskExit(id string, exitCode int) {
+	log.Debugf("handleTaskExit id:%s exitCode:%d", id, exitCode)
+	s.m.Lock()
+	log.Debugf("handleTaskExit fetched lock")
+	defer s.m.Unlock()
+	if proc, ok := s.procs[id]; ok {
+		proc.exitTime = time.Now()
+		proc.exitStatus = exitCode
+		if proc.doneCancel != nil {
+			proc.doneCancel()
+		}
+	}
+}
+
 // Wait waits for a process to exit while attached to a task.
 func (s *micaTaskService) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*taskAPI.WaitResponse, error) {
 	log.Debugf("wait id:%s execid:%s", r.ID, r.ExecID)
-
-	doneCtx, err := func() (context.Context, error) {
-		s.m.RLock()
-		defer s.m.RUnlock()
-		proc, ok := s.procs[r.ID]
-		if !ok {
-			return nil, fmt.Errorf("task not created: %w", errdefs.ErrNotFound)
-		}
-		return proc.doneCtx, nil
-	}()
-	if err != nil {
-		return nil, err
-	}
-
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-doneCtx.Done():
-	}
-
+	
 	s.m.RLock()
-	defer s.m.RUnlock()
 	proc, ok := s.procs[r.ID]
 	if !ok {
+		s.m.RUnlock()
 		return nil, fmt.Errorf("task was removed: %w", errdefs.ErrNotFound)
 	}
-
-	return &taskAPI.WaitResponse{
-		ExitStatus: uint32(proc.exitStatus),
-		ExitedAt:   protobuf.ToTimestamp(proc.exitTime),
-	}, nil
+	
+	// Check if already exited
+	if !proc.exitTime.IsZero() {
+		s.m.RUnlock()
+		return &taskAPI.WaitResponse{
+			ExitStatus: uint32(proc.exitStatus),
+			ExitedAt:   protobuf.ToTimestamp(proc.exitTime),
+		}, nil
+	}
+	s.m.RUnlock()
+	
+	// Use the proc's doneCtx for waiting
+	select {
+	case <-proc.doneCtx.Done():
+		log.Debugf("selected done")
+		// Make sure we have the lock when accessing proc fields
+		s.m.RLock()
+		defer s.m.RUnlock()
+		return &taskAPI.WaitResponse{
+			ExitStatus: uint32(proc.exitStatus),
+			ExitedAt:   protobuf.ToTimestamp(proc.exitTime),
+		}, nil
+	case <-ctx.Done():
+		log.Debugf("ctx done(timeout)")
+		return nil, ctx.Err()
+	}
 }
 
 // taskAPI for shimService

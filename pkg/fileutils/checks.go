@@ -27,10 +27,19 @@ func ValidContainerID(id string) error {
 	return nil
 }
 
-func ShortID(id string) string {
+// Truncated the original hash is good at collision resistance
+func truncateID(id string) string {
 	idBytes := []byte(id)
 	if len(idBytes) > MAX_ID_LENGTH {
 		idBytes = idBytes[:MAX_ID_LENGTH]
 	}
 	return string(idBytes)
+}
+
+func IdMatched(longID string, shortID string) bool {
+	return truncateID(longID) == shortID
+}
+
+func ShortID(id string) string {
+	return truncateID(id)
 }
