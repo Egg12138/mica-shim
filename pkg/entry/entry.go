@@ -53,17 +53,19 @@ type MicaContainer struct {
 }
 
 type initProcess struct {
-	pid           int
-	exitTime      time.Time
-	exitStatus    int
-	stdout        string
-	stderr        string
-	doneCtx       context.Context
-	doneCancel    context.CancelFunc
-	micaIO        *libmica.MicaIO
-	lifecycleCtx  context.Context
+	pid             int
+	exitTime        time.Time
+	exitStatus      int
+	stdout          string
+	stderr          string
+	doneCtx         context.Context
+	doneCancel      context.CancelFunc
+	micaIO          *libmica.MicaIO
+	lifecycleCtx    context.Context
 	lifecycleCancel context.CancelFunc
-	monitorCancel context.CancelFunc
+	monitorCancel   context.CancelFunc
+	startupCtx      context.Context
+	startupCancel   context.CancelFunc
 }
 
 // Delete deletes a task.
@@ -172,9 +174,25 @@ func (*micaTaskService) Pause(ctx context.Context, r *taskAPI.PauseRequest) (*pt
 	return nil, errdefs.ErrNotImplemented
 }
 
+func req2start(r *taskAPI.ResumeRequest, execID string) *taskAPI.StartRequest {
+	st := taskAPI.StartRequest{
+		ID: r.ID,
+		ExecID: execID,
+	}
+	return &st
+}
+
+
+
 // NOTICE: mica does not provide pause/resume feature
-func (*micaTaskService) Resume(ctx context.Context, r *taskAPI.ResumeRequest) (*ptypes.Empty, error) {
-	return nil, errdefs.ErrNotImplemented
+func (s *micaTaskService) Resume(ctx context.Context, r *taskAPI.ResumeRequest) (*ptypes.Empty, error) {
+	st := req2start(r, "")
+	resp, err := s.Start(ctx, st)
+	if err != nil {
+		return nil, err
+	}
+	log.Debugf("current agent is = %d", resp.Pid)
+	return &ptypes.Empty{}, nil
 }
 
 // Kill kills a process.
@@ -312,7 +330,6 @@ func (*micaTaskService) Update(ctx context.Context, r *taskAPI.UpdateTaskRequest
 	return nil, errdefs.ErrNotImplemented
 }
 
-
 func (s *micaTaskService) handleTaskExit(id string, exitCode int) {
 	log.Debugf("handleTaskExit id:%s exitCode:%d", id, exitCode)
 	s.m.Lock()
@@ -324,20 +341,23 @@ func (s *micaTaskService) handleTaskExit(id string, exitCode int) {
 		if proc.doneCancel != nil {
 			proc.doneCancel()
 		}
+		if proc.startupCancel != nil {
+			proc.startupCancel()
+		}
 	}
 }
 
 // Wait waits for a process to exit while attached to a task.
 func (s *micaTaskService) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*taskAPI.WaitResponse, error) {
 	log.Debugf("wait id:%s execid:%s", r.ID, r.ExecID)
-	
+
 	s.m.RLock()
 	proc, ok := s.procs[r.ID]
 	if !ok {
 		s.m.RUnlock()
 		return nil, fmt.Errorf("task was removed: %w", errdefs.ErrNotFound)
 	}
-	
+
 	// Check if already exited
 	if !proc.exitTime.IsZero() {
 		s.m.RUnlock()
@@ -347,9 +367,18 @@ func (s *micaTaskService) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*ta
 		}, nil
 	}
 	s.m.RUnlock()
-	
-	// Use the proc's doneCtx for waiting
+
+	// Wait for either task startup completion or actual exit
+	// startupCtx is cancelled when task initialization is complete
+	// doneCtx is cancelled when task actually exits
 	select {
+	case <-proc.startupCtx.Done():
+		log.Debugf("selected startupCtx.Done()")
+		// Task initialization is complete, return immediately
+		return &taskAPI.WaitResponse{
+			ExitStatus: 0, // Task is running, so exit status is 0
+			ExitedAt:   protobuf.ToTimestamp(time.Time{}),
+		}, nil
 	case <-proc.doneCtx.Done():
 		log.Debugf("selected done")
 		// Make sure we have the lock when accessing proc fields

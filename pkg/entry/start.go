@@ -50,7 +50,6 @@ func (s *micaTaskService) Start(ctx context.Context, r *taskAPI.StartRequest) (*
 	log.Debugf("Waiting for micad to complete service initialization for task %s", r.ID)
 	select {
 	case <-time.After(500 * time.Millisecond):
-		// Continue with PTY setup
 		log.Debugf("*** TASK START: Wait period completed for task %s", r.ID)
 	case <-ctx.Done():
 		log.Debugf("*** TASK START: Context canceled while waiting for micad initialization for task %s", r.ID)
@@ -80,10 +79,28 @@ func (s *micaTaskService) Start(ctx context.Context, r *taskAPI.StartRequest) (*
 
 	log.Infof("Successfully started MICA task %s", r.ID)
 	log.Debugf("*** TASK START: Task %s start process completed, returning PID %d", r.ID, proc.pid)
-	
+
 	// Start monitoring for task exit
 	s.monitorTaskExit(r.ID)
-	
+
+	// For RTOS tasks, we need to signal that the task initialization is complete
+	// This prevents containerd from getting stuck waiting for task readiness
+	// We'll signal the startupCtx after a short delay to indicate the task is ready
+	go func() {
+		// Give a moment for everything to settle and PTY to be ready
+		time.Sleep(300 * time.Millisecond)
+		log.Debugf("*** TASK START: Task %s initialization complete, signaling readiness", r.ID)
+
+		// Signal that the task has successfully started and is ready
+		// This is important for containerd to know that the task is running
+		s.m.Lock()
+		if proc, exists := s.procs[r.ID]; exists && proc.startupCancel != nil {
+			proc.startupCancel()
+			log.Debugf("*** TASK START: Successfully signaled task readiness for %s", r.ID)
+		}
+		s.m.Unlock()
+	}()
+
 	return &taskAPI.StartResponse{
 		Pid: uint32(proc.pid),
 	}, nil
@@ -120,10 +137,10 @@ func (s *micaTaskService) monitorTaskExit(id string) {
 		// For now, we'll just periodically check the task status
 		ticker := time.NewTicker(10 * time.Second) // Check every 10 seconds
 		defer ticker.Stop()
-		
-		// Check if task is already stopped
+
 		s.m.RLock()
 		proc, exists := s.procs[id]
+		log.Debugf("monitor got lock")
 		if !exists {
 			s.m.RUnlock()
 			log.Debugf("monitorTaskExit: task %s no longer exists", id)
@@ -135,7 +152,7 @@ func (s *micaTaskService) monitorTaskExit(id string) {
 			return
 		}
 		s.m.RUnlock()
-		
+
 		// Monitor for a reasonable time (e.g., 5 minutes)
 		for {
 			select {
@@ -157,14 +174,14 @@ func (s *micaTaskService) monitorTaskExit(id string) {
 					return
 				}
 				s.m.RUnlock()
-				
+
 				// In a real implementation, we would check with micad for task status
 				// For now, we'll just continue monitoring
 				log.Debugf("monitorTaskExit: task %s still running", id)
 			}
 		}
 	}()
-	
+
 	// Store the cancel function so we can stop monitoring when task is deleted
 	s.m.Lock()
 	if proc, ok := s.procs[id]; ok {

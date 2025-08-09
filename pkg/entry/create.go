@@ -73,16 +73,21 @@ func (s *micaTaskService) Create(ctx context.Context, r *taskAPI.CreateTaskReque
 		container := res.container
 		container.SetStatus(task.Status_CREATED)
 		// TODO: proc -> container
-		doneCtx, doneCancel := context.WithCancel(context.Background())
-		// Create lifecycle context
+		// Create startup context - this will be signaled when the task is ready
+		startupCtx, startupCancel := context.WithCancel(context.Background())
+		// Create lifecycle context for actual task management
 		lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
-		
+		// Create done context for proper task exit handling
+		doneCtx, doneCancel := context.WithCancel(context.Background())
+
 		s.procs[r.ID] = &initProcess{
-			pid:           1,
-			doneCtx:       doneCtx,
-			doneCancel:    doneCancel,
-			lifecycleCtx:  lifecycleCtx,
+			pid:             1,
+			doneCtx:         doneCtx,
+			doneCancel:      doneCancel,
+			lifecycleCtx:    lifecycleCtx,
 			lifecycleCancel: lifecycleCancel,
+			startupCtx:      startupCtx,
+			startupCancel:   startupCancel,
 		}
 		return &taskAPI.CreateTaskResponse{
 			Pid: 1,
