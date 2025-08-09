@@ -11,7 +11,7 @@ LABEL org.opencontainer.image.mica.firmware="${FIRMWARE_BUNDLE_PATH}"
 LABEL org.opencontainer.image.mica.pedestal_conf=""
 
 # Necessary for mica runtime to check the pedestal
-LABEL org.opencontainer.image.mica.pedestal="baremetal"
+LABEL org.opencontainer.image.mica.pedestal="xen"
 LABEL org.opencontainer.image.mica.platform_config=""
 LABEL org.opencontainer.image.mica.compatibility.openamp="2023.04+"
 LABEL org.opencontainer.image.mica.compatibility.zephyr="3.7.1"

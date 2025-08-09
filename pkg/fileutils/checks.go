@@ -2,7 +2,10 @@ package fileutils
 
 import (
 	"fmt"
+	defs "mica-shim/definitions"
 	log "mica-shim/logger"
+	"os"
+	"path/filepath"
 	"regexp"
 )
 
@@ -42,4 +45,38 @@ func IdMatched(longID string, shortID string) bool {
 
 func ShortID(id string) string {
 	return truncateID(id)
+}
+
+func FileExist(path string) bool {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true
+	}
+	if os.IsPermission(err) {
+		log.Warnf("permission denied to check file %s", path)
+	}
+	return false
+}
+
+func TypedFileExist(path string, fileType os.FileMode) bool {
+	st, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return st.Mode()&fileType != 0
+}
+
+func ClientSockPath(id string) string {
+	shortId := ShortID(id)
+	sock := filepath.Join(defs.MicaStateDir, shortId+".socket")
+	return sock
+}
+
+// Client exist means the client is registered in in runtime perspective
+// Because MicRan hasn't being a part of the mica daemon, we can not check the
+// existence of the client in mica client lists
+func ClientExist(id string) bool {
+	state := filepath.Join(defs.MicranStateDir, id, defs.MicantainerStateFile)
+	sock := ClientSockPath(id)
+	return FileExist(state) && TypedFileExist(sock, os.ModeSocket)
 }

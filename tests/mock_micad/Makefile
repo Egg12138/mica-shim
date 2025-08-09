@@ -1,10 +1,10 @@
-# Makefile for Enhanced Mock Micad
+# Makefile for Streamlined Mock Micad
 #
-# This builds the mock_micad with RTOS IO simulation support
+# This builds the mock_micad with simplified functionality
 
 CC = gcc
 CFLAGS = -Wall -Wextra -std=gnu99 -O2 -g
-LDFLAGS = -pthread -lrt
+LDFLAGS = -pthread
 
 TARGET = mock_micad
 SRC = mock_micad.c

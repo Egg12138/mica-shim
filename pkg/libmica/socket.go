@@ -6,6 +6,7 @@ import (
 	"fmt"
 	defs "mica-shim/definitions"
 	log "mica-shim/logger"
+	"mica-shim/pkg/fileutils"
 	"net"
 	"os"
 	"strings"
@@ -20,12 +21,8 @@ type micaSocket struct {
 	conn       net.Conn
 }
 
-func validSocketPath(socketPath string) bool {
-	if st, err := os.Stat(socketPath); err != nil {
-		return false
-	} else {
-		return st.Mode()&os.ModeSocket != 0
-	}
+func validSocket(socketPath string) bool {
+	return fileutils.TypedFileExist(socketPath, os.ModeSocket)
 }
 
 func newMicaSocket(socketPath string) *micaSocket {
@@ -105,8 +102,9 @@ func (ms *micaSocket) rx() (string, error) {
 // TODO: We need to manually fetch information from managed clients
 // Because mica daemon print clients information by its own format, which is not
 // compatible with containerd
-func (ms *micaSocket) handleMsg(msg []byte) (string, error) {
+func (ms *micaSocket) handleMicaMsg(msg []byte) (string, error) {
 
+	log.Debugf("handleMicaMsg %s", string(msg))
 	if err := ms.connect(); err != nil {
 		return "", fmt.Errorf("failed to connect to socket: %v", err)
 	}

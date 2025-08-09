@@ -85,12 +85,12 @@ func (s *micaTaskService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) 
 	if client.lifecycleCancel != nil {
 		client.lifecycleCancel()
 	}
-	
+
 	// Cancel monitoring context
 	if client.monitorCancel != nil {
 		client.monitorCancel()
 	}
-	
+
 	// Clean up MicaIO resources
 	if client.micaIO != nil {
 		if err := client.micaIO.Close(); err != nil {
@@ -98,21 +98,25 @@ func (s *micaTaskService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) 
 		}
 	}
 
-	// NOTICE: remove in runtime first, then stop the client rtos
-	response, err := libmica.MicaCtl(libmica.MRemove, r.ID)
-	log.Debugf("delete id:%s execid:%s response:%s; mica error: %v", r.ID, r.ExecID, response, err)
+	if !fileutils.ClientExist(r.ID) {
+		log.Debugf("delete id:%s execid:%s - client does not exist, assuming already removed", r.ID, r.ExecID)
+	} else {
+		// NOTICE: remove in runtime first, then stop the client rtos
+		response, err := libmica.MicaCtl(libmica.MRemove, r.ID)
+		log.Debugf("delete id:%s execid:%s response:%s; mica error: %v", r.ID, r.ExecID, response, err)
 
-	if err != nil {
-		log.Errorf("delete id:%s execid:%s - failed to send remove command to micad: %v", r.ID, r.ExecID, err)
-		return nil, fmt.Errorf("failed to remove task: %w", err)
+		if err != nil {
+			log.Errorf("delete id:%s execid:%s - failed to send remove command to micad: %v", r.ID, r.ExecID, err)
+			return nil, fmt.Errorf("failed to remove task: %w", err)
+		}
+
+		if !success(response) {
+			log.Errorf("delete id:%s execid:%s - micad returned failure: %s", r.ID, r.ExecID, response)
+			return nil, fmt.Errorf("micad failed to remove task: %s", response)
+		}
+
+		log.Debugf("delete id:%s execid:%s - successfully removed task from micad", r.ID, r.ExecID)
 	}
-
-	if !success(response) {
-		log.Errorf("delete id:%s execid:%s - micad returned failure: %s", r.ID, r.ExecID, response)
-		return nil, fmt.Errorf("micad failed to remove task: %s", response)
-	}
-
-	log.Debugf("delete id:%s execid:%s - successfully removed task from micad", r.ID, r.ExecID)
 
 	// delete(s.procs, r.ID)
 	if err := fileutils.RemoveExternalStatFile(r.ID); err != nil {
@@ -189,11 +193,26 @@ func (s *micaTaskService) Kill(ctx context.Context, r *taskAPI.KillRequest) (*pt
 		return &ptypes.Empty{}, nil
 	}
 
+	// Check if client exists before attempting to stop it
+	if !fileutils.ClientExist(r.ID) {
+		log.Debugf("kill id:%s execid:%s - client does not exist, assuming already stopped", r.ID, r.ExecID)
+		// Mark the task as exited since it doesn't exist
+		go func() {
+			select {
+			case <-time.After(100 * time.Millisecond):
+				log.Debugf("goroutine in kill() - calling handleTaskExit for non-existent client id:%s", r.ID)
+				s.handleTaskExit(r.ID, int(r.Signal))
+			case <-proc.lifecycleCtx.Done():
+				log.Debugf("kill delayed exit canceled for non-existent task %s", r.ID)
+			}
+		}()
+		return &ptypes.Empty{}, nil
+	}
+
 	response, err := libmica.MicaCtl(libmica.MStop, r.ID)
-	log.Debugf("kill id:%s execid:%s response:%s; mica error: %v", r.ID, r.ExecID, response, err)
 
 	if err != nil {
-		log.Errorf("kill id:%s execid:%s - failed to send stop command to micad: %v", r.ID, r.ExecID, err)
+		log.Debugf("kill id:%s execid:%s response:%s; mica error: %v", r.ID, r.ExecID, response, err)
 		return nil, fmt.Errorf("failed to stop task: %w", err)
 	}
 

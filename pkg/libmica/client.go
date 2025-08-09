@@ -5,8 +5,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	defs "mica-shim/definitions"
-	"mica-shim/pkg/fileutils"
-	"path/filepath"
+	log "mica-shim/logger"
+	utils "mica-shim/pkg/fileutils"
 )
 
 type MicaCommand string
@@ -53,7 +53,7 @@ type MicaClientConf struct {
 
 func (m *MicaClientConf) Init(cpu uint32, name string, path string, ped string, pedCfg string, debug bool) {
 	m.cpu = cpu
-	name = fileutils.ShortID(name)
+	name = utils.ShortID(name)
 	copy(m.name[:], name)
 	copy(m.path[:], path)
 	copy(m.ped[:], ped)
@@ -84,18 +84,26 @@ func (m *MicaClientConf) pack() []byte {
 // MicaCreate creates a new mica client; while MicaCtl is used to control the mica client
 func MicaCreate(config MicaClientConf) (string, error) {
 	s := newMicaSocket(defs.MicaCreatSocketPath)
-	return s.handleMsg(config.pack())
+	return s.handleMicaMsg(config.pack())
 }
 
 func MicaCtl(cmd MicaCommand, client string) (string, error) {
-	if !validSocketPath(defs.MicaCreatSocketPath) {
-		return "", fmt.Errorf("mica socket directory does not exist, please check if micad is running")
+	if !validSocket(defs.MicaCreatSocketPath) {
+		return "", fmt.Errorf("mica daemon socket does not exist, please check if micad is running")
 	}
-	client = fileutils.ShortID(client)
-	target := filepath.Join(defs.MicaStateDir, client+".socket")
+	log.Debugf("client %s %s", client, cmd)
+
+	// Check if client exists BEFORE attempting to connect to the socket
+	if !utils.ClientExist(client) && (cmd == MRemove || cmd == MStop) {
+		log.Debugf("client %s does not exist, assuming already %s", client, cmd)
+		return defs.MicaSuccess, nil
+	}
+
+	target := utils.ClientSockPath(client)
 	s := newMicaSocket(target)
 	msg := string(cmd)
-	return s.handleMsg([]byte(msg))
+
+	return s.handleMicaMsg([]byte(msg))
 }
 
 // NewMicaCreateMsg creates a properly initialized micaCreateMsg
@@ -109,7 +117,7 @@ func CreateMicaClient(conf MicaClientConf) (string, error) {
 	s := newMicaSocket(defs.MicaCreatSocketPath)
 	// we do not deref s here, because it is dropped in handleMsg()
 	msg := conf.pack()
-	return s.handleMsg(msg)
+	return s.handleMicaMsg(msg)
 }
 
 func StartMicaClient(conf MicaClientConf) (string, error) {
