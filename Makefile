@@ -112,8 +112,8 @@ build-containerd-client:
 
 mock-micad:
 	@echo "🎭 Building and running mock_micad..."
-	cd tests/mock_micad && make
-	${BUILD_DIRS}/mock_micad
+	cd tests/mock_micad && make clean && make
+	./tests/mock_micad/mock_micad
 
 fmt:
 	go fmt ./...

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	defs "mica-shim/definitions"
 	log "mica-shim/logger"
+	"mica-shim/pkg/fileutils"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -107,7 +108,7 @@ func getContainerCPULimit(cfg *ContainerConfig) int {
 		cpuQuota: %d, 
 		cpuShares: %d, 
 		cpusetCpus: %s, 
-		`,cfg.CpuLimit, cfg.CpuPeriod, cfg.CpuQuota, cfg.CpuShares, cfg.CpusetCpus)
+		`, cfg.CpuLimit, cfg.CpuPeriod, cfg.CpuQuota, cfg.CpuShares, cfg.CpusetCpus)
 
 	}
 	if cfg != nil && cfg.CpuLimit > 0 {
@@ -436,10 +437,15 @@ func walkDir(dir string) string {
 }
 
 func detectXen() int {
-	if _, err := os.Stat("/proc/xen"); err != nil {
-		return 0
+	score := 0
+	
+	// TODO: add more checks
+	if fileutils.FileExist("/sys/bus/xen-backend") {
+		score += 1
 	}
-	return 1
+	if defs.IsDebug { score += 1 }
+	log.Debugf("score: %d", score)
+	return score
 }
 
 func detectJailhouse() int {
@@ -495,22 +501,25 @@ func detectBaremetal() int {
 // TODO: mark this information a host-level config, the "guessing" only needs once
 // 'Guess' what pedestal the host is on
 func hostPed() PedType {
-	// weights := []int{detectXen(), detectJailhouse(), detectBaremetal()}
-	weights := []int{detectBaremetal(), detectJailhouse(), detectXen()}
-	index := 1*weights[Baremetal] + 2*weights[Jailhouse] + 3*weights[Xen] - 1
-	if index < 0 || index > 2 {
-		return Unknown
+	if detectXen() > 0 {
+		return Xen
 	}
-	return PedType(index)
+
+	if detectJailhouse() > 0 || detectBaremetal() > 0 {
+		log.Warnf("Openamp(baremetal) and Jailhouse are not supported for Mica OCI runtime workflow, build mcs image with Xen")
+	}
+
+	return Unsupported
 }
 
 // Currently, one host only support one pedestal type.
 func hostPedMatched(ped *Pedestal) bool {
-	ret := HostPedestalType == ped.PedestalType
-	if defs.IsDebug {
-		return true
+	log.Debugf("hostPedMatched: HostPedestalType = %s, ped.PedestalType = %s", HostPedestalType, ped.PedestalType)
+	if HostPedestalType != Xen {
+		log.Warnf("HostPedestalType is only allowed to be Xen, got %s", HostPedestalType)
+		return false
 	}
-	return ret
+	return HostPedestalType == ped.PedestalType
 }
 
 func fileExists(path string) bool {
