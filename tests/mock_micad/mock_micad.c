@@ -80,7 +80,7 @@ static int create_mock_pty(const char *pty_path)
     }
 
     // Write initial content to the PTY file
-    fprintf(pty, "Dummy PTY output from /tmp/ttyRPMSG%s\n", strrchr(pty_path, '/') + 1);
+    fprintf(pty, "First line of dummy PTY output from /tmp/ttyRPMSG%s\n", strrchr(pty_path, '/') + 1);
     fclose(pty);
     
     // Set appropriate permissions
@@ -90,6 +90,99 @@ static int create_mock_pty(const char *pty_path)
     }
     
     INFO("Mock PTY file created: %s\n", pty_path);
+    return 0;
+}
+
+// Function to append random output to the mock PTY file
+static void *mock_pty_output_thread(void *arg)
+{
+    char *pty_path = (char *)arg;
+    FILE *pty;
+    char buffer[256];
+    int counter = 0;
+    
+    // Keep running while the main program is running
+    while (is_running) {
+        // Open the PTY file in append mode
+        pty = fopen(pty_path, "a");
+        if (!pty) {
+            WARN("Failed to open mock PTY for appending: %s", pty_path);
+            break;
+        }
+        
+        // Generate some random output
+        time_t now = time(NULL);
+        struct tm *tm_info = localtime(&now);
+        char timestamp[64];
+        strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", tm_info);
+        
+        // Write different types of output randomly
+        int type = rand() % 4;
+        switch (type) {
+            case 0:
+                snprintf(buffer, sizeof(buffer), "[%s] System message %d\n", timestamp, counter++);
+                break;
+            case 1:
+                snprintf(buffer, sizeof(buffer), "[%s] User input simulated: CMD_%d\n", timestamp, counter++);
+                break;
+            case 2:
+                snprintf(buffer, sizeof(buffer), "[%s] Debug info: value=%d\n", timestamp, rand() % 1000);
+                break;
+            case 3:
+                snprintf(buffer, sizeof(buffer), "[%s] Status update: running\n", timestamp);
+                break;
+        }
+        
+        fprintf(pty, "%s", buffer);
+        fclose(pty);
+        
+        // Sleep for a random interval between 1 and 5 seconds
+        int sleep_time = 1 + (rand() % 5);
+        sleep(sleep_time);
+    }
+    
+    free(pty_path);
+    return NULL;
+}
+
+// Modified function to start the output thread after creating the PTY
+static int create_mock_pty_with_output(const char *pty_name)
+{
+    char *pty_path = malloc(128);
+    if (!pty_path) {
+        WARN("Failed to allocate memory for PTY path");
+        return -1;
+    }
+    
+    snprintf(pty_path, 128, "/tmp/ttyRPMSG%s", pty_name);
+    
+    // Create the initial PTY file
+    if (create_mock_pty(pty_path) < 0) {
+        free(pty_path);
+        return -1;
+    }
+    
+    // Create a thread to generate continuous output
+    pthread_t output_thread;
+    char *thread_arg = strdup(pty_path);
+    if (!thread_arg) {
+        WARN("Failed to allocate memory for thread argument");
+        free(pty_path);
+        return -1;
+    }
+    
+    if (pthread_create(&output_thread, NULL, mock_pty_output_thread, thread_arg) != 0) {
+        WARN("Failed to create PTY output thread for: %s", pty_name);
+        free(thread_arg);
+        free(pty_path);
+        return -1;
+    }
+    
+    // Detach the thread so it cleans up automatically
+    pthread_detach(output_thread);
+    
+    INFO("Mock PTY output thread started for: %s", pty_name);
+    free(pty_path);
     return 0;
 }
 
@@ -388,7 +481,9 @@ static int add_listener(const char *name, const char *socket_path, bool is_creat
     }
 
     strncpy(unit->name, name, MAX_NAME_LEN - 1);
+    unit->name[MAX_NAME_LEN - 1] = '\0';
     strncpy(unit->socket_path, socket_path, sizeof(unit->socket_path) - 1);
+    unit->socket_path[sizeof(unit->socket_path) - 1] = '\0';
     unit->socket_fd = server_fd;
     unit->is_create_socket = is_create_socket;
 
@@ -398,6 +493,23 @@ static int add_listener(const char *name, const char *socket_path, bool is_creat
     pthread_mutex_unlock(&listener_mutex);
 
     return 0;
+}
+
+// Function to check if the main socket still exists and recreate it if needed
+static void check_and_recreate_main_socket() {
+    struct stat st;
+    
+    // Check if the main socket still exists
+    if (stat(SOCKET_PATH, &st) != 0 || !S_ISSOCK(st.st_mode)) {
+        WARN("Main socket missing or corrupted: %s", SOCKET_PATH);
+        
+        // Try to recreate it
+        if (add_listener("mica-create", SOCKET_PATH, true) < 0) {
+            WARN("Failed to recreate main socket: %s", SOCKET_PATH);
+        } else {
+            INFO("Successfully recreated main socket: %s", SOCKET_PATH);
+        }
+    }
 }
 
 static void cleanup_listeners(void)
@@ -510,12 +622,9 @@ static void handle_client(int client_fd)
         
         if (create_ret == 0) {
             register_client(client_name);
-            char pty_path[128];
-            snprintf(pty_path, sizeof(pty_path), "/tmp/ttyRPMSG%s", client_name);
-            INFO("create mock pty: %s", pty_path);
             
-            // Create the mock PTY and check for success
-            if (create_mock_pty(pty_path) < 0) {
+            // Create the mock PTY with continuous output and check for success
+            if (create_mock_pty_with_output(client_name) < 0) {
                 WARN("Failed to create mock PTY for client: %s", client_name);
                 // Continue anyway since this might not be critical for all use cases
             }
@@ -543,6 +652,9 @@ int main(int argc, char *argv[])
 {
     pthread_t thread;
     int opt;
+
+    // Initialize random number generator
+    srand(time(NULL));
 
     while ((opt = getopt(argc, argv, "q")) != -1) {
         switch (opt) {
@@ -575,6 +687,8 @@ int main(int argc, char *argv[])
     printf("Response mode: %s\n", send_response ? "enabled" : "disabled");
 
     while (is_running) {
+        // Periodically check if the main socket still exists
+        check_and_recreate_main_socket();
         sleep(1);
     }
 
