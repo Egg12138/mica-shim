@@ -42,6 +42,8 @@ type McsFS struct {
 type MicaClientConf struct {
 	// scheduled
 	cpu uint32
+	// TODO: add mem limits
+	// mem uint64 
 	// assigned by containerd
 	name [32]byte
 	// relative path in bundle
@@ -51,8 +53,10 @@ type MicaClientConf struct {
 	debug  bool
 }
 
-func (m *MicaClientConf) Init(cpu uint32, name string, path string, ped string, pedCfg string, debug bool) {
+func (m *MicaClientConf) Init(cpu uint32, mem uint64, name string, path string, ped string, pedCfg string, debug bool) {
 	m.cpu = cpu
+	// TODO: add mem limits
+	// m.mem = mem
 	name = utils.ShortID(name)
 	copy(m.name[:], name)
 	copy(m.path[:], path)
@@ -62,18 +66,27 @@ func (m *MicaClientConf) Init(cpu uint32, name string, path string, ped string, 
 }
 
 func (m *MicaClientConf) pack() []byte {
-	buf := make([]byte, 4+32+128+32+128+1) // Total: 325 bytes
+	buf := make([]byte, 4+32+128+32+128+1) // Total: 333 bytes
+	// buf := make([]byte, 4+8+32+128+32+128+1) // Total: 333 bytes
 
 	binary.LittleEndian.PutUint32(buf[0:4], m.cpu)
+	// binary.LittleEndian.PutUint64(buf[4:12], m.mem)
 	copy(buf[4:36], m.name[:])
 	copy(buf[36:164], m.path[:])
-	copy(buf[164:196], m.ped[:])
+	copy(buf[164:197], m.ped[:])
 	copy(buf[196:324], m.pedcfg[:])
+
+	// copy(buf[12:44], m.name[:])
+	// copy(buf[44:172], m.path[:])
+	// copy(buf[172:204], m.ped[:])
+	// copy(buf[204:332], m.pedcfg[:])
 
 	if m.debug {
 		buf[324] = 1
+		// buf[332] = 1
 	} else {
 		buf[324] = 0
+		// buf[332] = 0
 	}
 
 	return buf
@@ -107,9 +120,9 @@ func MicaCtl(cmd MicaCommand, client string) (string, error) {
 }
 
 // NewMicaCreateMsg creates a properly initialized micaCreateMsg
-func NewMicaCreateMsg(cpu uint32, name string, path string, ped string, pedCfg string, debug bool) MicaClientConf {
+func NewMicaCreateMsg(cpu uint32, mem uint64, name string, path string, ped string, pedCfg string, debug bool) MicaClientConf {
 	msg := MicaClientConf{}
-	msg.Init(cpu, name, path, ped, pedCfg, debug)
+	msg.Init(cpu, mem, name, path, ped, pedCfg, debug)
 	return msg
 }
 

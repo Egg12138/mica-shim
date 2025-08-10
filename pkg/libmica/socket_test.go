@@ -15,6 +15,7 @@ func TestMicaCreate(t *testing.T) {
 
 	config := NewMicaCreateMsg(
 		3,                                // CPU (matches qemu-zephyr-rproc.conf)
+		0,
 		"qemu-zephyr",                    // Name (matches config)
 		"/home/egg/playground/zephr.elf", // Path (matches config)
 		"",                               // Ped (empty)
@@ -83,7 +84,7 @@ func TestDummyCreateMsg(t *testing.T) {
 	fmt.Println("=== Testing DummyCreateMsg ===")
 
 	id := rand.String(10)
-	conf := NewMicaCreateMsg(0, id, "", "", "", false)
+	conf := NewMicaCreateMsg(0, 0, id, "", "", "", false)
 	response, err := CreateMicaClient(conf)
 	if err != nil {
 		t.Errorf("TestCreate failed: %v", err)
@@ -103,7 +104,7 @@ func TestDummyCreateMsg(t *testing.T) {
 func TestMessagePacking(t *testing.T) {
 	fmt.Println("=== Testing Message Packing ===")
 
-	config := NewMicaCreateMsg(3, "qemu-zephyr", "/home/egg/playground/zephr.elf", "", "", false)
+	config := NewMicaCreateMsg(3, 0, "qemu-zephyr", "/home/egg/playground/zephr.elf", "", "", false)
 	packed := config.pack()
 
 	fmt.Printf("Packed message size: %d bytes (expected: 325)\n", len(packed))
@@ -159,7 +160,7 @@ func TestAllPublicFunctions(t *testing.T) {
 		fmt.Printf("Running %s...\n", test.name)
 
 		id := fmt.Sprintf("%x", rand.Int63nRange(0, 1000000000000000000))
-		conf := NewMicaCreateMsg(0, id, "", "", "", false)
+		conf := NewMicaCreateMsg(0, 0, id, "", "", "", false)
 		response, err := test.fn(conf)
 		if err != nil {
 			// Some tests may fail due to missing client sockets, that's okay
@@ -175,7 +176,7 @@ func TestAllPublicFunctions(t *testing.T) {
 
 // Benchmark to compare performance
 func BenchmarkMicaCreate(b *testing.B) {
-	config := NewMicaCreateMsg(3, "qemu-zephyr", "/home/egg/playground/zephr.elf", "", "", false)
+	config := NewMicaCreateMsg(3, 0, "qemu-zephyr", "/home/egg/playground/zephr.elf", "", "", false)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

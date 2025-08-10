@@ -408,6 +408,7 @@ func NewContainer(id, bundle string, rootfs []*types.Mount, terminal bool) (_ *C
 			}
 
 			if err := mount.All(mounts, rootfsPath); err != nil {
+				mount.UnmountMounts(mounts, rootfsPath, 0)
 				return nil, fmt.Errorf("failed to mount rootfs: %w", err)
 			}
 			defer func() {
@@ -699,6 +700,13 @@ func (c *Container) validMicaContainer() bool {
 
 func (c *Container) GetConfig() *ContainerConfig {
 	return c.config
+}
+
+// GetMemoryLimit returns the memory limit in bytes
+func (c *Container) GetMemoryLimit() uint64 {
+	c.config.mu.RLock()
+	defer c.config.mu.RUnlock()
+	return uint64(c.config.MemoryLimit)
 }
 
 func (c *Container) allocClientCPU() error {

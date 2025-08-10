@@ -205,6 +205,9 @@ func CreateMicaConf(container *cntr.Container) (libmica.MicaClientConf, error) {
 	if err != nil {
 		return conf, fmt.Errorf("failed to get client cpu: %w", err)
 	}
-	conf.Init(uint32(cpu), name, firmware, pedestal.PedestalType.String(), pedestal.PedestalConf, false)
+	
+	// Pass memory constraints for future use
+	mem := uint64(config.MemoryLimit)
+	conf.Init(uint32(cpu), mem, name, firmware, pedestal.PedestalType.String(), pedestal.PedestalConf, false)
 	return conf, nil
 }
