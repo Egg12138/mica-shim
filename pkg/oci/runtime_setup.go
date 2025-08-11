@@ -1,4 +1,4 @@
-package core
+package oci
 
 import (
 	defs "mica-shim/definitions"

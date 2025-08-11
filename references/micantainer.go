@@ -1,4 +1,4 @@
-package cntr
+package references
 
 import (
 	"bufio"
@@ -170,30 +170,24 @@ type ContainerConfig struct {
 	MemorySwappiness  *uint64 `json:"memory_swappiness"`  // Memory swappiness (0-100)
 	OomKillDisable    bool    `json:"oom_kill_disable"`   // Whether to disable OOM killer
 
-	cpu int  // allocated CPU (-1 if not allocated) after stat loaded
+	cpu int // allocated CPU (-1 if not allocated) after stat loaded
 
 	mu sync.RWMutex
 }
 
 type PedType int
 
+// openamp and jailhouse are not supported yet
 const (
-	// 0
-	Baremetal PedType = iota
-	// 1
-	Jailhouse
-	// 2
-	Xen
-	Unknown
+	Xen PedType = iota
+	// maybe
+	ACRN
+	Unsupported
 )
 
 // String returns the string representation of PedType
 func (p PedType) String() string {
 	switch p {
-	case Baremetal:
-		return "baremetal"
-	case Jailhouse:
-		return "jailhouse"
 	case Xen:
 		return "xen"
 	default:
@@ -203,14 +197,10 @@ func (p PedType) String() string {
 
 func ParsePedType(s string) PedType {
 	switch strings.ToLower(s) {
-	case "baremetal", "openamp", "":
-		return Baremetal
-	case "jailhouse", "jail":
-		return Jailhouse
-	case "xen":
+	case "xen", "":
 		return Xen
 	default:
-		return Unknown // default to baremetal
+		return Unsupported // default to baremetal
 	}
 }
 
@@ -251,8 +241,8 @@ type Container struct {
 
 	// states:
 	// static fields
-	bundle  string
-	ID      string
+	bundle string
+	ID     string
 	// int32: RUNNING, STOPPED, PAUSED, PAUSING, CREATED, UNKNOWN...
 	// preset static fields
 	status task.Status
@@ -291,7 +281,7 @@ func parseContainerConfig(bundle string, ocispec specs.Spec, cType ContainerType
 
 		// Initialize with defaults
 		RelativePath: "",
-		PedestalType: Unknown,
+		PedestalType: Unsupported,
 		PedestalConf: "",
 		OS:           "",
 		NCpu:         1,
@@ -418,6 +408,7 @@ func NewContainer(id, bundle string, rootfs []*types.Mount, terminal bool) (_ *C
 			}
 
 			if err := mount.All(mounts, rootfsPath); err != nil {
+				mount.UnmountMounts(mounts, rootfsPath, 0)
 				return nil, fmt.Errorf("failed to mount rootfs: %w", err)
 			}
 			defer func() {
@@ -502,21 +493,12 @@ func (r *ContainerConfig) parseMicaLabels(labels map[string]string) error {
 			}
 		}
 	}
-	log.Debugf(`parsed mica client conf: 
-		relativePath = %s,
-		PedestalType = %s,
-		PedestalConf = %s,
-		os = %s,
-		ncpu = %d,
-		:: extra mappings = %v
-	`, r.RelativePath, r.PedestalType, r.PedestalConf, r.OS, r.NCpu, r.ExtraLabels)
 	return nil
 }
 
 // parseOCICPUResources parses CPU resource limits from OCI spec
 func (r *ContainerConfig) parseOCICPUResources(spec *specs.Spec) error {
 	if spec.Linux == nil || spec.Linux.Resources == nil || spec.Linux.Resources.CPU == nil {
-		log.Debugf("No CPU resources specified in OCI spec")
 		return nil
 	}
 
@@ -529,23 +511,19 @@ func (r *ContainerConfig) parseOCICPUResources(spec *specs.Spec) error {
 		cpuLimit := int(*cpu.Quota / int64(*cpu.Period))
 		if cpuLimit > 0 {
 			r.CpuLimit = cpuLimit
-			log.Debugf("Parsed CPU limit from quota/period: %d (quota: %d, period: %d)", cpuLimit, *cpu.Quota, *cpu.Period)
 		}
 	}
 
 	if cpu.Shares != nil {
 		r.CpuShares = *cpu.Shares
-		log.Debugf("Parsed CPU shares: %d", *cpu.Shares)
 	}
 
 	if cpu.Cpus != "" {
 		r.CpusetCpus = cpu.Cpus
-		log.Debugf("Parsed cpuset.cpus: %s", r.CpusetCpus)
 	}
 
 	// Parse realtime CPU constraints if present
 	if cpu.RealtimeRuntime != nil {
-		log.Debugf("Realtime CPU runtime specified: %d", *cpu.RealtimeRuntime)
 	}
 
 	return nil
@@ -554,49 +532,39 @@ func (r *ContainerConfig) parseOCICPUResources(spec *specs.Spec) error {
 // parseOCIMemoryResources parses Memory resource limits from OCI spec
 func (r *ContainerConfig) parseOCIMemoryResources(spec *specs.Spec) error {
 	if spec.Linux == nil || spec.Linux.Resources == nil || spec.Linux.Resources.Memory == nil {
-		log.Debugf("No Memory resources specified in OCI spec")
+		log.Warn("No Memory resources specified in OCI spec")
 		return nil
 	}
 
 	memory := spec.Linux.Resources.Memory
 
-	// Parse memory limit
 	if memory.Limit != nil {
 		r.MemoryLimit = *memory.Limit
-		log.Debugf("Parsed memory limit: %d bytes", *memory.Limit)
 	}
 
-	// Parse memory reservation (soft limit)
 	if memory.Reservation != nil {
 		r.MemoryReservation = *memory.Reservation
-		log.Debugf("Parsed memory reservation: %d bytes", *memory.Reservation)
 	}
 
-	// Parse memory + swap limit
 	if memory.Swap != nil {
 		r.MemorySwap = *memory.Swap
-		log.Debugf("Parsed memory swap limit: %d bytes", *memory.Swap)
 	}
 
-	// Parse kernel memory limit
+	// Deal with the deprecated field
 	if cgroupV1() {
 		if memory.Kernel != nil {
 			r.MemoryKernel = *memory.Kernel
-			log.Debugf("Parsed kernel memory limit: %d bytes", *memory.Kernel)
+			log.Infof("Supported only in cgruopv1; parsed kernel memory limit: %d bytes", *memory.Kernel)
 		}
 	}
 
-	// Parse memory swappiness
 	if memory.Swappiness != nil {
 		swappiness := uint64(*memory.Swappiness)
 		r.MemorySwappiness = &swappiness
-		log.Debugf("Parsed memory swappiness: %d", *memory.Swappiness)
 	}
 
-	// Parse OOM killer disable flag
 	if memory.DisableOOMKiller != nil {
 		r.OomKillDisable = *memory.DisableOOMKiller
-		log.Debugf("Parsed OOM killer disable: %v", *memory.DisableOOMKiller)
 	}
 
 	return nil
@@ -631,7 +599,6 @@ func parseiSuladContainerConfig(bundle string) (*ContainerConfig, error) {
 func (r *ContainerConfig) GetFirmwarePath() string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	log.Debugf("relative FirmwarePath: %s", r.RelativePath)
 	return r.RelativePath
 }
 
@@ -685,11 +652,11 @@ func (r *ContainerConfig) cpuUnset() bool {
 }
 
 type State struct {
-	Bundle  string           `json:"bundle"`
-	ID      string           `json:"id"`
-	Status  task.Status      `json:"status"`
-	CType   ContainerType    `json:"c_type"`
-	Config  *ContainerConfig `json:"config"`
+	Bundle string           `json:"bundle"`
+	ID     string           `json:"id"`
+	Status task.Status      `json:"status"`
+	CType  ContainerType    `json:"c_type"`
+	Config *ContainerConfig `json:"config"`
 }
 
 func (c *Container) SetStatus(status task.Status) {
@@ -702,24 +669,16 @@ func (c *Container) Status() task.Status {
 
 func (c *Container) State() *State {
 	s := &State{
-		ID:      c.ID,
-		Status:  c.status,
-		Bundle:  c.bundle,
-		CType:   c.cType,
-		Config:  c.config,
+		ID:     c.ID,
+		Status: c.status,
+		Bundle: c.bundle,
+		CType:  c.cType,
+		Config: c.config,
 	}
 	return s
 }
 
-// ContainerConfig contains:
-//
-//	extraLabels: map[string]string; additional labels
-//	relativePath: string; the resolved firmware path must be valid
-//	pedestal: *Pedestal; the pedestal type must be specified
-//	os: string; one of the allowed os
-//	ncpu: int; requested CPU count
-//	cpuLimit: int; CPU limit from OCI spec
-//	cpu: int; allocated CPU (-1 if not allocated)
+// NOTICE: Xen is the only supported ped for now
 func (c *Container) validMicaContainer() bool {
 
 	osValid := validOS(c.config.GetOS())
@@ -727,19 +686,27 @@ func (c *Container) validMicaContainer() bool {
 	pedValid := hostPedMatched(c.config.GetPed())
 	compatValid := validCompatibility(c.config)
 	judge := osValid && fwValid && pedValid && compatValid
-
-	log.Debugf(`MicaContainer validation result = 
+	log.Debugf(`
+		validMicaContainer:
 		osValid = %v,
 		fwValid = %v,
 		pedValid = %v,
 		compatValid = %v,
 		judge = %v
 	`, osValid, fwValid, pedValid, compatValid, judge)
+
 	return judge
 }
 
 func (c *Container) GetConfig() *ContainerConfig {
 	return c.config
+}
+
+// GetMemoryLimit returns the memory limit in bytes
+func (c *Container) GetMemoryLimit() uint64 {
+	c.config.mu.RLock()
+	defer c.config.mu.RUnlock()
+	return uint64(c.config.MemoryLimit)
 }
 
 func (c *Container) allocClientCPU() error {
@@ -758,7 +725,6 @@ func (c *Container) GetClientCPU() (int, error) {
 			return c.config.cpu, err
 		}
 	}
-	log.Debugf("get clientcpu done.")
 	return c.config.cpu, nil
 }
 
@@ -774,13 +740,11 @@ func (c *Container) SaveState() error {
 	if err = saveStateTo(stateInBundle, st); err != nil {
 		failed = true
 		err = fmt.Errorf("failed to save state to <%s>: %w", stateInBundle, err)
-		log.Debugf("failed to save state to <%s>: %v", stateInBundle, err)
 	}
 
 	if err1 = saveStateTo(stateInMicranDir, st); err1 != nil {
 		failed1 = true
 		err1 = fmt.Errorf("failed to save state to <%s>: %w", stateInBundle, err1)
-		log.Debugf("failed to save state to <%s>: %v", stateInMicranDir, err1)
 	}
 
 	if failed1 && failed {
@@ -801,7 +765,6 @@ func getRuntimeConfig(ocispec specs.Spec) (*oci.RuntimeConfig, error) {
 }
 
 func saveStateTo(file string, state *State) error {
-	log.Debugf("save state %v", state)
 	stateBytes, err := json.Marshal(state)
 	if err != nil {
 		return fmt.Errorf("failed to marshal container state: %w", err)
@@ -816,16 +779,15 @@ func RestoreContainerFromState(state *State) (*Container, error) {
 	cType := state.CType
 	config := state.Config
 	config.cpu = -1
-	log.Debugf("restored container from state %v", state)
 	container := &Container{
 		exitTime: time.Time{},
 		exitCode: 0,
 		io:       nil,
-		bundle:  bundle,
-		ID:      id,
-		status:  status,
-		cType:   cType,
-		config:  config,
+		bundle:   bundle,
+		ID:       id,
+		status:   status,
+		cType:    cType,
+		config:   config,
 	}
 	return container, nil
 

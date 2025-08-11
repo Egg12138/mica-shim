@@ -22,3 +22,11 @@ func RemoveExternalStatFile(id string) error {
 func RemoveStateDir(id string) error {
 	return os.RemoveAll(filepath.Join(defs.MicranStateDir, id))
 }
+
+func IsSymlink(path string) bool {
+	stat, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return stat.Mode()&os.ModeSymlink != 0
+}
