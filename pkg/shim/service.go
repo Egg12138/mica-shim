@@ -116,6 +116,13 @@ func (s *shimService) Cleanup(ctx context.Context) (*taskAPI.DeleteResponse, err
 }
 
 func (s *shimService) StartShim(ctx context.Context, opts shimv2.StartOpts) (string, error) {
+	bundle, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+
+	sockaddr, err := shimSocketAddr(ctx, bundle, opts)
+	
 	return "", errdefs.ErrNotImplemented
 }
 

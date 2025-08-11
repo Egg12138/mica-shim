@@ -8,7 +8,7 @@ import (
 	"syscall"
 	"time"
 
-	KataTypes "github.com/kata-containers/kata-containers/src/runtime/virtcontainers"
+	vc "github.com/kata-containers/kata-containers/src/runtime/virtcontainers"
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
@@ -70,26 +70,6 @@ type Sandbox interface {
 
 
 // ************** types **************
-
-type NetworkStats struct {
-	Name string `json:"name,omitempty"`
-	RxBytes uint64 `json:"rx_bytes,omitempty"`
-	RxPackets uint64 `json:"rx_packets,omitempty"`
-	RxErrors uint64 `json:"rx_errors,omitempty"`
-	RxDropped uint64 `json:"rx_dropped,omitempty"`
-	TxBytes uint64 `json:"tx_bytes,omitempty"`
-	TxPackets uint64 `json:"tx_packets,omitempty"`
-	TxErrors uint64 `json:"tx_errors,omitempty"`
-	TxDropped uint64 `json:"tx_dropped,omitempty"`
-}
-
-type NetworkConfig struct {
-	NetworkID         string
-	InterworkingModel KataTypes.NetInterworkingModel
-	NetworkCreated    bool
-	DisableNewNetwork bool
-}
-
 
 type Container struct {
 	ctr context.Context
@@ -156,4 +136,52 @@ type RootFs struct {
 	// Mounted specifies whether the rootfs has be mounted or not
 	Mounted bool
 
+}
+
+
+type ContainerType string
+
+// List different types of containers
+const (
+	// PodContainer identifies a container that should be associated with an existing pod
+	PodContainer ContainerType = "pod_container"
+	// PodSandbox identifies an infra container that will be used to create the pod
+	PodSandbox ContainerType = "pod_sandbox"
+	SideCar     ContainerType = "side_car"
+	// SingleContainer is utilized to describe a container that didn't have a container/sandbox
+	// annotation applied. This is expected when dealing with non-pod container (ie, running
+	// from ctr, podman, etc).
+	SingleContainer ContainerType = "single_container"
+	// UnknownContainerType specifies a container that provides container type annotation, but
+	// it is unknown.
+	UnknownContainerType ContainerType = "unknown_container_type"
+)
+
+func (ct ContainerType) IsRegularContainer() bool {
+	return ct == SingleContainer
+}
+
+// A pod container can not be converted into a sandbox
+func (ct ContainerType) CanBeSandbox() bool {
+	return ct == PodSandbox || ct == SingleContainer
+}
+
+func (ct ContainerType) IsCriSandbox() bool {
+	return ct == PodSandbox
+}
+
+
+func From(ct vc.ContainerType) ContainerType {
+	var into ContainerType = UnknownContainerType
+	switch (ct) {
+		case vc.PodContainer:
+			into = PodContainer
+		case vc.PodSandbox:
+			into = PodSandbox
+		case vc.SingleContainer:
+			into = SingleContainer
+		default:
+			into = UnknownContainerType
+	}
+	return into
 }

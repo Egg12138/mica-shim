@@ -1,9 +1,14 @@
 package oci
 
 import (
+	"encoding/json"
 	defs "mica-shim/definitions"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/container-orchestrated-devices/container-device-interface/specs-go"
 )
 
 type RuntimeConfig struct {
@@ -92,12 +97,12 @@ func ParseRuntimeConfig(annotations map[string]string) *RuntimeConfig {
 
 	// Parse runtime-level annotations with mica annotation prefix
 	for key, value := range annotations {
-		if !strings.HasPrefix(key, defs.MicaAnnotationPrefix) {
+		if !strings.HasPrefix(key, defs.MicraAnnotationPrefix) {
 			continue
 		}
 
 		// Remove prefix to get the config key
-		configKey := strings.TrimPrefix(key, defs.MicaAnnotationPrefix+".")
+		configKey := strings.TrimPrefix(key, defs.MicraAnnotationPrefix+".")
 
 		switch configKey {
 		case "runtime.debug":
@@ -137,3 +142,20 @@ func ParseRuntimeConfig(annotations map[string]string) *RuntimeConfig {
 
 	return spec
 }
+
+func ParseConfigJSON(bundle string) (specs.Spec, error) {
+	// For docker , config.v2.json, this line is useless;
+	configPath := filepath.Join(bundle, "config.json")
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		return specs.Spec{}, err
+	}
+
+	var config specs.Spec
+	if err := json.Unmarshal(configBytes, &config); err != nil {
+		return specs.Spec{}, err
+	}
+
+	return config, nil
+}
+

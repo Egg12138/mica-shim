@@ -8,8 +8,8 @@ import (
 	shimv2 "github.com/containerd/containerd/runtime/v2/shim"
 )
 
+// injected in Makefile
 var ShimName string
-
 
 func main() {
 
@@ -17,7 +17,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	devLog()
+	setupDevLog()
 	shimv2.Run(ShimName, shim.New, noReaper, noSubreaper, setupLogger)
 }
 
@@ -46,7 +46,7 @@ func setupLogger(c *shimv2.Config) {
 	c.NoSetupLogger = false
 }
 
-func devLog() {
+func setupDevLog() {
 	if err := log.CleanDebugFile(); err != nil {
 		log.Errorf("failed to clean debug file: %v", err)
 	}

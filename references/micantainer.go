@@ -25,12 +25,12 @@ import (
 var (
 	HighLevelCE    = "containerd"
 	RequiredLabels = []string{
-		defs.Firmware,
+		defs.FirmwarePath,
 		defs.OS,
 	}
 )
 
-const prefix = defs.MicaLabelPrefix
+const prefix = defs.MicraLabelPrefix
 
 // Structures:
 // - OCISpec: specs.Spec in config.json (or config.v2.json)
@@ -471,9 +471,9 @@ func (r *ContainerConfig) parseMicaLabels(labels map[string]string) error {
 
 	for k, v := range labels {
 		switch k {
-		case defs.Firmware:
+		case defs.FirmwarePath:
 			r.RelativePath = filepath.Join("rootfs", v)
-		case defs.Pedestal:
+		case defs.Pedtype:
 			r.PedestalType = ParsePedType(v)
 		case defs.PedestalConf:
 			r.PedestalConf = v
@@ -804,4 +804,13 @@ func LoadStateFromDir(baseDir string) (*State, error) {
 		return nil, fmt.Errorf("failed to unmarshal container state from %s: %w", statePath, err)
 	}
 	return &state, nil
+}
+
+func inList(list []string, item string) bool {
+	for _, v := range list {
+		if v == item {
+			return true
+		}
+	}
+	return false
 }
