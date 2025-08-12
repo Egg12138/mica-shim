@@ -5,6 +5,7 @@ import (
 	"fmt"
 	log "mica-shim/logger"
 	"mica-shim/pkg/fileutils"
+	cntr "mica-shim/pkg/micantainer"
 	"mica-shim/pkg/oci"
 	"os"
 	"path/filepath"
@@ -13,33 +14,42 @@ import (
 	shimv2 "github.com/containerd/containerd/runtime/v2/shim"
 )
 
-func shimSocketAddr(ctx context.Context, bundle string, opts shimv2.StartOpts) (string, error) {
-	bundle, err := validBundle(opts.ID, bundle)
-	if err != nil {
-		return "", err
-	}
+// Generate socket address for pod managed by this shim in future
+// As for regular container and sandbox, the address will be handled in Create()
+func preparePodSocketAddr(ctx context.Context, bundle string, opts shimv2.StartOpts) (string, error) {
 
-	ociSpec := loadSpec(bundle)
+	ociSpec := loadOCISpec(bundle)
 	if ociSpec == nil {
 		return "", fmt.Errorf("failed to load valid runtime config")
 	}
 
 	ctype, err := oci.GetContainerType(ociSpec)
+	if err != nil {
+		return "", err
+	}
 
-	
+	if ctype == cntr.PodContainer {
+		sandboxID, err := oci.GetSandboxID(ociSpec)
+		if err != nil {
+			return "", err
+		}
+		// format: unix://<run_root>/s/<sha256(..)>
+		sockAddr, err := shimv2.SocketAddress(ctx, opts.Address, sandboxID)
+		if err != nil {
+			return "", fmt.Errorf("socket address: %w", err)
+		}
+		return sockAddr, nil
+	}
+	return "", nil
 }
 
-
-
-func loadSpec(bundle string) (*specs.Spec) {
+func loadOCISpec(bundle string) *specs.Spec {
 	ociSpec, err := oci.ParseConfigJSON(bundle)
 	if err != nil {
 		return nil
 	}
 	return &ociSpec
 }
-
-
 
 func validBundle(containerID, bundlePath string) (string, error) {
 	if containerID == "" {
@@ -64,8 +74,6 @@ func validBundle(containerID, bundlePath string) (string, error) {
 		return "", fmt.Errorf("invalid resolved bundle path '%s', it should be a directory", resolved)
 	}
 
-	
-
 	return resolved, nil
 }
 
@@ -87,7 +95,6 @@ func validRootfs(resolved string) error {
 	}
 }
 
-
 // bundle is <CONTINAER_STATE_ROOT>/<container_id>
 func setInternalRootfs(bundle string) error {
 
@@ -101,5 +108,3 @@ func setInternalRootfs(bundle string) error {
 	os.Chdir(bundle)
 	return nil
 }
-
-

@@ -17,7 +17,6 @@ type MicantainerManager interface {
 	CleanupContainer(ctx context.Context, sandboxID string, containerID string, force bool) error
 }
 
-
 // NOTICE: `task` represent the process, thread or other task runner in RTOS
 type Micantainer interface {
 	// RTOS may contains no the concept of PID, so we use a dummy value
@@ -62,29 +61,23 @@ type Sandbox interface {
 	ListInterfaces(ctx context.Context) ([]*pbTypes.Interface, error)
 
 	GetOOMEvent(ctx context.Context) (string, error)
-
-
-
 }
-
-
 
 // ************** types **************
 
 type Container struct {
-	ctr context.Context
-	config *ContainerConfig
+	ctr     context.Context
+	config  *ContainerConfig
 	sandbox *Sandbox
-	id string
+	id      string
 	// in dir <sandboxID>/<containerID>
 	containerPath string
-	mounts []Mount
-	state ContainerState
-
+	mounts        []Mount
+	state         ContainerState
 }
 
 type ContainerStats struct {
-	NetworkStats []*NetworkStats	
+	NetworkStats []*NetworkStats
 }
 
 type ContainerState struct {
@@ -99,28 +92,25 @@ func (s *ContainerState) ValidTransition(old StateString, new StateString) error
 	return s.State.validTransition(old, new)
 }
 
-
-
 type ContainerStatus struct {
-	Spec      *specs.Spec
-	StartedAt time.Time
-	ID				string
-	Rootfs    string
-	Pid       int
+	Spec        *specs.Spec
+	StartedAt   time.Time
+	ID          string
+	Rootfs      string
+	Pid         int
 	Annotations map[string]string
 }
 
 type RTOSTask struct {
 	StartTime time.Time
 	// always the shim PID
-	Pid       int
+	Pid int
 }
 
-
 type ContainerConfig struct {
-	ID string
-	Rootfs RootFs
-	Mount []Mount
+	ID             string
+	Rootfs         RootFs
+	Mount          []Mount
 	ReadOnlyRootfs bool
 }
 
@@ -135,9 +125,7 @@ type RootFs struct {
 	Options []string
 	// Mounted specifies whether the rootfs has be mounted or not
 	Mounted bool
-
 }
-
 
 type ContainerType string
 
@@ -147,7 +135,7 @@ const (
 	PodContainer ContainerType = "pod_container"
 	// PodSandbox identifies an infra container that will be used to create the pod
 	PodSandbox ContainerType = "pod_sandbox"
-	SideCar     ContainerType = "side_car"
+	SideCar    ContainerType = "side_car"
 	// SingleContainer is utilized to describe a container that didn't have a container/sandbox
 	// annotation applied. This is expected when dealing with non-pod container (ie, running
 	// from ctr, podman, etc).
@@ -170,18 +158,17 @@ func (ct ContainerType) IsCriSandbox() bool {
 	return ct == PodSandbox
 }
 
-
 func From(ct vc.ContainerType) ContainerType {
 	var into ContainerType = UnknownContainerType
-	switch (ct) {
-		case vc.PodContainer:
-			into = PodContainer
-		case vc.PodSandbox:
-			into = PodSandbox
-		case vc.SingleContainer:
-			into = SingleContainer
-		default:
-			into = UnknownContainerType
+	switch ct {
+	case vc.PodContainer:
+		into = PodContainer
+	case vc.PodSandbox:
+		into = PodSandbox
+	case vc.SingleContainer:
+		into = SingleContainer
+	default:
+		into = UnknownContainerType
 	}
 	return into
 }

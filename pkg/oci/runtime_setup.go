@@ -158,4 +158,3 @@ func ParseConfigJSON(bundle string) (specs.Spec, error) {
 
 	return config, nil
 }
-

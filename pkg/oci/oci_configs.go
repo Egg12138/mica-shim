@@ -3,6 +3,7 @@ package oci
 import (
 	"fmt"
 
+	defs "mica-shim/definitions"
 	cntr "mica-shim/pkg/micantainer"
 
 	"github.com/container-orchestrated-devices/container-device-interface/specs-go"
@@ -10,25 +11,6 @@ import (
 	podmanAnnotations "github.com/containers/podman/v4/pkg/annotations"
 	dockershimAnnotations "github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/annotations/dockershim"
 )
-
-
-func GetContainerType(spec *specs.Spec) (cntr.ContainerType, error) {
-	for _, key := range CRIContainerTypeKeyList {
-		containerType, ok := spec.Annotations[key]
-		if !ok {
-			continue
-		}
-
-		for _, t := range CRIContainerTypeList {
-			if t.annotation == containerType {
-				return t.containerType, nil
-			}
-		}
-		return cntr.UnknownContainerType, fmt.Errorf("unknown container type: %s", containerType)
-	}
-	return cntr.SingleContainer, nil
-}
-
 
 type annotationContainerType struct {
 	annotation    string
@@ -56,3 +38,34 @@ var (
 		{dockershimAnnotations.ContainerTypeLabelContainer, cntr.PodContainer},
 	}
 )
+
+func GetContainerType(spec *specs.Spec) (cntr.ContainerType, error) {
+	for _, key := range CRIContainerTypeKeyList {
+		containerType, ok := spec.Annotations[key]
+		if !ok {
+			continue
+		}
+
+		for _, t := range CRIContainerTypeList {
+			if t.annotation == containerType {
+				return t.containerType, nil
+			}
+		}
+		return cntr.UnknownContainerType, fmt.Errorf("unknown container type: %s", containerType)
+	}
+	return cntr.SingleContainer, nil
+}
+
+func GetSandboxConfigPath(annotations map[string]string) string {
+	return annotations[defs.SandboxConfigPathKey]
+}
+
+func GetSandboxID(spec *specs.Spec) (string, error) {
+	for _, key := range CRISandboxNameKeyList {
+		sandboxID, ok := spec.Annotations[key]
+		if ok {
+			return sandboxID, nil
+		}
+	}
+	return "", fmt.Errorf("sandbox id not found in annotations")
+}

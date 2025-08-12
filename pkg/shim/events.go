@@ -8,12 +8,10 @@ import (
 )
 
 const (
-	timeOut = 5 * time.Second
-	ttrpcAddrEnv = "TTRPC_ADDRESS"
+	timeOut              = 5 * time.Second
+	ttrpcAddrEnv         = "TTRPC_ADDRESS"
 	contdShimEnvShedCore = "SCHED_CORE"
-
 )
-
 
 func (s *shimService) listenAndReportExits() {
 	for e := range s.ec {
@@ -21,19 +19,21 @@ func (s *shimService) listenAndReportExits() {
 	}
 }
 
-func (s *shimService) reportExit(e exit)  {
+func (s *shimService) reportExit(e exit) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	id := e.execid
-	if id == "" { id = e.cid }
+	if id == "" {
+		id = e.cid
+	}
 	s.eventSendMu.Lock()
 	defer s.eventSendMu.Unlock()
 	s.send(&events.TaskExit{
-		ContainerID: 	e.cid,
-		ID: 					id,
-		Pid: 					e.pid,
-		ExitStatus: 	uint32(e.status),
-		ExitedAt: 		timestamppb.New(e.ts),
+		ContainerID: e.cid,
+		ID:          id,
+		Pid:         e.pid,
+		ExitStatus:  uint32(e.status),
+		ExitedAt:    timestamppb.New(e.ts),
 	})
 }
 
@@ -42,4 +42,3 @@ func (s *shimService) send(ev any) {
 		s.events <- ev
 	}
 }
-

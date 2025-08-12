@@ -29,17 +29,22 @@
 - [x] libmica 的 通信和通信抽象
 - [x] libmica: containerd rpc--> mica config, 任务配置对接整理
 - [x] 确定Linux:RTOS clientos 1:1模型的必要性
-- [ ] mica支持长容器ID
-- [ ] basic micran state storage
-- [ ] 完善micran state存储
+- [x] mica支持长容器ID
+- [x] basic micran state storage
+- [x] 完善micran state存储
 > 由于我们在create中不再创建mica client而是放到 start()中，所以我们创建容器后需要存放状态信息，目前有几个考虑，分三步：
 > 1. 双state.json副本, 一个位于bundle, 一个位于micran state dir
 > 1. 在micran state dir中维护一个db,存储state信息，提高性能
 > 1. 整个bundle都转到 micran state dir
+- [x] 从struct manager 迁移到struct shim
+- [ ] 重构项目，提高维护性
+- [ ] SCHED_CORE 支持
+- [ ] 对Xen做适配，去掉jailhouse, baremetal这两个占位底座；
+- [ ] task events all completed
+- [x] io mock test
 - [ ] pty
 - [ ] k8s Pod, Sandbox support
 - [x] 镜像规制考虑
-- [ ] 精准的板级镜像发布校验
 
 ## ️ Roadmap
 
@@ -49,7 +54,7 @@
 - [x] 自如管理 基本镜像的： OS register, OS boot, Task start
 - [x] 提供一个mica-from-scrach基础镜像,根据这个镜像来搭建混部容器镜像,并且可以根据这些镜像拉起服务
 - [x] Client OS 和 Shim Task process 的明确分离管理
-- [ ] IO 接管
+- [x] IO 接管
 - [ ] 持久化
 - [ ] 网络
 - [ ] 保证mica daemon 和 micran 生命周期不一致时容器状态的一致性

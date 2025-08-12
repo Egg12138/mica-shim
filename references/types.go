@@ -19,27 +19,27 @@ import (
 // ✅ 简化的 shimService（参考 kata）
 type shimService struct {
 	// 核心管理
-	containers map[string]*Container  // 直接管理容器，无中间层
-	
+	containers map[string]*Container // 直接管理容器，无中间层
+
 	// 上下文管理
-	ctx       context.Context
-	rootCtx   context.Context         // for tracing if needed
-	cancel    func()
-	
+	ctx     context.Context
+	rootCtx context.Context // for tracing if needed
+	cancel  func()
+
 	// 通信通道
-	events    chan interface{}       // 事件发布
-	monitor   chan error            // 错误监控
-	ec        chan exit             // 退出通知（如果需要）
-	
+	events  chan interface{} // 事件发布
+	monitor chan error       // 错误监控
+	ec      chan exit        // 退出通知（如果需要）
+
 	// 配置
 	config    *core.RuntimeConfig
 	namespace string
 	id        string
-	
-	mu          sync.RWMutex         // 统一的读写锁
-	eventSendMu sync.Mutex          // 事件发送锁
-	
-	shimPid uint32                  // shim pid
+
+	mu          sync.RWMutex // 统一的读写锁
+	eventSendMu sync.Mutex   // 事件发送锁
+
+	shimPid uint32 // shim pid
 }
 
 // ✅ 简化的 Container（合并原来的多层信息）
@@ -48,42 +48,42 @@ type Container struct {
 	ID        string
 	Bundle    string
 	Namespace string
-	
+
 	// 类型和状态
-	Type      ContainerType
-	Status    task.Status
-	
+	Type   ContainerType
+	Status task.Status
+
 	// 进程信息（用于 containerd API）
-	Pid       uint32                // 占位 PID（对应 RTOS client）
-	ExitTime  time.Time
-	ExitCode  uint32
-	
+	Pid      uint32 // 占位 PID（对应 RTOS client）
+	ExitTime time.Time
+	ExitCode uint32
+
 	// MICA 特定
-	MicaIO    *libmica.MicaIO       // I/O 处理
-	ClientID  string               // RTOS client ID
-	
+	MicaIO   *libmica.MicaIO // I/O 处理
+	ClientID string          // RTOS client ID
+
 	// OCI 规范配置（直接嵌入，避免额外嵌套）
-	Spec      *specs.Spec          // 原始 OCI spec
-	
+	Spec *specs.Spec // 原始 OCI spec
+
 	// 资源配置（从 ContainerConfig 提取关键字段）
-	CPUAllocation int               // 实际分配的 CPU（运行时状态）
-	CPURequest    int               // 请求的 CPU 数量
-	MemoryLimit   int64             // 内存限制
-	
+	CPUAllocation int   // 实际分配的 CPU（运行时状态）
+	CPURequest    int   // 请求的 CPU 数量
+	MemoryLimit   int64 // 内存限制
+
 	// MICA 配置（从 ContainerConfig 提取关键字段）
-	FirmwarePath  string
-	PedestalType  string
-	PedestalConf  string
-	
+	FirmwarePath string
+	PedestalType string
+	PedestalConf string
+
 	// 生命周期管理
 	LifecycleCtx    context.Context
 	LifecycleCancel context.CancelFunc
 	MonitorCancel   context.CancelFunc
-	
+
 	// Sandbox 关系（仅用于 pod 容器）
-	SandboxID   string              // 所属 sandbox ID（如果是 pod 容器）
-	IsShared    bool               // 是否是共享资源（如果是 sandbox）
-	
+	SandboxID string // 所属 sandbox ID（如果是 pod 容器）
+	IsShared  bool   // 是否是共享资源（如果是 sandbox）
+
 	// 同步（容器级别的细粒度锁）
 	mu sync.RWMutex
 }
@@ -104,39 +104,39 @@ type ContainerSpec struct {
 func (s *shimService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) (*taskAPI.CreateTaskResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	
+
 	if _, exists := s.containers[r.ID]; exists {
-			return nil, errdefs.ErrAlreadyExists
+		return nil, errdefs.ErrAlreadyExists
 	}
-	
+
 	// 直接解析和创建，不需要多层嵌套
 	spec, err := s.parseContainerSpec(r.Bundle)
 	if err != nil {
-			return nil, err
+		return nil, err
 	}
-	
+
 	container := &Container{
-			ID:            r.ID,
-			Bundle:        r.Bundle,
-			Namespace:     s.namespace,
-			Type:          spec.Type,
-			Status:        task.Status_CREATED,
-			Pid:           1, // 占位 PID
-			CPURequest:    spec.CPURequest,
-			MemoryLimit:   spec.MemoryLimit,
-			FirmwarePath:  spec.FirmwarePath,
-			PedestalType:  spec.PedestalType,
-			PedestalConf:  spec.PedestalConf,
+		ID:           r.ID,
+		Bundle:       r.Bundle,
+		Namespace:    s.namespace,
+		Type:         spec.Type,
+		Status:       task.Status_CREATED,
+		Pid:          1, // 占位 PID
+		CPURequest:   spec.CPURequest,
+		MemoryLimit:  spec.MemoryLimit,
+		FirmwarePath: spec.FirmwarePath,
+		PedestalType: spec.PedestalType,
+		PedestalConf: spec.PedestalConf,
 	}
-	
+
 	// 设置生命周期上下文
 	container.LifecycleCtx, container.LifecycleCancel = context.WithCancel(ctx)
-	
+
 	s.containers[r.ID] = container
-	
+
 	// 发布创建事件
 	s.publishTaskCreate(ctx, r.ID, 1)
-	
+
 	return &taskAPI.CreateTaskResponse{Pid: 1}, nil
 }
 
@@ -145,26 +145,26 @@ func (s *shimService) Start(ctx context.Context, r *taskAPI.StartRequest) (*task
 	s.mu.RLock()
 	container, exists := s.containers[r.ID]
 	s.mu.RUnlock()
-	
+
 	if !exists {
-			return nil, errdefs.ErrNotFound
+		return nil, errdefs.ErrNotFound
 	}
-	
+
 	// 直接操作容器，无需通过多层
 	if err := s.startMicaClient(container); err != nil {
-			return nil, err
+		return nil, err
 	}
-	
+
 	container.mu.Lock()
 	container.Status = task.Status_RUNNING
 	container.mu.Unlock()
-	
+
 	// 启动监控
 	go s.monitorContainer(container)
-	
+
 	// 发布启动事件
 	s.publishTaskStart(ctx, r.ID, 1)
-	
+
 	return &taskAPI.StartResponse{Pid: 1}, nil
 }
 
@@ -172,35 +172,35 @@ func (s *shimService) Start(ctx context.Context, r *taskAPI.StartRequest) (*task
 func (s *shimService) startMicaClient(container *Container) error {
 	// 直接从容器获取配置，无需层层传递
 	conf := libmica.MicaClientConf{}
-	
+
 	cpu, err := s.allocateCPU(container.CPURequest)
 	if err != nil {
-			return err
+		return err
 	}
-	
+
 	container.mu.Lock()
 	container.CPUAllocation = cpu
 	container.mu.Unlock()
-	
+
 	conf.Init(
-			uint32(cpu),
-			uint64(container.MemoryLimit),
-			container.ID,
-			container.FirmwarePath,
-			container.PedestalType,
-			container.PedestalConf,
-			false,
+		uint32(cpu),
+		uint64(container.MemoryLimit),
+		container.ID,
+		container.FirmwarePath,
+		container.PedestalType,
+		container.PedestalConf,
+		false,
 	)
-	
+
 	// 创建和启动 RTOS client
 	if res, err := libmica.MicaCreate(conf); err != nil || !success(res) {
-			return fmt.Errorf("failed to create mica client: %w", err)
+		return fmt.Errorf("failed to create mica client: %w", err)
 	}
-	
+
 	if res, err := libmica.MicaCtl(libmica.MStart, container.ID); err != nil || !success(res) {
-			return fmt.Errorf("failed to start mica client: %w", err)
+		return fmt.Errorf("failed to start mica client: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -234,83 +234,83 @@ shimService -> Container (2层)
 
 // 全局 shim 服务结构体（每个 shim 实例一个）
 type micaTaskService struct {
-    // protect procs map and service-global fields
-    mu sync.Mutex
+	// protect procs map and service-global fields
+	mu sync.Mutex
 
-    // map containerID -> *Task (并发安全通过 mu 保护)
-    tasks map[string]*Task
+	// map containerID -> *Task (并发安全通过 mu 保护)
+	tasks map[string]*Task
 
-    // the shim process id and namespace info
-    shimPid uint32
-    ns      string
+	// the shim process id and namespace info
+	shimPid uint32
+	ns      string
 
-    // event publisher (RemoteEventsPublisher 或自实现)
-    eventsPublisher *events.RemoteEventsPublisher // 或自定义接口包装
+	// event publisher (RemoteEventsPublisher 或自实现)
+	eventsPublisher *events.RemoteEventsPublisher // 或自定义接口包装
 
-    // CPU scheduler shared state (可能是文件/共享内存句柄)
-    cpuAllocator *CPUAllocator
+	// CPU scheduler shared state (可能是文件/共享内存句柄)
+	cpuAllocator *CPUAllocator
 
-    // libmica socket handle/wrapper
-    micaClient *libmica.Client // 假设libmica暴露client
+	// libmica socket handle/wrapper
+	micaClient *libmica.Client // 假设libmica暴露client
 
-    // logger
-    log *logger.Logger
+	// logger
+	log *logger.Logger
 
-    // root paths
-    stateDir string
+	// root paths
+	stateDir string
 
-    // global lifecycle ctx for shim
-    ctx    context.Context
-    cancel context.CancelFunc
+	// global lifecycle ctx for shim
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // 单个“init”/container 的任务表示
 type Task struct {
-    // immutable once created
-    ID        string
-    Bundle    string
-    CreatedAt time.Time
+	// immutable once created
+	ID        string
+	Bundle    string
+	CreatedAt time.Time
 
-    // current process-like fields
-    Pid       int
-    Terminal  bool
-    StdinPath string
-    StdoutPath string
-    StderrPath string
+	// current process-like fields
+	Pid        int
+	Terminal   bool
+	StdinPath  string
+	StdoutPath string
+	StderrPath string
 
-    // mica io bridge
-    micaIO *libmica.MicaIO // 负责 /dev/ttyRPMSG<id> 的打开/读写/关闭
+	// mica io bridge
+	micaIO *libmica.MicaIO // 负责 /dev/ttyRPMSG<id> 的打开/读写/关闭
 
-    // lifecycle contexts for per-task goroutines
-    ctx    context.Context
-    cancel context.CancelFunc
+	// lifecycle contexts for per-task goroutines
+	ctx    context.Context
+	cancel context.CancelFunc
 
-    // startup/done contexts for Wait()
-    startupCtx    context.Context
-    startupCancel context.CancelFunc
-    doneCtx       context.Context
-    doneCancel    context.CancelFunc
+	// startup/done contexts for Wait()
+	startupCtx    context.Context
+	startupCancel context.CancelFunc
+	doneCtx       context.Context
+	doneCancel    context.CancelFunc
 
-    // monitor goroutine cancel
-    monitorCancel context.CancelFunc
+	// monitor goroutine cancel
+	monitorCancel context.CancelFunc
 
-    // locks for per-task mutable state
-    mu sync.Mutex
+	// locks for per-task mutable state
+	mu sync.Mutex
 
-    // exit state
-    exitStatus int
-    exitTime   time.Time
+	// exit state
+	exitStatus int
+	exitTime   time.Time
 
-    // resource limits recorded from containerd
-    cpuLimit int
-    memLimit int64
+	// resource limits recorded from containerd
+	cpuLimit int
+	memLimit int64
 
-    // bookkeeping for exec processes
-    execs map[string]*ExecProcess
+	// bookkeeping for exec processes
+	execs map[string]*ExecProcess
 
-    // for ensuring cleanup order
-    wg sync.WaitGroup
+	// for ensuring cleanup order
+	wg sync.WaitGroup
 
-    // metadata/annotations
-    labels map[string]string
+	// metadata/annotations
+	labels map[string]string
 }

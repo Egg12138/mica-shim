@@ -32,8 +32,6 @@ func IsSymlink(path string) bool {
 	return stat.Mode()&os.ModeSymlink != 0
 }
 
-
-
 // ResolvePath returns the fully resolved and expanded value of the
 // specified path.
 func ResolvePath(path string) (string, error) {

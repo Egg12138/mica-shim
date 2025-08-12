@@ -1,7 +1,6 @@
 package main
 
 import (
-	log "mica-shim/logger"
 	"mica-shim/pkg/shim"
 	"os"
 
@@ -17,10 +16,8 @@ func main() {
 		os.Exit(0)
 	}
 
-	setupDevLog()
 	shimv2.Run(ShimName, shim.New, noReaper, noSubreaper, setupLogger)
 }
-
 
 func notTaskRequest() bool {
 	if len(os.Args) == 1 {
@@ -44,11 +41,4 @@ func noSubreaper(c *shimv2.Config) {
 
 func setupLogger(c *shimv2.Config) {
 	c.NoSetupLogger = false
-}
-
-func setupDevLog() {
-	if err := log.CleanDebugFile(); err != nil {
-		log.Errorf("failed to clean debug file: %v", err)
-	}
-	log.Debugf("args: %s", os.Args)
 }
