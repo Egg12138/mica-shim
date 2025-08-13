@@ -30,7 +30,7 @@ func parseConfigINI(bundle string) (map[string]string, error) {
 
 	file, err := os.Open(configPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open mica config file: %v", err)
+		return nil, fmt.Errorf("failed to open mica config file: %w", err)
 	}
 	defer file.Close()
 
@@ -76,7 +76,7 @@ func parseConfigINI(bundle string) (map[string]string, error) {
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("error reading mica config file: %v", err)
+		return nil, fmt.Errorf("error reading mica config file: %w", err)
 	}
 
 	return parsedFields, nil

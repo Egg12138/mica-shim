@@ -34,8 +34,6 @@ func IsSymlink(path string) bool {
 	return stat.Mode()&os.ModeSymlink != 0
 }
 
-// ResolvePath returns the fully resolved and expanded value of the
-// specified path.
 func ResolvePath(path string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("path must be specified")
@@ -49,7 +47,7 @@ func ResolvePath(path string) (string, error) {
 	resolved, err := filepath.EvalSymlinks(absolute)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", fmt.Errorf("file %v does not exist", absolute)
+			return "", fmt.Errorf("file does not exist: %s", absolute)
 		}
 
 		return "", err
@@ -81,13 +79,12 @@ func SaveStructToFile(file string, state any) error {
 	return os.WriteFile(file, structBytes, defs.FileMode)
 }
 
-
 // MkdirAllWithInheritedOwner creates a directory named path, along with any necessary parents.
 // It creates the missing directories with the ownership of the last existing parent.
 // The path needs to be absolute and the method doesn't handle symlink.
 func MkdirAllWithInheritedOwner(path string, perm os.FileMode) error {
 	if len(path) == 0 {
-		return fmt.Errorf("the path is empty")
+		return fmt.Errorf("path cannot be empty")
 	}
 
 	// By default, use the uid and gid of the calling process.
@@ -100,10 +97,10 @@ func MkdirAllWithInheritedOwner(path string, perm os.FileMode) error {
 
 		if err != nil {
 			if err = os.MkdirAll(curPath, perm); err != nil {
-				return fmt.Errorf("mkdir call failed: %v", err.Error())
+				return fmt.Errorf("failed to create directory: %w", err)
 			}
 			if err = syscall.Chown(curPath, uid, gid); err != nil {
-				return fmt.Errorf("chown syscall failed: %v", err.Error())
+				return fmt.Errorf("failed to change ownership: %w", err)
 			}
 			continue
 		}
@@ -115,12 +112,11 @@ func MkdirAllWithInheritedOwner(path string, perm os.FileMode) error {
 			uid = int(stat.Uid)
 			gid = int(stat.Gid)
 		} else {
-			return fmt.Errorf("fail to retrieve the uid and gid of path %s", curPath)
+			return fmt.Errorf("failed to retrieve UID and GID for path: %s", curPath)
 		}
 	}
 	return nil
 }
-
 
 // getAllParentPaths returns all the parent directories of a path, including itself but excluding root directory "/".
 // For example, "/foo/bar/biz" returns {"/foo", "/foo/bar", "/foo/bar/biz"}
@@ -140,4 +136,3 @@ func getAllParentPaths(path string) []string {
 	// remove the "/" or "." from the return result
 	return paths[1:]
 }
-

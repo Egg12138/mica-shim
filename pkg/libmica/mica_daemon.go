@@ -16,8 +16,8 @@ const (
 )
 
 type MicaDaemonState struct {
-	Pid  		  int
-	State 	  string
+	Pid       int
+	State     string
 	Listening bool
 }
 

@@ -67,5 +67,5 @@ func GetSandboxID(spec *specs.Spec) (string, error) {
 			return sandboxID, nil
 		}
 	}
-	return "", fmt.Errorf("sandbox id not found in annotations")
+	return "", fmt.Errorf("sandbox ID not found in annotations")
 }

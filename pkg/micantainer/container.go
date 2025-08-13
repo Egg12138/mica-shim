@@ -18,14 +18,11 @@ type ContainerStats struct {
 }
 
 type ContainerState struct {
-	Bundle string           `json:"bundle"`
-	ID     string           `json:"id"`
-	CType  ContainerType    `json:"c_type"`
-	State StateString `json:"state"`
+	Bundle string        `json:"bundle"`
+	ID     string        `json:"id"`
+	CType  ContainerType `json:"c_type"`
+	State  StateString   `json:"state"`
 }
-
-
-
 
 func (s *ContainerState) Valid() bool {
 	return s.State.valid()
@@ -47,13 +44,12 @@ type ContainerStatus struct {
 
 // NOTICE: `task` represent the process, thread or other task runner in RTOS
 type RTOSTask struct {
-	StartTime    time.Time
+	StartTime time.Time
 	// TaskID is an indentifier of the task, managed by micran
-	TaskID       uint32
+	TaskID uint32
 	// memory address of the receiver inside rtos
 	ReceiverAddr uint64
 }
-
 
 // TALK： 在micran层面，我们有时候需要适当跳过mica,来直接通过Xen对rtos传输信息；
 // 未来整合的时候，都作为mica 一部分
@@ -61,9 +57,8 @@ type RTOSTask struct {
 // 我们需要一个通用的 Agent 设计策略 来：
 //  1. 管理 rtos 的devices, net, tasks...
 //  2. 在agent中处理IO吗？
-//  3. 
+//     3.
 type Agent struct {
-
 }
 
 type ContainerConfig struct {
@@ -72,14 +67,14 @@ type ContainerConfig struct {
 	Mount          []Mount
 	ReadOnlyRootfs bool
 	// typically the shim pid
-	Pid            int
-	Annotations    map[string]string
+	Pid         int
+	Annotations map[string]string
 
-	RelativePath string            `json:"relative_path"`
-	PedestalType PedType           `json:"pedestal_type"`
-	PedestalConf string            `json:"pedestal_conf"`
-	OS           string            `json:"os"`
-	NCpu         int               `json:"ncpu"` // requested CPU count (default = 1)
+	RelativePath string  `json:"relative_path"`
+	PedestalType PedType `json:"pedestal_type"`
+	PedestalConf string  `json:"pedestal_conf"`
+	OS           string  `json:"os"`
+	NCpu         int     `json:"ncpu"` // requested CPU count (default = 1)
 
 	CpuLimit   int    `json:"cpu_limit"`   // CPU limit from OCI spec
 	CpusetCpus string `json:"cpuset_cpus"` // cpuset.cpus specification
@@ -97,9 +92,7 @@ type ContainerConfig struct {
 
 	cpu int // allocated CPU (-1 if not allocated) after stat loaded
 
-
 }
-
 
 type RootFs struct {
 	// Source specifies the path of the rootfs in host filesystem
@@ -144,7 +137,6 @@ type Container struct {
 	taskInfo      RTOSTask
 }
 
-
 func (ct ContainerType) IsRegularContainer() bool {
 	return ct == SingleContainer
 }
@@ -176,7 +168,7 @@ func From(ct vc.ContainerType) ContainerType {
 // NOTICE: cleanup exclusively
 func CleanupContainer(ctx context.Context, sandboxID string, containerID string, force bool) error {
 	if sandboxID == "" || containerID == "" {
-		return fmt.Errorf("sandboxID %s or containerID %s is empty", sandboxID, containerID)
+		return fmt.Errorf("sandboxID or containerID is empty")
 	}
 
 	err := cleanupPersistResource(ctx, sandboxID)
@@ -191,7 +183,6 @@ func CleanupContainer(ctx context.Context, sandboxID string, containerID string,
 	// }
 }
 
-
 func cleanupPersistResource(ctx context.Context, sandboxID string) error {
 	log.Infof("persist resource is not supported yet")
 	return nil
@@ -203,20 +194,16 @@ func (cc *ContainerConfig) GetFirmwarePath() string {
 	return cc.RelativePath
 }
 
-
-
 // PedestalType returns the pedestal type
 func (cc *ContainerConfig) GetPedestalType() PedType {
 	return cc.PedestalType
 }
 
-
-
-
 // cpuUnset is alway callee, hence lock is not needed
 func (cc *ContainerConfig) cpuUnset() bool {
 	return cc.cpu == -1
 }
+
 // PedestalConf returns the pedestal configuration
 func (cc *ContainerConfig) GetPedestalConf() string {
 	return cc.PedestalConf
@@ -226,19 +213,18 @@ func (cc *ContainerConfig) GetOS() string {
 	return cc.OS
 }
 
-
 // ******* core handler ********
 
 // A new container instance, initialized with complete configuration
 // func newContainer(r *taskAPI.CreateTaskRequest, config *ContainerConfig) (*Container, error) {
 func newContainer(ctx context.Context, s *Sandbox, cc *ContainerConfig) (*Container, error) {
 	container := &Container{
-		id:       cc.ID,
-		config:   cc,
+		id:     cc.ID,
+		config: cc,
 	}
 
 	if !container.validMicaContainer() {
-		return nil, fmt.Errorf("invalid mica container: %+v", container)
+		return nil, fmt.Errorf("invalid mica container: %v", container)
 	}
 
 	return container, nil
@@ -249,11 +235,32 @@ func (c *Container) start(ctx context.Context) error {
 		return err
 	}
 
+	if c.state.State != StateReady && c.state.State != StateStopped {
+		return fmt.Errorf("container is not ready or stopped, cannot start")
+	}
 
+	if err := startContainerInSandbox(ctx, c.sandbox, c.config); err != nil {
+		log.Error("failed to start cotnainer")
+		if err := c.stop(ctx, true); err != nil {
+			log.Warn("failed to stop the container after start failed")
+		}
+		return err
+	}
+
+	return c.setContainerState(ctx, StateRunning)
 }
-	
-func (c *Container) createInSanbox(ctx context.Context) error {
 
+func (c *Container) checkSandboxRunnig(op string) error {
+	if op == "" {
+		return fmt.Errorf("operation cannot be empty")
+	}
+	if c.sandbox.state.State != StateRunning {
+		return fmt.Errorf("sandbox is not running, cannot %s container", op)
+	}
+	return nil
+}
+
+func (c *Container) createInSanbox(ctx context.Context) error {
 
 	// TODO:  TOO many works
 	rtosTask, err := createContainerInSandbox(ctx, c.sandbox, c.config)
@@ -268,7 +275,6 @@ func (c *Container) createInSanbox(ctx context.Context) error {
 	}
 	return nil
 }
-
 
 func (c *Container) stop(ctx context.Context, force bool) error {
 	if c.state.State == StateStopped {
@@ -287,16 +293,15 @@ func (c *Container) stop(ctx context.Context, force bool) error {
 	return nil
 }
 
-
 func (c *Container) kill(ctx context.Context, force bool) error {
 	return nil
 }
 
 func (c *Container) delete(ctx context.Context) error {
 	if c.state.State != StateReady &&
-	c.state.State != StatePaused &&
-	c.state.State != StateStopped {
-		return fmt.Errorf("Sandbox not ready, paused or stopped, impossible to delete")
+		c.state.State != StatePaused &&
+		c.state.State != StateStopped {
+		return fmt.Errorf("sandbox is not ready, paused, or stopped, cannot delete container")
 	}
 
 	if err := c.sandbox.removeContainer(c.id); err != nil {
@@ -308,8 +313,8 @@ func (c *Container) delete(ctx context.Context) error {
 
 func (c *Container) setContainerState(ctx context.Context, state StateString) error {
 	if state == "" {
-		return fmt.Errorf("state is empty")
-	}	
+		return fmt.Errorf("state cannot be empty")
+	}
 
 	log.Debugf("set container state from %s to %s", c.state.State, state)
 	c.state.State = state
@@ -332,7 +337,6 @@ func (c *Container) TaskInfo() RTOSTask {
 	return c.taskInfo
 }
 
-
 func (c *Container) Status() StateString {
 	return c.state.State
 }
@@ -340,7 +344,6 @@ func (c *Container) Status() StateString {
 func (c *Container) State() *ContainerState {
 	return &c.state
 }
-
 
 // check OS value matches
 func validOS(os string) bool {
@@ -376,26 +379,17 @@ func (c *Container) validMicaContainer() bool {
 		fwValid = %v,
 		compatValid = %v,
 		judge = %v
-	`, osValid, fwValid,compatValid, judge)
+	`, osValid, fwValid, compatValid, judge)
 
 	return judge
 }
 
-
-func (c *Container) GetAnnotations() map[string]string {		
+func (c *Container) GetAnnotations() map[string]string {
 	return c.config.Annotations
 }
 
 func (c *Container) GetPid() int {
 	return c.config.Pid
-}
-
-func (c *Container) Sandbox() SandboxTraits {
-	return c.sandbox
-}
-
-func (c *Container) GetConfig() *ContainerConfig {
-	return c.config
 }
 
 // GetMemoryLimit returns the memory limit in bytes
@@ -413,11 +407,9 @@ func (c *Container) allocClientCPU() error {
 	return nil
 }
 
-
-// allocCPUWithLimit allocates CPU considering container-specific limits
 func allocCPUWithLimit(ncpu int, config *ContainerConfig) (int, error) {
 	if ncpu < 1 {
-		return 0, fmt.Errorf("ncpu must be at least 1, got %d", ncpu)
+		return 0, fmt.Errorf("ncpu must be at least 1")
 	}
 
 	maxCPU := getContainerCPULimit(config)
@@ -439,7 +431,6 @@ func allocCPUWithLimit(ncpu int, config *ContainerConfig) (int, error) {
 	log.Debugf("Allocated CPU %d for ncpu=%d (container limit: %d)", allocatedCPU, ncpu, maxCPU)
 	return allocatedCPU, nil
 }
-
 
 // getContainerCPULimit returns the effective CPU limit for a container
 // considering both OCI spec limits and system constraints
@@ -471,7 +462,6 @@ func getContainerCPULimit(cfg *ContainerConfig) int {
 	return defaultLimit
 }
 
-
 func (c *Container) GetClientCPU() (int, error) {
 	if c.config.cpuUnset() {
 		if err := c.allocClientCPU(); err != nil {
@@ -488,7 +478,7 @@ func (c *Container) SaveState() error {
 	var err1 error
 	st := c.State()
 	stateInBundle := filepath.Join(c.containerPath, defs.MicantainerStateFile)
-	stateInMicranDir := filepath.Join(defs.MicranStateDir, c.ID, defs.MicantainerStateFile)
+	stateInMicranDir := filepath.Join(defs.MicranStateDir, c.id, defs.MicantainerStateFile)
 
 	if err = utils.SaveStructToFile(stateInBundle, st); err != nil {
 		failed = true
@@ -497,13 +487,11 @@ func (c *Container) SaveState() error {
 
 	if err1 = utils.SaveStructToFile(stateInMicranDir, st); err1 != nil {
 		failed1 = true
-		err1 = fmt.Errorf("failed to save state to <%s>: %w", stateInBundle, err1)
+		err1 = fmt.Errorf("failed to save state to <%s>: %w", stateInMicranDir, err1)
 	}
 
 	if failed1 && failed {
-		return fmt.Errorf("failed to save container state: %w, %w", err, err1)
+		return fmt.Errorf("failed to save container state to both locations: %w, %w", err, err1)
 	}
 	return nil
 }
-
-

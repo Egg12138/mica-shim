@@ -10,12 +10,11 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-
 type NetworkInterface struct {
 	Name       string
 	MacAddress string
 	Addrs      []netlink.Addr
-	IP				 string
+	IP         string
 	DefaultGW  string
 }
 
@@ -48,13 +47,11 @@ type NetworkConfig struct {
 	NetworkCreated bool
 }
 
-
 type Network interface {
-	NetworkIsCreated() bool 
+	NetworkIsCreated() bool
 	NetID() string
 	NetworkCleanup() error
 }
-
 
 // TODO: analyse how to setup netdevice in zephyr, rtthread via mica-Xen
 func NetworkSetup(id string, ipAddr string, config NetworkConfig, spec specs.Spec) (netlink.Link, error) {
@@ -62,7 +59,7 @@ func NetworkSetup(id string, ipAddr string, config NetworkConfig, spec specs.Spe
 	tapDevice, err := createTapDevice(newTap(id, DefaultHostTapName, DefaultMTU), uid, gid)
 	if err != nil {
 		return nil, err
-	}	
+	}
 
 	ingressDummy()
 	ipn, err := netlink.ParseAddr(ipAddr)
@@ -88,7 +85,7 @@ func newTap(id string, name string, mtu int) TapInfo {
 	return TapInfo{
 		ID:   id,
 		Name: name,
-		MTU: mtu,
+		MTU:  mtu,
 	}
 }
 
@@ -97,10 +94,10 @@ func createTapDevice(tap TapInfo, uid, gid uint32) (netlink.Link, error) {
 	tapLink := &netlink.Tuntap{
 		LinkAttrs: netlink.LinkAttrs{
 			TxQLen: 1000,
-			MTU: tap.MTU,
-			Name: tap.Name,
+			MTU:    tap.MTU,
+			Name:   tap.Name,
 		},
-		Mode: netlink.TUNTAP_MODE_TAP,
+		Mode:  netlink.TUNTAP_MODE_TAP,
 		Flags: netlink.TUNTAP_DEFAULTS,
 	}
 	err := netlink.LinkAdd(tapLink)
@@ -123,14 +120,13 @@ func createTapDevice(tap TapInfo, uid, gid uint32) (netlink.Link, error) {
 		}
 	}
 
-		err = netlink.LinkSetMTU(tapLink, mtu)
-		if err != nil {
-			return nil, fmt.Errorf("failed to set tap device MTU to %d: %w", mtu, err)
-		}
+	err = netlink.LinkSetMTU(tapLink, mtu)
+	if err != nil {
+		return nil, fmt.Errorf("failed to set tap device MTU to %d: %w", mtu, err)
+	}
 
 	return tapLink, nil
 
-	
 }
 
 func addTapDevice(device netlink.Link) error {
@@ -140,8 +136,6 @@ func addTapDevice(device netlink.Link) error {
 func delTapDevice(device netlink.Link) error {
 	return errdefs.ErrNotImplemented
 }
-
-
 
 func ingressDummy() {
 	log.Debugf("ingress related managements..")

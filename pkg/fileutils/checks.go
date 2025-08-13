@@ -11,10 +11,9 @@ import (
 const MAX_ID_LENGTH = 32
 const validCIDRegex = `^[a-zA-Z0-9][a-zA-Z0-9_.-]+$`
 
-// TODO: move `error` into string: we will return a newid with proper length
 func ValidContainerID(id string) error {
 	if id == "" {
-		return fmt.Errorf("empty is is not allowed")
+		return fmt.Errorf("container ID cannot be empty")
 	}
 
 	if len(id) > MAX_ID_LENGTH {
@@ -24,7 +23,7 @@ func ValidContainerID(id string) error {
 	pattern := regexp.MustCompile(validCIDRegex)
 	matched := pattern.MatchString(id)
 	if !matched {
-		return fmt.Errorf("invalid container/sandbox id: %s", id)
+		return fmt.Errorf("invalid container/sandbox ID: %s", id)
 	}
 	return nil
 }
@@ -45,7 +44,6 @@ func IdMatched(longID string, shortID string) bool {
 func ShortID(id string) string {
 	return truncateID(id)
 }
-
 
 func FileExist(path string) bool {
 	_, err := os.Stat(path)

@@ -68,8 +68,8 @@ const (
 )
 
 const (
-	PauseImage      = "k8s.gcr.io/pause"
-	SandboxVersion  = 1
+	PauseImage     = "k8s.gcr.io/pause"
+	SandboxVersion = 1
 )
 
 // client default values configs

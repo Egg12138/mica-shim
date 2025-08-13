@@ -61,8 +61,4 @@ type SandboxTraits interface {
 	WaitTaskExit(ctx context.Context, containerID string, taskid uint32) (int32, error)
 	SignalTask(ctx context.Context, containerID, processID string, signal syscall.Signal, all bool) error
 	WinsizeTask(ctx context.Context, containerID, processID string, height, width uint32) error
-
 }
-
-
-

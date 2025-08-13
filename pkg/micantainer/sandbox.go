@@ -27,12 +27,12 @@ type SandboxStatus struct {
 }
 
 type SandboxConfig struct {
-	ID            			string
-	Hostname      			string
-	NetworkConfig       NetworkConfig
-	PedConfig      		  PedConfig
-	ContainerConfigs    map[string]*ContainerConfig
-	Annotations         map[string]string
+	ID               string
+	Hostname         string
+	NetworkConfig    NetworkConfig
+	PedConfig        PedConfig
+	ContainerConfigs map[string]*ContainerConfig
+	Annotations      map[string]string
 	// TODO: Pod resource
 	// Maybe crutial for sandbox, we just set shared memory size here
 	// The actual memory management is not micran's work, but micad's
@@ -66,7 +66,7 @@ const (
 type SandboxState struct {
 	State StateString
 	// Unified configurations of client rtos managed by Sandbox
-	Ped string
+	Ped     string
 	Version uint
 }
 
@@ -78,7 +78,7 @@ func (s *SandboxState) Valid() bool {
 
 func (s *SandboxState) Transition(old StateString, new StateString) error {
 	if s.Valid() {
-		return fmt.Errorf("Invalid state %v", s)
+		return fmt.Errorf("invalid state: %v", s)
 	}
 
 	return s.State.validTransition(old, new)
@@ -97,7 +97,7 @@ func (s *StateString) valid() bool {
 
 func (s *StateString) validTransition(old StateString, new StateString) error {
 	if *s != old {
-		return fmt.Errorf("Invalid state %v (Expecting %v)", s, old)
+		return fmt.Errorf("invalid state: %v (expected: %v)", s, old)
 	}
 
 	switch *s {
@@ -122,26 +122,24 @@ func (s *StateString) validTransition(old StateString, new StateString) error {
 		}
 	}
 
-	return fmt.Errorf("Can not move from %v to %v",
-		s, new)
+	return fmt.Errorf("cannot transition from state %v to %v", s, new)
 }
 
 // expand fields of sandboxconfigs as sandbox memebers
 type Sandbox struct {
-	ctx 					context.Context
-	mu					  sync.Mutex
+	ctx context.Context
+	mu  sync.Mutex
 	// fs, storage, devices, volumes...
 	// monitor
-	agent         Agent
-	config        SandboxConfig
-	containers    map[string]*Container
-	id 					  string
-	network       Network
-	state		      SandboxState
+	agent      Agent
+	config     SandboxConfig
+	containers map[string]*Container
+	id         string
+	network    Network
+	state      SandboxState
 
-	annotaLock    sync.RWMutex
-	wg            sync.WaitGroup
-
+	annotaLock sync.RWMutex
+	wg         sync.WaitGroup
 }
 
 // impl SandboxTraits for Sandbox
@@ -166,12 +164,12 @@ func (s *Sandbox) Annotation(key string) (string, error) {
 	defer s.annotaLock.RUnlock()
 	value, found := s.config.Annotations[key]
 	if !found {
-		return "", fmt.Errorf("annotation %s not found", key)
+		return "", fmt.Errorf("annotation not found: %s", key)
 	}
 	return value, nil
 }
 
-func (s *Sandbox) AllAnnotations() map[string]string {	
+func (s *Sandbox) AllAnnotations() map[string]string {
 	s.annotaLock.RLock()
 	defer s.annotaLock.RUnlock()
 	return s.config.Annotations
@@ -195,10 +193,9 @@ func (s *Sandbox) CheckDaemon() *libmica.MicaDaemonState {
 		log.Warnf("failed to fetch daemon state: %v", err)
 		return nil
 	}
-	log.Pretty("%v", state)	
+	log.Pretty("%v", state)
 	return state
 }
-
 
 // status of containers and sandbox itself;
 func (s *Sandbox) Status() SandboxStatus {
@@ -208,13 +205,13 @@ func (s *Sandbox) Status() SandboxStatus {
 		if c.config.Rootfs.Mounted {
 			rootfs = c.config.Rootfs.Target
 		}
-		s := ContainerStatus {
-			ID: c.id,
-			State: c.state,
-			Rootfs: rootfs,
+		s := ContainerStatus{
+			ID:          c.id,
+			State:       c.state,
+			Rootfs:      rootfs,
 			Annotations: c.config.Annotations,
-			StartedAt: c.taskInfo.StartTime,
-			Pid: c.config.Pid,
+			StartedAt:   c.taskInfo.StartTime,
+			Pid:         c.config.Pid,
 		}
 		cStatusList = append(cStatusList, s)
 	}
@@ -231,12 +228,11 @@ func (s *Sandbox) Start(ctx context.Context) error {
 	if err := s.state.Transition(StateReady, StateRunning); err != nil {
 		return err
 	}
-	
+
 	oldState := s.state.State
 	if err := s.setSandboxState(StateRunning); err != nil {
 		return err
 	}
-
 
 	var startErr error
 	defer func() {
@@ -292,9 +288,9 @@ func (s *Sandbox) Stop(ctx context.Context, force bool) error {
 // Stop rtos clients && sandbox
 func (s *Sandbox) Delete(ctx context.Context) error {
 	if s.state.State != StateReady &&
-	s.state.State != StatePaused &&
-	s.state.State != StateStopped {
-		return fmt.Errorf("Sandbox not ready, paused or stopped, impossible to delete")
+		s.state.State != StatePaused &&
+		s.state.State != StateStopped {
+		return fmt.Errorf("sandbox is not ready, paused, or stopped, cannot delete")
 	}
 
 	for _, c := range s.containers {
@@ -364,34 +360,90 @@ func (s *Sandbox) removeContainer(containerID string) error {
 	}
 
 	delete(s.containers, containerID)
+	delete(s.config.ContainerConfigs, containerID)
 	return nil
 }
 
 func (s *Sandbox) DeleteContainer(ctx context.Context, id string) (ContainerTrait, error) {
-	return nil, nil
+	if s == nil {
+		return nil, er.ErrSandboxNil
+	}
+	if id == "" {
+		return nil, er.ErrEmptyContainerID
+	}
+
+	c, ok := s.containers[id]
+	if !ok {
+		return nil, er.ErrContainerNotFound
+	}
+	if err := c.delete(ctx); err != nil {
+		return nil, err
+	}
+
+	if err := s.StoreSandbox(ctx); err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
 func (s *Sandbox) StartContainer(ctx context.Context, id string) (ContainerTrait, error) {
-	return nil, nil
+	c, ok := s.containers[id]
+	if !ok {
+		return nil, er.ErrContainerNotFound
+	}
+	if err := c.start(ctx); err != nil {
+		return nil, err
+	}
+
+	if err := s.StoreSandbox(ctx); err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
 func (s *Sandbox) StopContainer(ctx context.Context, id string, force bool) (ContainerTrait, error) {
-	return nil, nil
+	c, ok := s.containers[id]
+	if !ok {
+		return nil, er.ErrContainerNotFound
+	}
+	if err := c.stop(ctx, force); err != nil {
+		return nil, err
+	}
+
+	if err := s.StoreSandbox(ctx); err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
 func (s *Sandbox) KillContainer(ctx context.Context, id string) (ContainerTrait, error) {
-	return nil, nil
+	c, ok := s.containers[id]
+	if !ok {
+		return nil, er.ErrContainerNotFound
+	}
+	if err := c.kill(ctx, true); err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
 func (s *Sandbox) StatusContainer(id string) (ContainerState, error) {
-	return ContainerState{}, nil
+	cs := ContainerState{}
+	if id == "" {
+		return cs, er.ErrEmptyContainerID
+	}
+
+	// TODO:  status contaienr of sandbox
+	if _, ok := s.containers[id]; !ok {
+		log.Debugf("container %s not found in sandbox %s", id, s.id)
+		return cs, er.ErrContainerNotFound
+	}
+	return cs, nil
 }
 
 func (s *Sandbox) StatsContainer(ctx context.Context, id string) (ContainerStats, error) {
 	return ContainerStats{}, nil
 }
-
-
 
 func (s *Sandbox) WaitContainer(ctx context.Context, id string, pid string) (int32, error) {
 	return 0, nil
@@ -431,7 +483,6 @@ func (s *Sandbox) UpdateContainer(ctx context.Context, id string, resources spec
 	return nil
 }
 
-
 // privates:
 
 func (s *Sandbox) setSandboxState(state StateString) error {
@@ -445,17 +496,13 @@ func (s *Sandbox) setSandboxState(state StateString) error {
 // extracted from sandbox, for serialization
 type FlattenedSandboxState struct {
 	// sandboxContainer SandboxContainerID
-	SandboxContainerID string                     `json:"sandbox_container_id"`
-	State StateString             `json:"state"`
-	Network NetworkConfig         `json:"network"`
-	Version uint                  `json:"version"`
+	SandboxContainerID string        `json:"sandbox_container_id"`
+	State              StateString   `json:"state"`
+	Network            NetworkConfig `json:"network"`
+	Version            uint          `json:"version"`
 }
 
-
-
-
-
-func(s *Sandbox) dumpState(f *FlattenedSandboxState) {
+func (s *Sandbox) dumpState(f *FlattenedSandboxState) {
 	f.SandboxContainerID = s.id
 	f.State = s.state.State
 }
@@ -463,14 +510,14 @@ func(s *Sandbox) dumpState(f *FlattenedSandboxState) {
 func (s *Sandbox) dumpNet(f *FlattenedSandboxState) {
 	id := s.network.NetID()
 	created := s.network.NetworkIsCreated()
-	netConfig := NetworkConfig {
-		NetworkID: id,
+	netConfig := NetworkConfig{
+		NetworkID:      id,
 		NetworkCreated: created,
 	}
 	f.Network = netConfig
 }
 
-func (s *Sandbox)dumpVersion(f *FlattenedSandboxState) {
+func (s *Sandbox) dumpVersion(f *FlattenedSandboxState) {
 	v := s.state.Version
 	if v == 0 {
 		v = defs.SandboxVersion
@@ -483,7 +530,7 @@ func (s *Sandbox) flat() FlattenedSandboxState {
 	flag := FlattenedSandboxState{}
 	s.dumpState(&flag)
 	s.dumpNet(&flag)
-  s.dumpVersion(&flag)
+	s.dumpVersion(&flag)
 
 	return flag
 }
@@ -504,7 +551,6 @@ func (s *Sandbox) sandboxStoragePath() string {
 	return filepath.Join(defs.SandboxDataDir, s.id)
 }
 
-
 func (s *Sandbox) newSandboxStoragePath() (string, error) {
 	dir := s.sandboxStoragePath()
 	if err := os.MkdirAll(dir, defs.DirMode); err != nil {
@@ -518,7 +564,7 @@ func (s *Sandbox) rmSandboxStorage() error {
 	if s.id == "" {
 		return er.ErrEmptySandboxID
 	}
-	dir := s.sandboxStoragePath() 
+	dir := s.sandboxStoragePath()
 	if err := os.RemoveAll(dir); err != nil {
 		return err
 	}

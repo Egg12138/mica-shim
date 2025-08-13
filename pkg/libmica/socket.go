@@ -108,19 +108,19 @@ func (ms *micaSocket) rx() (string, error) {
 func (ms *micaSocket) handleMsg(msg []byte) (string, error) {
 
 	if err := ms.connect(); err != nil {
-		return "", fmt.Errorf("failed to connect to socket: %v", err)
+		return "", fmt.Errorf("failed to connect to socket: %w", err)
 	}
 	defer func() {
 		ms.close()
 	}()
 
 	if err := ms.tx(msg); err != nil {
-		return "", fmt.Errorf("failed to send command: %v", err)
+		return "", fmt.Errorf("failed to send command: %w", err)
 	}
 
 	response, err := ms.rx()
 	if err != nil {
-		return "", fmt.Errorf("failed to receive response: %v", err)
+		return "", fmt.Errorf("failed to receive response: %w", err)
 	}
 
 	switch response {
@@ -129,6 +129,6 @@ func (ms *micaSocket) handleMsg(msg []byte) (string, error) {
 	case defs.MicaFailed:
 		return response, fmt.Errorf("mica daemon reported failure")
 	default:
-		return response, fmt.Errorf("unexpected response format: %s", response)
+		return response, fmt.Errorf("unexpected response format from mica daemon: %s", response)
 	}
 }

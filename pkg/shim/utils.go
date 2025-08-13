@@ -22,7 +22,7 @@ func preparePodSocketAddr(ctx context.Context, bundle string, opts shimv2.StartO
 
 	ociSpec, err := oci.ParseConfigJSON(bundle)
 	if err != nil {
-		return "", fmt.Errorf("failed to load valid runtime config")
+		return "", fmt.Errorf("failed to load valid runtime config: %w", err)
 	}
 
 	ctype, err := oci.GetContainerType(&ociSpec)
@@ -38,13 +38,12 @@ func preparePodSocketAddr(ctx context.Context, bundle string, opts shimv2.StartO
 		// format: unix://<run_root>/s/<sha256(..)>
 		sockAddr, err := shimv2.SocketAddress(ctx, opts.Address, sandboxID)
 		if err != nil {
-			return "", fmt.Errorf("socket address: %w", err)
+			return "", fmt.Errorf("failed to generate socket address: %w", err)
 		}
 		return sockAddr, nil
 	}
 	return "", nil
 }
-
 
 func validBundle(containerID, bundlePath string) (string, error) {
 	if containerID == "" {
@@ -52,7 +51,7 @@ func validBundle(containerID, bundlePath string) (string, error) {
 	}
 
 	if bundlePath == "" {
-		return "", fmt.Errorf("missing bundle path")
+		return "", fmt.Errorf("bundle path is required")
 	}
 
 	// resolve path first to handle symlinks before other checks
@@ -63,7 +62,7 @@ func validBundle(containerID, bundlePath string) (string, error) {
 
 	stat, err := os.Stat(resolved)
 	if err != nil {
-		return "", fmt.Errorf("invalid resolved bundle path '%s': %s", resolved, err)
+		return "", fmt.Errorf("invalid resolved bundle path '%s': %w", resolved, err)
 	}
 	if !stat.IsDir() {
 		return "", fmt.Errorf("invalid resolved bundle path '%s', it should be a directory", resolved)
@@ -105,14 +104,13 @@ func setInternalRootfs(bundle string) error {
 	return nil
 }
 
-
 func isPauseContainer(spec *specs.Spec) bool {
 	if spec.Process == nil || len(spec.Process.Args) == 0 {
 		log.Debugf("spec.Process is nil or empty: %v", spec.Process)
 		return false
 	}
 
-	pausePatterns := 	getPausePatterns()
+	pausePatterns := getPausePatterns()
 
 	for _, arg := range spec.Process.Args {
 		for _, pattern := range pausePatterns {
@@ -125,7 +123,6 @@ func isPauseContainer(spec *specs.Spec) bool {
 	return false
 }
 
-
 // TODO:
 // choose by priority:
 // 1. runtime configurated
@@ -135,10 +132,8 @@ func getPausePatterns() []string {
 	return []string{"pause", "/pause", defs.PauseImage}
 }
 
-
 func handleSchedCore() {
 	log.Infof(`The functions and features of SCHED_CORE can currently be partially accomplished and replaced by Pedestal (default is Xen), 
 	and micran does not need it for now. 
 	However, in the future, we may provide a more unique way to combine the advantages of SCHED_CORE with the isolation strategy of Pedestal.`)
 }
-

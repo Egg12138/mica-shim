@@ -75,7 +75,7 @@ func setupDevLog() {
 func newCommand(ctx context.Context, opts shimv2.StartOpts, cwd string) (*exec.Cmd, error) {
 	self, err := os.Executable()
 	if err != nil {
-		return nil, fmt.Errorf("getting executable of current process: %w", err)
+		return nil, fmt.Errorf("failed to get current executable path: %w", err)
 	}
 
 	var args []string
@@ -106,7 +106,7 @@ func newCommand(ctx context.Context, opts shimv2.StartOpts, cwd string) (*exec.C
 	// The start command, as well as all binary calls to the shim, has the bundle for the container set as the cwd.
 	cmd, err := shimv2.Command(ctx, cmdCfg)
 	if err != nil {
-		return nil, fmt.Errorf("creating shim command: %w", err)
+		return nil, fmt.Errorf("failed to create shim command: %w", err)
 	}
 	return cmd, nil
 }
@@ -114,7 +114,7 @@ func newCommand(ctx context.Context, opts shimv2.StartOpts, cwd string) (*exec.C
 func New(ctx context.Context, id string, publisher shimv2.Publisher, shutdown func()) (shimv2.Shim, error) {
 	ns, found := namespaces.Namespace(ctx)
 	if !found {
-		return nil, fmt.Errorf("namespace cannot be empty")
+		return nil, fmt.Errorf("namespace is required")
 	}
 	s := &shimService{
 		id:        id,
@@ -131,14 +131,15 @@ func New(ctx context.Context, id string, publisher shimv2.Publisher, shutdown fu
 
 	return s, nil
 }
+
 // Containerd:
-// * Shim server interface
-// * (2.0): Remove unified shim interface
-// * type Shim interface {
-// 	shimapi.TaskService
-// 	Cleanup(ctx context.Context) (*shimapi.DeleteResponse, error)
-// 	StartShim(ctx context.Context, opts StartOpts) (string, error)
-// }
+//   - Shim server interface
+//   - (2.0): Remove unified shim interface
+//   - type Shim interface {
+//     shimapi.TaskService
+//     Cleanup(ctx context.Context) (*shimapi.DeleteResponse, error)
+//     StartShim(ctx context.Context, opts StartOpts) (string, error)
+//     }
 func (s *shimService) Cleanup(ctx context.Context) (*taskAPI.DeleteResponse, error) {
 
 	cwd, err := os.Getwd()
@@ -147,12 +148,12 @@ func (s *shimService) Cleanup(ctx context.Context) (*taskAPI.DeleteResponse, err
 	}
 
 	if s.id == "" {
-		return nil, fmt.Errorf("container id is empty, which is not allowed")
+		return nil, fmt.Errorf("container ID is required")
 	}
 
 	ociSpec, err := oci.ParseConfigJSON(cwd)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load valid runtime config")
+		return nil, fmt.Errorf("failed to load valid runtime config: %w", err)
 	}
 
 	ctype, err := oci.GetContainerType(&ociSpec)
@@ -178,9 +179,9 @@ func (s *shimService) Cleanup(ctx context.Context) (*taskAPI.DeleteResponse, err
 	default:
 		log.Infof("unknown container type to be cleaned up: %s", ctype)
 	}
-	
+
 	return &taskAPI.DeleteResponse{
-		ExitedAt:    timestamppb.New(time.Now()),
+		ExitedAt:   timestamppb.New(time.Now()),
 		ExitStatus: 128 + uint32(unix.SIGKILL),
 	}, nil
 
@@ -211,7 +212,7 @@ func (s *shimService) StartShim(ctx context.Context, opts shimv2.StartOpts) (_ s
 	if sockaddr != "" {
 		// write <socketaddr> into <bundle>/address socket
 		if err := shimv2.WriteAddress("address", sockaddr); err != nil {
-			return "", fmt.Errorf("writing socket address for pod container into address file: %w", err)
+			return "", fmt.Errorf("failed to write socket address for pod container: %w", err)
 		}
 		return sockaddr, nil
 	}
@@ -237,21 +238,21 @@ func (s *shimService) StartShim(ctx context.Context, opts shimv2.StartOpts) (_ s
 		// grouping functionality where the new process should be run with the same
 		// shim as an existing container
 		case !shimv2.SocketEaddrinuse(err):
-			return "", fmt.Errorf("address %s already in use: %w", sockAddr, err)
+			return "", fmt.Errorf("socket address already in use: %w", err)
 
 		case shimv2.CanConnect(sockAddr):
 			if err := shimv2.WriteAddress("address", sockAddr); err != nil {
-				return "", fmt.Errorf("writing sandbox/regular container socket address file: %w", err)
+				return "", fmt.Errorf("failed to write sandbox/regular container socket address: %w", err)
 			}
 			return sockAddr, nil
 		}
 
 		if err := shimv2.RemoveSocket(sockAddr); err != nil {
-			return "", fmt.Errorf("removing pre-existing shim socket: %w", err)
+			return "", fmt.Errorf("failed to remove pre-existing shim socket: %w", err)
 		}
 
 		if socket, err = shimv2.NewSocket(sockAddr); err != nil {
-			return "", fmt.Errorf("creating new shim socket (second attempt): %w", err)
+			return "", fmt.Errorf("failed to create new shim socket: %w", err)
 		}
 	}
 
@@ -268,7 +269,7 @@ func (s *shimService) StartShim(ctx context.Context, opts shimv2.StartOpts) (_ s
 
 	sockF, err := socket.File()
 	if err != nil {
-		return "", fmt.Errorf("getting shim socket file descriptor: %w", err)
+		return "", fmt.Errorf("failed to get shim socket file descriptor: %w", err)
 	}
 
 	cmd.ExtraFiles = append(cmd.ExtraFiles, sockF)
@@ -281,7 +282,7 @@ func (s *shimService) StartShim(ctx context.Context, opts shimv2.StartOpts) (_ s
 
 	if err := cmd.Start(); err != nil {
 		sockF.Close()
-		return "", fmt.Errorf("starting shim command: %w", err)
+		return "", fmt.Errorf("failed to start shim command: %w", err)
 	}
 
 	runtime.UnlockOSThread()
@@ -293,7 +294,7 @@ func (s *shimService) StartShim(ctx context.Context, opts shimv2.StartOpts) (_ s
 	}()
 
 	if err := shimv2.WritePidFile("shim.pid", cmd.Process.Pid); err != nil {
-		return "", fmt.Errorf("writing shim pid file: %w", err)
+		return "", fmt.Errorf("failed to write shim PID file: %w", err)
 	}
 
 	return sockAddr, nil
@@ -328,4 +329,3 @@ func getTopic(e interface{}) string {
 	}
 	return cdruntime.TaskUnknownTopic
 }
-
