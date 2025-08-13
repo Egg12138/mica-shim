@@ -1,4 +1,3 @@
-package references
 
 import (
 	"bufio"
@@ -804,13 +803,4 @@ func LoadStateFromDir(baseDir string) (*State, error) {
 		return nil, fmt.Errorf("failed to unmarshal container state from %s: %w", statePath, err)
 	}
 	return &state, nil
-}
-
-func inList(list []string, item string) bool {
-	for _, v := range list {
-		if v == item {
-			return true
-		}
-	}
-	return false
 }

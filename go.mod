@@ -3,9 +3,9 @@ module mica-shim
 go 1.24
 
 require (
-	github.com/container-orchestrated-devices/container-device-interface v0.6.0
 	github.com/containerd/containerd v1.7.27
 	github.com/containerd/containerd/api v1.8.0
+	github.com/containerd/errdefs v0.3.0
 	github.com/containerd/fifo v1.1.0
 	github.com/containers/podman/v4 v4.9.3
 	github.com/go-openapi/runtime v0.26.0
@@ -15,6 +15,7 @@ require (
 	github.com/opencontainers/runtime-spec v1.2.0
 	github.com/sirupsen/logrus v1.9.3
 	github.com/vishvananda/netlink v1.2.1-beta.2
+	golang.org/x/sys v0.31.0
 	google.golang.org/protobuf v1.35.2
 	k8s.io/apimachinery v0.30.0
 )
@@ -29,11 +30,11 @@ require (
 	github.com/blang/semver v3.5.1+incompatible // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/cilium/ebpf v0.16.0 // indirect
+	github.com/container-orchestrated-devices/container-device-interface v0.6.0 // indirect
 	github.com/containerd/cgroups v1.1.0 // indirect
 	github.com/containerd/cgroups/v3 v3.0.2 // indirect
 	github.com/containerd/console v1.0.4 // indirect
 	github.com/containerd/continuity v0.4.4 // indirect
-	github.com/containerd/errdefs v0.3.0 // indirect
 	github.com/containerd/go-runc v1.1.0 // indirect
 	github.com/containerd/log v0.1.0 // indirect
 	github.com/containerd/platforms v0.2.1 // indirect
@@ -117,7 +118,6 @@ require (
 	golang.org/x/net v0.38.0 // indirect
 	golang.org/x/oauth2 v0.27.0 // indirect
 	golang.org/x/sync v0.12.0 // indirect
-	golang.org/x/sys v0.31.0 // indirect
 	golang.org/x/text v0.23.0 // indirect
 	google.golang.org/genproto v0.0.0-20240123012728-ef4313101c80 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240401170217-c3f982113cda // indirect

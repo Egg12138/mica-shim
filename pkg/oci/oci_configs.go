@@ -6,10 +6,10 @@ import (
 	defs "mica-shim/definitions"
 	cntr "mica-shim/pkg/micantainer"
 
-	"github.com/container-orchestrated-devices/container-device-interface/specs-go"
 	ctrAnnotations "github.com/containerd/containerd/pkg/cri/annotations"
 	podmanAnnotations "github.com/containers/podman/v4/pkg/annotations"
 	dockershimAnnotations "github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/annotations/dockershim"
+	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
 type annotationContainerType struct {

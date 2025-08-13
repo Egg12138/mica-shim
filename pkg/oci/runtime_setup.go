@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/container-orchestrated-devices/container-device-interface/specs-go"
+	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
 type RuntimeConfig struct {

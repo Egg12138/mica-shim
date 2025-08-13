@@ -15,9 +15,10 @@ import (
 
 	"github.com/containerd/containerd/api/events"
 	taskAPI "github.com/containerd/containerd/api/runtime/task/v2"
-	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/namespaces"
 	cdruntime "github.com/containerd/containerd/runtime"
+	"golang.org/x/sys/unix"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	shimv2 "github.com/containerd/containerd/runtime/v2/shim"
 )
@@ -35,7 +36,7 @@ type exit struct {
 }
 
 type shimService struct {
-	sandbox    *cntr.Sandbox
+	sandbox    *cntr.SandboxTraits
 	containers map[string]*cntr.Container
 	shimPid    uint32
 	// context:
@@ -139,12 +140,55 @@ func New(ctx context.Context, id string, publisher shimv2.Publisher, shutdown fu
 // 	StartShim(ctx context.Context, opts StartOpts) (string, error)
 // }
 func (s *shimService) Cleanup(ctx context.Context) (*taskAPI.DeleteResponse, error) {
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, err
 	}
-	return nil, errdefs.ErrNotImplemented
 
+	if s.id == "" {
+		return nil, fmt.Errorf("container id is empty, which is not allowed")
+	}
+
+	ociSpec, err := oci.ParseConfigJSON(cwd)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load valid runtime config")
+	}
+
+	ctype, err := oci.GetContainerType(&ociSpec)
+	if err != nil {
+		return nil, err
+	}
+
+	switch ctype {
+	case cntr.PodSandbox, cntr.SingleContainer:
+		err = cleanupContainer(ctx, s.id, s.id, cwd)
+		if err != nil {
+			return nil, err
+		}
+	case cntr.PodContainer:
+		sandboxID, err := oci.GetSandboxID(&ociSpec)
+		if err != nil {
+			return nil, err
+		}
+		err = cleanupContainer(ctx, sandboxID, s.id, cwd)
+		if err != nil {
+			return nil, err
+		}
+	default:
+		log.Infof("unknown container type to be cleaned up: %s", ctype)
+	}
+	
+	return &taskAPI.DeleteResponse{
+		ExitedAt:    timestamppb.New(time.Now()),
+		ExitStatus: 128 + uint32(unix.SIGKILL),
+	}, nil
+
+}
+
+// Cleanup a Container instance from a pod
+func cleanupContainer(ctx context.Context, sandboxID, containerID, bundle string) error {
+	return cntr.CleanupContainer(ctx, sandboxID, containerID, false)
 }
 
 func (s *shimService) StartShim(ctx context.Context, opts shimv2.StartOpts) (_ string, retErr error) {
@@ -232,6 +276,7 @@ func (s *shimService) StartShim(ctx context.Context, opts shimv2.StartOpts) (_ s
 	runtime.LockOSThread()
 	if os.Getenv("SCHED_CORE") != "" {
 		log.Debugf("enable sched_core features")
+		handleSchedCore()
 	}
 
 	if err := cmd.Start(); err != nil {

@@ -67,6 +67,11 @@ const (
 	PipeSize        = RuntimePrefix + "pipe_size"
 )
 
+const (
+	PauseImage      = "k8s.gcr.io/pause"
+	SandboxVersion  = 1
+)
+
 // client default values configs
 const (
 	DefaultNcpu       = 1

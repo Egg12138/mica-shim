@@ -1,10 +1,8 @@
-package references
 
 import (
 	"fmt"
 )
 
-package entry
 
 import (
     "context"
@@ -273,3 +271,22 @@ For your MICA runtime:
 - Pod containers run real RTOS workloads using sandbox's resources
 - Consider CPU affinity and memory isolation between pods
 */
+type ContainerdSandboxOps interface {
+	// ID is a sandbox identifier
+	ID() string
+	// PID returns sandbox's process PID or error if its not yet started.
+	PID() (uint32, error)
+	// NewContainer creates new container that will belong to this sandbox
+	NewContainer(ctx context.Context, id string, opts ...containerd.NewContainerOpts) (Container, error)
+	// Labels returns the labels set on the sandbox
+	Labels(ctx context.Context) (map[string]string, error)
+	// Start starts new sandbox instance
+	Start(ctx context.Context) error
+	// Stop sends stop request to the shim instance.
+	Stop(ctx context.Context) error
+	// Wait blocks until sandbox process exits.
+	Wait(ctx context.Context) (<-chan containerd.ExitStatus, error)
+	// Shutdown removes sandbox from the metadata store and shutdowns shim instance.
+	Shutdown(ctx context.Context) error
+}
+

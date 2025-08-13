@@ -50,7 +50,6 @@ type NetworkConfig struct {
 
 
 type Network interface {
-	NetworkSetup(id uint32, config NetworkConfig) error
 	NetworkIsCreated() bool 
 	NetID() string
 	NetworkCleanup() error

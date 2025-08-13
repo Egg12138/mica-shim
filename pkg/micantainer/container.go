@@ -1,0 +1,509 @@
+package micantainer
+
+import (
+	"context"
+	"fmt"
+	defs "mica-shim/definitions"
+	log "mica-shim/logger"
+	utils "mica-shim/pkg/fileutils"
+	"path/filepath"
+	"time"
+
+	vc "github.com/kata-containers/kata-containers/src/runtime/virtcontainers"
+	"github.com/opencontainers/runtime-spec/specs-go"
+)
+
+type ContainerStats struct {
+	NetworkStats []*NetworkStats
+}
+
+type ContainerState struct {
+	Bundle string           `json:"bundle"`
+	ID     string           `json:"id"`
+	CType  ContainerType    `json:"c_type"`
+	State StateString `json:"state"`
+}
+
+
+
+
+func (s *ContainerState) Valid() bool {
+	return s.State.valid()
+}
+
+func (s *ContainerState) ValidTransition(old StateString, new StateString) error {
+	return s.State.validTransition(old, new)
+}
+
+type ContainerStatus struct {
+	Spec        *specs.Spec
+	StartedAt   time.Time
+	State       ContainerState
+	ID          string
+	Rootfs      string
+	Pid         int
+	Annotations map[string]string
+}
+
+// NOTICE: `task` represent the process, thread or other task runner in RTOS
+type RTOSTask struct {
+	StartTime    time.Time
+	// TaskID is an indentifier of the task, managed by micran
+	TaskID       uint32
+	// memory address of the receiver inside rtos
+	ReceiverAddr uint64
+}
+
+
+// TALK： 在micran层面，我们有时候需要适当跳过mica,来直接通过Xen对rtos传输信息；
+// 未来整合的时候，都作为mica 一部分
+// Agent 本身始终在 host中
+// 我们需要一个通用的 Agent 设计策略 来：
+//  1. 管理 rtos 的devices, net, tasks...
+//  2. 在agent中处理IO吗？
+//  3. 
+type Agent struct {
+
+}
+
+type ContainerConfig struct {
+	ID             string
+	Rootfs         RootFs
+	Mount          []Mount
+	ReadOnlyRootfs bool
+	// typically the shim pid
+	Pid            int
+	Annotations    map[string]string
+
+	RelativePath string            `json:"relative_path"`
+	PedestalType PedType           `json:"pedestal_type"`
+	PedestalConf string            `json:"pedestal_conf"`
+	OS           string            `json:"os"`
+	NCpu         int               `json:"ncpu"` // requested CPU count (default = 1)
+
+	CpuLimit   int    `json:"cpu_limit"`   // CPU limit from OCI spec
+	CpusetCpus string `json:"cpuset_cpus"` // cpuset.cpus specification
+	CpuShares  uint64 `json:"cpu_shares"`  // CPU shares (relative weight)
+	CpuQuota   int64  `json:"cpu_quota"`   // CPU quota in microseconds
+	CpuPeriod  uint64 `json:"cpu_period"`  // CPU period in microseconds
+
+	// Memory resource limits from OCI spec
+	MemoryLimit       int64   `json:"memory_limit"`       // Memory limit in bytes
+	MemoryReservation int64   `json:"memory_reservation"` // Memory soft limit in bytes
+	MemorySwap        int64   `json:"memory_swap"`        // Memory + swap limit in bytes
+	MemoryKernel      int64   `json:"memory_kernel"`      // Kernel memory limit in bytes
+	MemorySwappiness  *uint64 `json:"memory_swappiness"`  // Memory swappiness (0-100)
+	OomKillDisable    bool    `json:"oom_kill_disable"`   // Whether to disable OOM killer
+
+	cpu int // allocated CPU (-1 if not allocated) after stat loaded
+
+
+}
+
+
+type RootFs struct {
+	// Source specifies the path of the rootfs in host filesystem
+	Source string
+	Target string
+	// Target specify where the rootfs is mounted if it has been mounted
+	// Type specifies the type of filesystem to mount.
+	Type string
+	// Options specifies zero or more fstab style mount options.
+	Options []string
+	// Mounted specifies whether the rootfs has be mounted or not
+	Mounted bool
+}
+
+type ContainerType string
+
+// List different types of containers
+const (
+	// PodContainer identifies a container that should be associated with an existing pod
+	PodContainer ContainerType = "pod_container"
+	// PodSandbox identifies an infra container that will be used to create the pod
+	PodSandbox ContainerType = "pod_sandbox"
+	SideCar    ContainerType = "side_car"
+	// SingleContainer is utilized to describe a container that didn't have a container/sandbox
+	// annotation applied. This is expected when dealing with non-pod container (ie, running
+	// from ctr, podman, etc).
+	SingleContainer ContainerType = "single_container"
+	// UnknownContainerType specifies a container that provides container type annotation, but
+	// it is unknown.
+	UnknownContainerType ContainerType = "unknown_container_type"
+)
+
+type Container struct {
+	ctr     context.Context
+	config  *ContainerConfig
+	sandbox *Sandbox
+	id      string
+	// in dir <sandboxID>/<containerID>
+	containerPath string
+	mounts        []Mount
+	state         ContainerState
+	taskInfo      RTOSTask
+}
+
+
+func (ct ContainerType) IsRegularContainer() bool {
+	return ct == SingleContainer
+}
+
+// A pod container can not be converted into a sandbox
+func (ct ContainerType) CanBeSandbox() bool {
+	return ct == PodSandbox || ct == SingleContainer
+}
+
+func (ct ContainerType) IsCriSandbox() bool {
+	return ct == PodSandbox
+}
+
+func From(ct vc.ContainerType) ContainerType {
+	var into ContainerType = UnknownContainerType
+	switch ct {
+	case vc.PodContainer:
+		into = PodContainer
+	case vc.PodSandbox:
+		into = PodSandbox
+	case vc.SingleContainer:
+		into = SingleContainer
+	default:
+		into = UnknownContainerType
+	}
+	return into
+}
+
+// NOTICE: cleanup exclusively
+func CleanupContainer(ctx context.Context, sandboxID string, containerID string, force bool) error {
+	if sandboxID == "" || containerID == "" {
+		return fmt.Errorf("sandboxID %s or containerID %s is empty", sandboxID, containerID)
+	}
+
+	err := cleanupPersistResource(ctx, sandboxID)
+	if err != nil {
+		return err
+	}
+	return nil
+
+	// err = cleanupContainer(ctx, sandboxID, containerID, force)
+	// if err != nil {
+	// 	return err
+	// }
+}
+
+
+func cleanupPersistResource(ctx context.Context, sandboxID string) error {
+	log.Infof("persist resource is not supported yet")
+	return nil
+}
+
+// ******* container configs ops *******
+
+func (cc *ContainerConfig) GetFirmwarePath() string {
+	return cc.RelativePath
+}
+
+
+
+// PedestalType returns the pedestal type
+func (cc *ContainerConfig) GetPedestalType() PedType {
+	return cc.PedestalType
+}
+
+
+
+
+// cpuUnset is alway callee, hence lock is not needed
+func (cc *ContainerConfig) cpuUnset() bool {
+	return cc.cpu == -1
+}
+// PedestalConf returns the pedestal configuration
+func (cc *ContainerConfig) GetPedestalConf() string {
+	return cc.PedestalConf
+}
+
+func (cc *ContainerConfig) GetOS() string {
+	return cc.OS
+}
+
+
+// ******* core handler ********
+
+// A new container instance, initialized with complete configuration
+// func newContainer(r *taskAPI.CreateTaskRequest, config *ContainerConfig) (*Container, error) {
+func newContainer(ctx context.Context, s *Sandbox, cc *ContainerConfig) (*Container, error) {
+	container := &Container{
+		id:       cc.ID,
+		config:   cc,
+	}
+
+	if !container.validMicaContainer() {
+		return nil, fmt.Errorf("invalid mica container: %+v", container)
+	}
+
+	return container, nil
+}
+
+func (c *Container) start(ctx context.Context) error {
+	if err := c.checkSandboxRunnig("start"); err != nil {
+		return err
+	}
+
+
+}
+	
+func (c *Container) createInSanbox(ctx context.Context) error {
+
+
+	// TODO:  TOO many works
+	rtosTask, err := createContainerInSandbox(ctx, c.sandbox, c.config)
+	if err != nil {
+		return err
+	}
+
+	c.taskInfo = *rtosTask
+
+	if err := c.setContainerState(ctx, StateReady); err != nil {
+		return err
+	}
+	return nil
+}
+
+
+func (c *Container) stop(ctx context.Context, force bool) error {
+	if c.state.State == StateStopped {
+		log.Infof("Container %s is already stopped", c.id)
+		return nil
+	}
+	if err := c.state.State.validTransition(c.state.State, StateStopped); err != nil {
+		return err
+	}
+
+	c.kill(ctx, true)
+	if err := c.setContainerState(ctx, StateStopped); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+
+func (c *Container) kill(ctx context.Context, force bool) error {
+	return nil
+}
+
+func (c *Container) delete(ctx context.Context) error {
+	if c.state.State != StateReady &&
+	c.state.State != StatePaused &&
+	c.state.State != StateStopped {
+		return fmt.Errorf("Sandbox not ready, paused or stopped, impossible to delete")
+	}
+
+	if err := c.sandbox.removeContainer(c.id); err != nil {
+		return err
+	}
+
+	return c.sandbox.StoreSandbox(ctx)
+}
+
+func (c *Container) setContainerState(ctx context.Context, state StateString) error {
+	if state == "" {
+		return fmt.Errorf("state is empty")
+	}	
+
+	log.Debugf("set container state from %s to %s", c.state.State, state)
+	c.state.State = state
+	if err := c.sandbox.StoreSandbox(ctx); err != nil {
+		log.Errorf("save sandbox state failed")
+		return err
+	}
+	return nil
+}
+
+func (c *Container) ID() string {
+	return c.id
+}
+
+func (c *Container) Sandbox() SandboxTraits {
+	return c.sandbox
+}
+
+func (c *Container) TaskInfo() RTOSTask {
+	return c.taskInfo
+}
+
+
+func (c *Container) Status() StateString {
+	return c.state.State
+}
+
+func (c *Container) State() *ContainerState {
+	return &c.state
+}
+
+
+// check OS value matches
+func validOS(os string) bool {
+	ret := inList(defs.PreservedOS[:], os)
+	return ret
+}
+
+func validFirmware(root, firmware string) bool {
+	// <bundle>/rootfs/<firmware>
+	resolved, err := utils.ResolvePath(filepath.Join(root, firmware))
+	if err != nil {
+		return false
+	}
+	ret := utils.FileExist(resolved)
+	return ret
+}
+
+func validCompatibility(_ *ContainerConfig) bool {
+	// TODO: needed to ? how to check compatibility?
+	return true
+}
+
+// NOTICE: Xen is the only supported ped for now
+func (c *Container) validMicaContainer() bool {
+
+	osValid := validOS(c.config.GetOS())
+	fwValid := validFirmware(c.containerPath, c.config.GetFirmwarePath())
+	compatValid := validCompatibility(c.config)
+	judge := osValid && fwValid && compatValid
+	log.Debugf(`
+		validMicaContainer:
+		osValid = %v,
+		fwValid = %v,
+		compatValid = %v,
+		judge = %v
+	`, osValid, fwValid,compatValid, judge)
+
+	return judge
+}
+
+
+func (c *Container) GetAnnotations() map[string]string {		
+	return c.config.Annotations
+}
+
+func (c *Container) GetPid() int {
+	return c.config.Pid
+}
+
+func (c *Container) Sandbox() SandboxTraits {
+	return c.sandbox
+}
+
+func (c *Container) GetConfig() *ContainerConfig {
+	return c.config
+}
+
+// GetMemoryLimit returns the memory limit in bytes
+func (c *Container) GetMemoryLimit() uint64 {
+	return uint64(c.config.MemoryLimit)
+}
+
+func (c *Container) allocClientCPU() error {
+	// Use container-specific CPU limit instead of global HostMaxCPU
+	cpu, err := allocCPUWithLimit(c.config.NCpu, c.config)
+	if err != nil {
+		return err
+	}
+	c.config.cpu = cpu
+	return nil
+}
+
+
+// allocCPUWithLimit allocates CPU considering container-specific limits
+func allocCPUWithLimit(ncpu int, config *ContainerConfig) (int, error) {
+	if ncpu < 1 {
+		return 0, fmt.Errorf("ncpu must be at least 1, got %d", ncpu)
+	}
+
+	maxCPU := getContainerCPULimit(config)
+	if ncpu > maxCPU {
+		return 0, fmt.Errorf("requested ncpu %d exceeds container CPU limit %d", ncpu, maxCPU)
+	}
+
+	// Handle cpuset.cpus if specified
+	if config != nil && config.CpusetCpus != "" {
+		// For now, log the cpuset requirement but use simple allocation
+		// TODO: Implement proper cpuset.cpus parsing and allocation
+		log.Infof("Container specifies cpuset.cpus: %s", config.CpusetCpus)
+	}
+
+	// Simple round-robin allocation based on current time within the allowed range
+	// TODO: let containerd the manager CPU selector, and limit the CPU perspective
+	allocatedCPU := int(time.Now().UnixNano()) % maxCPU
+
+	log.Debugf("Allocated CPU %d for ncpu=%d (container limit: %d)", allocatedCPU, ncpu, maxCPU)
+	return allocatedCPU, nil
+}
+
+
+// getContainerCPULimit returns the effective CPU limit for a container
+// considering both OCI spec limits and system constraints
+func getContainerCPULimit(cfg *ContainerConfig) int {
+	// TODO: runtime can not detect max CPU numbers Xen can handels
+	systemCPUs := maxCPUNumber()
+
+	// If container has specific CPU limit from OCI spec, use it
+	if cfg != nil {
+		log.Debugf(`cpu config:
+		cpuLimit: %d, 
+		cpuPeriod: %d, 
+		cpuQuota: %d, 
+		cpuShares: %d, 
+		cpusetCpus: %s, 
+		`, cfg.CpuLimit, cfg.CpuPeriod, cfg.CpuQuota, cfg.CpuShares, cfg.CpusetCpus)
+
+	}
+	if cfg != nil && cfg.CpuLimit > 0 {
+		return min(cfg.CpuLimit, int(systemCPUs))
+	}
+
+	// Default fallback - use all available CPUs but reserve one for host
+	defaultLimit := int(systemCPUs)
+	if defaultLimit > 1 {
+		defaultLimit -= 1
+	}
+
+	return defaultLimit
+}
+
+
+func (c *Container) GetClientCPU() (int, error) {
+	if c.config.cpuUnset() {
+		if err := c.allocClientCPU(); err != nil {
+			return c.config.cpu, err
+		}
+	}
+	return c.config.cpu, nil
+}
+
+// Container::<static fields>
+func (c *Container) SaveState() error {
+	failed, failed1 := false, false
+	var err error
+	var err1 error
+	st := c.State()
+	stateInBundle := filepath.Join(c.containerPath, defs.MicantainerStateFile)
+	stateInMicranDir := filepath.Join(defs.MicranStateDir, c.ID, defs.MicantainerStateFile)
+
+	if err = utils.SaveStructToFile(stateInBundle, st); err != nil {
+		failed = true
+		err = fmt.Errorf("failed to save state to <%s>: %w", stateInBundle, err)
+	}
+
+	if err1 = utils.SaveStructToFile(stateInMicranDir, st); err1 != nil {
+		failed1 = true
+		err1 = fmt.Errorf("failed to save state to <%s>: %w", stateInBundle, err1)
+	}
+
+	if failed1 && failed {
+		return fmt.Errorf("failed to save container state: %w, %w", err, err1)
+	}
+	return nil
+}
+
+

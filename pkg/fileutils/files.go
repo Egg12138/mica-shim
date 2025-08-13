@@ -1,10 +1,12 @@
 package fileutils
 
 import (
+	"encoding/json"
 	"fmt"
 	defs "mica-shim/definitions"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	log "mica-shim/logger"
 )
@@ -69,3 +71,73 @@ func SetReadonly(path string) error {
 		return os.Chmod(path, mode)
 	})
 }
+
+func SaveStructToFile(file string, state any) error {
+	structBytes, err := json.Marshal(state)
+	if err != nil {
+		log.Pretty("err: %v, state: %v", err, state)
+		return fmt.Errorf("failed to serialize struct: %w", err)
+	}
+	return os.WriteFile(file, structBytes, defs.FileMode)
+}
+
+
+// MkdirAllWithInheritedOwner creates a directory named path, along with any necessary parents.
+// It creates the missing directories with the ownership of the last existing parent.
+// The path needs to be absolute and the method doesn't handle symlink.
+func MkdirAllWithInheritedOwner(path string, perm os.FileMode) error {
+	if len(path) == 0 {
+		return fmt.Errorf("the path is empty")
+	}
+
+	// By default, use the uid and gid of the calling process.
+	var uid = os.Getuid()
+	var gid = os.Getgid()
+
+	paths := getAllParentPaths(path)
+	for _, curPath := range paths {
+		info, err := os.Stat(curPath)
+
+		if err != nil {
+			if err = os.MkdirAll(curPath, perm); err != nil {
+				return fmt.Errorf("mkdir call failed: %v", err.Error())
+			}
+			if err = syscall.Chown(curPath, uid, gid); err != nil {
+				return fmt.Errorf("chown syscall failed: %v", err.Error())
+			}
+			continue
+		}
+
+		if !info.IsDir() {
+			return &os.PathError{Op: "mkdir", Path: curPath, Err: syscall.ENOTDIR}
+		}
+		if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+			uid = int(stat.Uid)
+			gid = int(stat.Gid)
+		} else {
+			return fmt.Errorf("fail to retrieve the uid and gid of path %s", curPath)
+		}
+	}
+	return nil
+}
+
+
+// getAllParentPaths returns all the parent directories of a path, including itself but excluding root directory "/".
+// For example, "/foo/bar/biz" returns {"/foo", "/foo/bar", "/foo/bar/biz"}
+func getAllParentPaths(path string) []string {
+	if path == "/" || path == "." {
+		return []string{}
+	}
+
+	paths := []string{filepath.Clean(path)}
+	cur := path
+	var parent string
+	for cur != "/" && cur != "." {
+		parent = filepath.Dir(cur)
+		paths = append([]string{parent}, paths...)
+		cur = parent
+	}
+	// remove the "/" or "." from the return result
+	return paths[1:]
+}
+

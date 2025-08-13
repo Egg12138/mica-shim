@@ -45,6 +45,7 @@
 - [ ] pty
 - [ ] k8s Pod, Sandbox support
 - [x] 镜像规制考虑
+- [ ]
 
 ## ️ Roadmap
 
@@ -58,6 +59,8 @@
 - [ ] 持久化
 - [ ] 网络
 - [ ] 保证mica daemon 和 micran 生命周期不一致时容器状态的一致性
+- [ ] k8s deployment demo
+- [ ] kubeedge deployment demo
 
 ## 近期Issues
 

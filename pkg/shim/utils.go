@@ -3,33 +3,35 @@ package shim
 import (
 	"context"
 	"fmt"
+	defs "mica-shim/definitions"
 	log "mica-shim/logger"
 	"mica-shim/pkg/fileutils"
 	cntr "mica-shim/pkg/micantainer"
 	"mica-shim/pkg/oci"
 	"os"
 	"path/filepath"
+	"strings"
 
-	"github.com/container-orchestrated-devices/container-device-interface/specs-go"
 	shimv2 "github.com/containerd/containerd/runtime/v2/shim"
+	specs "github.com/opencontainers/runtime-spec/specs-go"
 )
 
 // Generate socket address for pod managed by this shim in future
 // As for regular container and sandbox, the address will be handled in Create()
 func preparePodSocketAddr(ctx context.Context, bundle string, opts shimv2.StartOpts) (string, error) {
 
-	ociSpec := loadOCISpec(bundle)
-	if ociSpec == nil {
+	ociSpec, err := oci.ParseConfigJSON(bundle)
+	if err != nil {
 		return "", fmt.Errorf("failed to load valid runtime config")
 	}
 
-	ctype, err := oci.GetContainerType(ociSpec)
+	ctype, err := oci.GetContainerType(&ociSpec)
 	if err != nil {
 		return "", err
 	}
 
 	if ctype == cntr.PodContainer {
-		sandboxID, err := oci.GetSandboxID(ociSpec)
+		sandboxID, err := oci.GetSandboxID(&ociSpec)
 		if err != nil {
 			return "", err
 		}
@@ -43,13 +45,6 @@ func preparePodSocketAddr(ctx context.Context, bundle string, opts shimv2.StartO
 	return "", nil
 }
 
-func loadOCISpec(bundle string) *specs.Spec {
-	ociSpec, err := oci.ParseConfigJSON(bundle)
-	if err != nil {
-		return nil
-	}
-	return &ociSpec
-}
 
 func validBundle(containerID, bundlePath string) (string, error) {
 	if containerID == "" {
@@ -93,6 +88,7 @@ func validRootfs(resolved string) error {
 	if err := setInternalRootfs(resolved); err != nil {
 		return fmt.Errorf("failed to set internal rootfs \"%s\": %w", rootfs, err)
 	}
+	return nil
 }
 
 // bundle is <CONTINAER_STATE_ROOT>/<container_id>
@@ -108,3 +104,41 @@ func setInternalRootfs(bundle string) error {
 	os.Chdir(bundle)
 	return nil
 }
+
+
+func isPauseContainer(spec *specs.Spec) bool {
+	if spec.Process == nil || len(spec.Process.Args) == 0 {
+		log.Debugf("spec.Process is nil or empty: %v", spec.Process)
+		return false
+	}
+
+	pausePatterns := 	getPausePatterns()
+
+	for _, arg := range spec.Process.Args {
+		for _, pattern := range pausePatterns {
+			if strings.Contains(arg, pattern) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+
+// TODO:
+// choose by priority:
+// 1. runtime configurated
+// 2. alternatives, in defs.
+// 3. default k8s.gcr.io/pause
+func getPausePatterns() []string {
+	return []string{"pause", "/pause", defs.PauseImage}
+}
+
+
+func handleSchedCore() {
+	log.Infof(`The functions and features of SCHED_CORE can currently be partially accomplished and replaced by Pedestal (default is Xen), 
+	and micran does not need it for now. 
+	However, in the future, we may provide a more unique way to combine the advantages of SCHED_CORE with the isolation strategy of Pedestal.`)
+}
+

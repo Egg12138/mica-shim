@@ -1,8 +1,10 @@
 package fileutils
 
 import (
+	"errors"
 	"fmt"
 	log "mica-shim/logger"
+	"os"
 	"regexp"
 )
 
@@ -42,4 +44,10 @@ func IdMatched(longID string, shortID string) bool {
 
 func ShortID(id string) string {
 	return truncateID(id)
+}
+
+
+func FileExist(path string) bool {
+	_, err := os.Stat(path)
+	return !errors.Is(err, os.ErrNotExist)
 }

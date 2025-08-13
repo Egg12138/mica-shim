@@ -1,4 +1,3 @@
-package references
 
 import (
 	"context"
