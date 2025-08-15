@@ -311,22 +311,21 @@ func (c *Container) delete(ctx context.Context) error {
 	return c.sandbox.StoreSandbox(ctx)
 }
 
-func (c *Container) setContainerState(ctx context.Context, state StateString) error {
-	if state == "" {
-		return fmt.Errorf("state cannot be empty")
-	}
-
-	log.Debugf("set container state from %s to %s", c.state.State, state)
-	c.state.State = state
-	if err := c.sandbox.StoreSandbox(ctx); err != nil {
-		log.Errorf("save sandbox state failed")
-		return err
-	}
-	return nil
-}
-
 func (c *Container) ID() string {
 	return c.id
+}
+
+func (c *Container) GetAnnotations() map[string]string {
+	return c.config.Annotations
+}
+
+func (c *Container) GetPid() int {
+	return c.config.Pid
+}
+
+// GetMemoryLimit returns the memory limit in bytes
+func (c *Container) GetMemoryLimit() uint64 {
+	return uint64(c.config.MemoryLimit)
 }
 
 func (c *Container) Sandbox() SandboxTraits {
@@ -384,19 +383,21 @@ func (c *Container) validMicaContainer() bool {
 	return judge
 }
 
-func (c *Container) GetAnnotations() map[string]string {
-	return c.config.Annotations
-}
+func (c *Container) setContainerState(ctx context.Context, state StateString) error {
+	if state == "" {
+		return fmt.Errorf("state cannot be empty")
+	}
 
-func (c *Container) GetPid() int {
-	return c.config.Pid
+	log.Debugf("set container state from %s to %s", c.state.State, state)
+	c.state.State = state
+	if err := c.sandbox.StoreSandbox(ctx); err != nil {
+		log.Errorf("save sandbox state failed")
+		return err
+	}
+	return nil
 }
 
 // GetMemoryLimit returns the memory limit in bytes
-func (c *Container) GetMemoryLimit() uint64 {
-	return uint64(c.config.MemoryLimit)
-}
-
 func (c *Container) allocClientCPU() error {
 	// Use container-specific CPU limit instead of global HostMaxCPU
 	cpu, err := allocCPUWithLimit(c.config.NCpu, c.config)

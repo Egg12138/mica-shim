@@ -9,7 +9,7 @@ import (
 )
 
 const MAX_ID_LENGTH = 32
-const validCIDRegex = `^[a-zA-Z0-9][a-zA-Z0-9_.-]+$`
+const validCIDRegex = "^[a-zA-Z0-9][a-zA-Z0-9_.-]+$"
 
 func ValidContainerID(id string) error {
 	if id == "" {
@@ -37,12 +37,12 @@ func truncateID(id string) string {
 	return string(idBytes)
 }
 
-func IdMatched(longID string, shortID string) bool {
-	return truncateID(longID) == shortID
-}
-
 func ShortID(id string) string {
 	return truncateID(id)
+}
+
+func IdMatched(longID string, shortID string) bool {
+	return truncateID(longID) == shortID
 }
 
 func FileExist(path string) bool {

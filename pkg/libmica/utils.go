@@ -5,6 +5,7 @@ import (
 	"strings"
 )
 
+// Helper functions
 func startWithMicaPrefix(fieldName string) bool {
 	return strings.HasPrefix(fieldName, defs.MicraLabelPrefix)
 }

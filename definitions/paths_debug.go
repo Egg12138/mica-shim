@@ -23,5 +23,5 @@ const (
 	MicantainerStateFile = "state.json"
 	SandboxStateFile     = "state.json"
 	MicranStateDir       = "/tmp/micran"
-	SandboxDir           = "/tmp/micran/sandbox"
+	SandboxDataDir       = "/tmp/micran/sandbox"
 )

@@ -8,6 +8,7 @@ import (
 	"strconv"
 )
 
+// Constants
 const MICAD_PIDFILE = defs.DaemonRoot + "/micad.pid"
 const (
 	DaemonRunning = "runnig"
@@ -15,12 +16,14 @@ const (
 	DaemonStopped = "stopped"
 )
 
+// Types
 type MicaDaemonState struct {
 	Pid       int
 	State     string
 	Listening bool
 }
 
+// Functions
 // TODO: check more about kernel-level state
 func DaemonState() (*MicaDaemonState, error) {
 	pidFile, err := os.OpenFile(MICAD_PIDFILE, os.O_RDONLY, 0644)

@@ -14,12 +14,19 @@ import (
 
 // TODO: seperate into mick_socket.go
 
+// Types
 // micaSocket handles Unix domain socket communication with mica daemon
 type micaSocket struct {
 	socketPath string
 	conn       net.Conn
 }
 
+// Constructors
+func newMicaSocket(socketPath string) *micaSocket {
+	return &micaSocket{socketPath: socketPath}
+}
+
+// Helper functions
 func validSocketPath(socketPath string) bool {
 	if st, err := os.Stat(socketPath); err != nil {
 		return false
@@ -28,10 +35,7 @@ func validSocketPath(socketPath string) bool {
 	}
 }
 
-func newMicaSocket(socketPath string) *micaSocket {
-	return &micaSocket{socketPath: socketPath}
-}
-
+// micaSocket methods
 func (ms *micaSocket) connect() error {
 	conn, err := net.Dial("unix", ms.socketPath)
 	if err != nil {

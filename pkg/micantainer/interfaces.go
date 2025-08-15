@@ -18,31 +18,33 @@ type MicantainerManager interface {
 
 type ContainerTrait interface {
 	// RTOS may contains no the concept of PID, so we use a dummy value
+	ID() string
 	GetAnnotations() map[string]string
 	GetPid() int
-	ID() string
 	Sandbox() SandboxTraits
 	TaskInfo() RTOSTask
+	// State and lifecycle methods would go here if they were in the interface
 }
 
 // some of which required by containerd
 type SandboxTraits interface {
+	// Identification and state methods
+	SandboxID() string
 	Annotation(key string) (string, error)
 	SetAnnotations(annotations map[string]string)
 	AllAnnotations() map[string]string
+	CheckDaemon() *libmica.MicaDaemonState
+	Status() SandboxStatus
 	GetAllContainers() []ContainerTrait
 	GetContainer(id string) ContainerTrait
 	GetNetNamespace() string
-	SandboxID() string
-	CheckDaemon() *libmica.MicaDaemonState
 
-	// Stats(ctx context.Context) (SandboxStats, error)
+	// Lifecycle methods
 	Start(ctx context.Context) error
 	Stop(ctx context.Context, force bool) error
 	Delete(ctx context.Context) error
-	Status() SandboxStatus
 
-	// ContainerManagement
+	// Container management methods
 	CreateContainer(ctx context.Context, config ContainerConfig) (ContainerTrait, error)
 	DeleteContainer(ctx context.Context, id string) (ContainerTrait, error)
 	StartContainer(ctx context.Context, id string) (ContainerTrait, error)

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 )
 
+// Types
 type MicaCommand string
 type PedType int
 
@@ -51,6 +52,7 @@ type MicaClientConf struct {
 	debug  bool
 }
 
+// Methods for MicaClientConf
 func (m *MicaClientConf) Init(cpu uint32, name string, path string, ped string, pedCfg string, debug bool) {
 	m.cpu = cpu
 	name = fileutils.ShortID(name)
@@ -80,11 +82,24 @@ func (m *MicaClientConf) pack() []byte {
 }
 
 // Public functions:
+// NewMicaCreateMsg creates a properly initialized micaCreateMsg
+func NewMicaCreateMsg(cpu uint32, name string, path string, ped string, pedCfg string, debug bool) MicaClientConf {
+	msg := MicaClientConf{}
+	msg.Init(cpu, name, path, ped, pedCfg, debug)
+	return msg
+}
 
 // MicaCreate creates a new mica client; while MicaCtl is used to control the mica client
 func MicaCreate(config MicaClientConf) (string, error) {
 	s := newMicaSocket(defs.MicaCreatSocketPath)
 	return s.handleMsg(config.pack())
+}
+
+func CreateMicaClient(conf MicaClientConf) (string, error) {
+	s := newMicaSocket(defs.MicaCreatSocketPath)
+	// we do not deref s here, because it is dropped in handleMsg()
+	msg := conf.pack()
+	return s.handleMsg(msg)
 }
 
 func MicaCtl(cmd MicaCommand, client string) (string, error) {
@@ -96,20 +111,6 @@ func MicaCtl(cmd MicaCommand, client string) (string, error) {
 	s := newMicaSocket(target)
 	msg := string(cmd)
 	return s.handleMsg([]byte(msg))
-}
-
-// NewMicaCreateMsg creates a properly initialized micaCreateMsg
-func NewMicaCreateMsg(cpu uint32, name string, path string, ped string, pedCfg string, debug bool) MicaClientConf {
-	msg := MicaClientConf{}
-	msg.Init(cpu, name, path, ped, pedCfg, debug)
-	return msg
-}
-
-func CreateMicaClient(conf MicaClientConf) (string, error) {
-	s := newMicaSocket(defs.MicaCreatSocketPath)
-	// we do not deref s here, because it is dropped in handleMsg()
-	msg := conf.pack()
-	return s.handleMsg(msg)
 }
 
 func StartMicaClient(conf MicaClientConf) (string, error) {

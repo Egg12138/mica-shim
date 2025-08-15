@@ -16,35 +16,7 @@ import (
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 )
 
-// Generate socket address for pod managed by this shim in future
-// As for regular container and sandbox, the address will be handled in Create()
-func preparePodSocketAddr(ctx context.Context, bundle string, opts shimv2.StartOpts) (string, error) {
-
-	ociSpec, err := oci.ParseConfigJSON(bundle)
-	if err != nil {
-		return "", fmt.Errorf("failed to load valid runtime config: %w", err)
-	}
-
-	ctype, err := oci.GetContainerType(&ociSpec)
-	if err != nil {
-		return "", err
-	}
-
-	if ctype == cntr.PodContainer {
-		sandboxID, err := oci.GetSandboxID(&ociSpec)
-		if err != nil {
-			return "", err
-		}
-		// format: unix://<run_root>/s/<sha256(..)>
-		sockAddr, err := shimv2.SocketAddress(ctx, opts.Address, sandboxID)
-		if err != nil {
-			return "", fmt.Errorf("failed to generate socket address: %w", err)
-		}
-		return sockAddr, nil
-	}
-	return "", nil
-}
-
+// Utility functions for bundle and rootfs validation
 func validBundle(containerID, bundlePath string) (string, error) {
 	if containerID == "" {
 		return "", fmt.Errorf("container ID is empty")
@@ -104,6 +76,37 @@ func setInternalRootfs(bundle string) error {
 	return nil
 }
 
+// Utility functions for socket address generation
+// Generate socket address for pod managed by this shim in future
+// As for regular container and sandbox, the address will be handled in Create()
+func preparePodSocketAddr(ctx context.Context, bundle string, opts shimv2.StartOpts) (string, error) {
+
+	ociSpec, err := oci.ParseConfigJSON(bundle)
+	if err != nil {
+		return "", fmt.Errorf("failed to load valid runtime config: %w", err)
+	}
+
+	ctype, err := oci.GetContainerType(&ociSpec)
+	if err != nil {
+		return "", err
+	}
+
+	if ctype == cntr.PodContainer {
+		sandboxID, err := oci.GetSandboxID(&ociSpec)
+		if err != nil {
+			return "", err
+		}
+		// format: unix://<run_root>/s/<sha256(..)>
+		sockAddr, err := shimv2.SocketAddress(ctx, opts.Address, sandboxID)
+		if err != nil {
+			return "", fmt.Errorf("failed to generate socket address: %w", err)
+		}
+		return sockAddr, nil
+	}
+	return "", nil
+}
+
+// Utility functions for pause container detection
 func isPauseContainer(spec *specs.Spec) bool {
 	if spec.Process == nil || len(spec.Process.Args) == 0 {
 		log.Debugf("spec.Process is nil or empty: %v", spec.Process)
@@ -132,6 +135,7 @@ func getPausePatterns() []string {
 	return []string{"pause", "/pause", defs.PauseImage}
 }
 
+// Utility function for handling SCHED_CORE
 func handleSchedCore() {
 	log.Infof(`The functions and features of SCHED_CORE can currently be partially accomplished and replaced by Pedestal (default is Xen), 
 	and micran does not need it for now. 

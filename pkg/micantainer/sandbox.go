@@ -151,10 +151,6 @@ func (s *Sandbox) GetAllContainers() []ContainerTrait {
 	return list
 }
 
-func (s *Sandbox) GetContainer(id string) ContainerTrait {
-	return s.containers[id]
-}
-
 func (s *Sandbox) SandboxID() string {
 	return s.id
 }
@@ -169,22 +165,18 @@ func (s *Sandbox) Annotation(key string) (string, error) {
 	return value, nil
 }
 
-func (s *Sandbox) AllAnnotations() map[string]string {
-	s.annotaLock.RLock()
-	defer s.annotaLock.RUnlock()
-	return s.config.Annotations
-}
-
-func (s *Sandbox) GetNetNamespace() string {
-	return s.network.NetID()
-}
-
 func (s *Sandbox) SetAnnotations(annotations map[string]string) {
 	s.annotaLock.Lock()
 	defer s.annotaLock.Unlock()
 	for k, v := range annotations {
 		s.config.Annotations[k] = v
 	}
+}
+
+func (s *Sandbox) AllAnnotations() map[string]string {
+	s.annotaLock.RLock()
+	defer s.annotaLock.RUnlock()
+	return s.config.Annotations
 }
 
 func (s *Sandbox) CheckDaemon() *libmica.MicaDaemonState {
@@ -197,33 +189,15 @@ func (s *Sandbox) CheckDaemon() *libmica.MicaDaemonState {
 	return state
 }
 
-// status of containers and sandbox itself;
-func (s *Sandbox) Status() SandboxStatus {
-	var cStatusList []ContainerStatus
-	for _, c := range s.containers {
-		rootfs := c.config.Rootfs.Source
-		if c.config.Rootfs.Mounted {
-			rootfs = c.config.Rootfs.Target
-		}
-		s := ContainerStatus{
-			ID:          c.id,
-			State:       c.state,
-			Rootfs:      rootfs,
-			Annotations: c.config.Annotations,
-			StartedAt:   c.taskInfo.StartTime,
-			Pid:         c.config.Pid,
-		}
-		cStatusList = append(cStatusList, s)
-	}
-
-	return SandboxStatus{
-		ContainersState: cStatusList,
-		Annotations:     s.config.Annotations,
-		ID:              s.id,
-		State:           s.state,
-	}
+func (s *Sandbox) GetNetNamespace() string {
+	return s.network.NetID()
 }
 
+func (s *Sandbox) GetContainer(id string) ContainerTrait {
+	return s.containers[id]
+}
+
+// status of containers and sandbox itself;
 func (s *Sandbox) Start(ctx context.Context) error {
 	if err := s.state.Transition(StateReady, StateRunning); err != nil {
 		return err
@@ -328,21 +302,37 @@ func (s *Sandbox) CreateContainer(ctx context.Context, config ContainerConfig) (
 		return nil, err
 	}
 
-	s.containers[id] = c
-
-	defer func() {
-		if err != nil {
-			log.Errorf("cleaning up created container %s", id)
-			if errStop := c.stop(ctx, true); errStop != nil {
-				log.Error("failed to stop the newly-created container inside box")
-			}
-			s.removeContainer(c.id)
-		}
-	}()
+	// update sandbox status
 	if err = s.StoreSandbox(ctx); err != nil {
 		return nil, err
 	}
 	return c, nil
+}
+
+func (s *Sandbox) Status() SandboxStatus {
+	var cStatusList []ContainerStatus
+	for _, c := range s.containers {
+		rootfs := c.config.Rootfs.Source
+		if c.config.Rootfs.Mounted {
+			rootfs = c.config.Rootfs.Target
+		}
+		s := ContainerStatus{
+			ID:          c.id,
+			State:       c.state,
+			Rootfs:      rootfs,
+			Annotations: c.config.Annotations,
+			StartedAt:   c.taskInfo.StartTime,
+			Pid:         c.config.Pid,
+		}
+		cStatusList = append(cStatusList, s)
+	}
+
+	return SandboxStatus{
+		ContainersState: cStatusList,
+		Annotations:     s.config.Annotations,
+		ID:              s.id,
+		State:           s.state,
+	}
 }
 
 func (s *Sandbox) removeContainer(containerID string) error {

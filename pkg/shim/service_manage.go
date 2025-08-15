@@ -72,6 +72,27 @@ func setupDevLog() {
 	log.Debugf("args: %s", os.Args)
 }
 
+func New(ctx context.Context, id string, publisher shimv2.Publisher, shutdown func()) (shimv2.Shim, error) {
+	ns, found := namespaces.Namespace(ctx)
+	if !found {
+		return nil, fmt.Errorf("namespace is required")
+	}
+	s := &shimService{
+		id:        id,
+		namespace: ns,
+		shimPid:   uint32(os.Getpid()),
+		ctx:       ctx,
+		events:    make(chan any, channelSize),
+		ec:        make(chan exit, channelSize),
+		ss:        shutdown,
+		monitor:   make(chan error),
+	}
+
+	go s.listenAndReportExits()
+
+	return s, nil
+}
+
 func newCommand(ctx context.Context, opts shimv2.StartOpts, cwd string) (*exec.Cmd, error) {
 	self, err := os.Executable()
 	if err != nil {
@@ -109,27 +130,6 @@ func newCommand(ctx context.Context, opts shimv2.StartOpts, cwd string) (*exec.C
 		return nil, fmt.Errorf("failed to create shim command: %w", err)
 	}
 	return cmd, nil
-}
-
-func New(ctx context.Context, id string, publisher shimv2.Publisher, shutdown func()) (shimv2.Shim, error) {
-	ns, found := namespaces.Namespace(ctx)
-	if !found {
-		return nil, fmt.Errorf("namespace is required")
-	}
-	s := &shimService{
-		id:        id,
-		namespace: ns,
-		shimPid:   uint32(os.Getpid()),
-		ctx:       ctx,
-		events:    make(chan any, channelSize),
-		ec:        make(chan exit, channelSize),
-		ss:        shutdown,
-		monitor:   make(chan error),
-	}
-
-	go s.listenAndReportExits()
-
-	return s, nil
 }
 
 // Containerd:

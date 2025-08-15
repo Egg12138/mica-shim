@@ -14,6 +14,7 @@ import (
 	ioutils "mica-shim/pkg/io"
 )
 
+// Constants
 // PTY device mapping and discovery constants
 const (
 	PTYDevicePattern     = "/dev/ttyRPMSG%d"
@@ -23,6 +24,7 @@ const (
 	MaxPTYDevices        = 10
 )
 
+// Types
 // MicaIO handles stdio communication between containerd and mica PTY devices
 type MicaIO struct {
 	taskID   string          // Task identifier
@@ -61,41 +63,7 @@ type stdinFIFOReader struct {
 	taskID string
 }
 
-// newStdinFIFOReader creates a stdin FIFO reader
-func newStdinFIFOReader(stdinPath, taskID string) (*stdinFIFOReader, error) {
-	if stdinPath == "" {
-		return nil, fmt.Errorf("stdin path is empty")
-	}
-
-	file, err := os.OpenFile(stdinPath, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return nil, fmt.Errorf("opening stdin FIFO %s: %w", stdinPath, err)
-	}
-
-	return &stdinFIFOReader{
-		file:   file,
-		taskID: taskID,
-	}, nil
-}
-
-// Read reads data from stdin FIFO
-func (r *stdinFIFOReader) Read(buf []byte) (int, error) {
-	return r.file.Read(buf)
-}
-
-// SetReadDeadline sets read deadline for stdin FIFO
-func (r *stdinFIFOReader) SetReadDeadline(t time.Time) error {
-	return r.file.SetReadDeadline(t)
-}
-
-// Close closes the stdin FIFO
-func (r *stdinFIFOReader) Close() error {
-	if r.file != nil {
-		return r.file.Close()
-	}
-	return nil
-}
-
+// Constructors
 // NewMicaIO creates a new MicaIO instance
 func NewMicaIO(ctx context.Context, taskID string, stdin, stdout, stderr string, terminal bool) (*MicaIO, error) {
 	ctxWithCancel, cancel := context.WithCancel(ctx)
@@ -146,6 +114,43 @@ func NewMicaIO(ctx context.Context, taskID string, stdin, stdout, stderr string,
 	return mio, nil
 }
 
+// stdinFIFOReader methods
+// newStdinFIFOReader creates a stdin FIFO reader
+func newStdinFIFOReader(stdinPath, taskID string) (*stdinFIFOReader, error) {
+	if stdinPath == "" {
+		return nil, fmt.Errorf("stdin path is empty")
+	}
+
+	file, err := os.OpenFile(stdinPath, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, fmt.Errorf("opening stdin FIFO %s: %w", stdinPath, err)
+	}
+
+	return &stdinFIFOReader{
+		file:   file,
+		taskID: taskID,
+	}, nil
+}
+
+// Read reads data from stdin FIFO
+func (r *stdinFIFOReader) Read(buf []byte) (int, error) {
+	return r.file.Read(buf)
+}
+
+// SetReadDeadline sets read deadline for stdin FIFO
+func (r *stdinFIFOReader) SetReadDeadline(t time.Time) error {
+	return r.file.SetReadDeadline(t)
+}
+
+// Close closes the stdin FIFO
+func (r *stdinFIFOReader) Close() error {
+	if r.file != nil {
+		return r.file.Close()
+	}
+	return nil
+}
+
+// MicaIO methods
 // discoverPTYDevice discovers PTY device created by micad
 func (mio *MicaIO) discoverPTYDevice() (*PTYDiscoveryResult, error) {
 	log.Debugf("Starting PTY device discovery for task %s", mio.taskID)

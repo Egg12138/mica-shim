@@ -56,10 +56,6 @@ func GetContainerType(spec *specs.Spec) (cntr.ContainerType, error) {
 	return cntr.SingleContainer, nil
 }
 
-func GetSandboxConfigPath(annotations map[string]string) string {
-	return annotations[defs.SandboxConfigPathKey]
-}
-
 func GetSandboxID(spec *specs.Spec) (string, error) {
 	for _, key := range CRISandboxNameKeyList {
 		sandboxID, ok := spec.Annotations[key]
@@ -68,4 +64,8 @@ func GetSandboxID(spec *specs.Spec) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("sandbox ID not found in annotations")
+}
+
+func GetSandboxConfigPath(annotations map[string]string) string {
+	return annotations[defs.SandboxConfigPathKey]
 }

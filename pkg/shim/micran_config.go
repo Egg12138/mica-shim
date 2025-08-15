@@ -6,6 +6,7 @@ const (
 	DefaultConfig = "micran.toml"
 )
 
+// Configuration related types
 type DynamicConfigs struct {
 }
 

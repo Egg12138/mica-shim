@@ -13,6 +13,7 @@ const (
 	contdShimEnvShedCore = "SCHED_CORE"
 )
 
+// shimService methods related to event handling
 func (s *shimService) listenAndReportExits() {
 	for e := range s.ec {
 		s.reportExit(e)
