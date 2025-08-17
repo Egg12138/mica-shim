@@ -21,7 +21,7 @@ var (
 	Log = logrus.New()
 )
 
-// Set default configuration for systemd compatibility
+// Set the default configuration for systemd compatibility.
 func init() {
 	Log.SetOutput(os.Stderr)
 	Log.SetFormatter(&logrus.TextFormatter{
@@ -30,15 +30,15 @@ func init() {
 	})
 }
 
-// Config represents the logger configuration
+// Config represents the logger configuration.
 type Config struct {
-	// Level is the minimum log level that will be logged
+	// Level is the minimum log level.
 	Level string
-	// Format is the log format (text or json)
+	// Format is the log format (text or json).
 	Format string
-	// Output is the log output file path (if empty, uses stderr)
+	// Output is the log output file path. If empty, use stderr.
 	Output string
-	// Debug enables debug mode
+	// Debug enables debug mode.
 	Debug bool
 }
 
@@ -158,7 +158,7 @@ func Panicf(format string, args ...interface{}) {
 	Log.Panicf(format, args...)
 }
 
-// FatalWithCleanup logs a fatal error and executes cleanup function before exiting
+// FatalWithCleanup logs a fatal error and executes a cleanup function before exiting.
 func FatalWithCleanup(cleanup func(), args ...interface{}) {
 	if cleanup != nil {
 		cleanup()
@@ -182,7 +182,8 @@ func CleanDebugFile() error {
 	return err
 }
 
-// Used for those debug points needed to be traced call stack
+// getDebugInfoPrefix gets the prefix for debug information.
+// This is used for debug points that need to be traced.
 func getDebugInfoPrefix() string {
 	var prefix = ""
 	pc_parent, _, _, ok := runtime.Caller(3)
@@ -204,7 +205,7 @@ func getDebugInfoPrefix() string {
 	return prefix
 }
 
-// FDebugf write debug message to debug file
+// FDebugf writes a debug message to the debug file.
 func FDebugf(format string, args ...interface{}) error {
 	f, err := os.OpenFile(debugFileName, os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {

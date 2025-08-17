@@ -17,14 +17,14 @@ type annotationContainerType struct {
 	containerType cntr.ContainerType
 }
 
-// CRI types list reference: kata-containers
+// CRI types list reference: kata-containers.
 var (
 	// CRIContainerTypeKeyList lists all the CRI keys that could define
 	// the container type from annotations in the config.json.
 	CRIContainerTypeKeyList = []string{ctrAnnotations.ContainerType, podmanAnnotations.ContainerType, dockershimAnnotations.ContainerTypeLabelKey}
 
 	// CRISandboxNameKeyList lists all the CRI keys that could define
-	// the sandbox ID (sandbox ID) from annotations in the config.json.
+	// the sandbox ID from annotations in the config.json.
 	CRISandboxNameKeyList = []string{ctrAnnotations.SandboxID, podmanAnnotations.SandboxID, dockershimAnnotations.SandboxIDLabelKey}
 
 	// CRIContainerTypeList lists all the maps from CRI ContainerTypes annotations

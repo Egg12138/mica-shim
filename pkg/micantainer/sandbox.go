@@ -143,8 +143,8 @@ type Sandbox struct {
 }
 
 // impl SandboxTraits for Sandbox
-func (s *Sandbox) GetAllContainers() []ContainerTrait {
-	list := make([]ContainerTrait, len(s.containers))
+func (s *Sandbox) GetAllContainers() []ContainerTraits {
+	list := make([]ContainerTraits, len(s.containers))
 	for _, c := range s.containers {
 		list = append(list, c)
 	}
@@ -193,7 +193,7 @@ func (s *Sandbox) GetNetNamespace() string {
 	return s.network.NetID()
 }
 
-func (s *Sandbox) GetContainer(id string) ContainerTrait {
+func (s *Sandbox) GetContainer(id string) ContainerTraits {
 	return s.containers[id]
 }
 
@@ -276,7 +276,7 @@ func (s *Sandbox) Delete(ctx context.Context) error {
 	return s.rmSandboxStorage()
 }
 
-func (s *Sandbox) CreateContainer(ctx context.Context, config ContainerConfig) (ContainerTrait, error) {
+func (s *Sandbox) CreateContainer(ctx context.Context, config ContainerConfig) (ContainerTraits, error) {
 
 	id := config.ID
 	if _, ok := s.containers[id]; ok {
@@ -354,7 +354,7 @@ func (s *Sandbox) removeContainer(containerID string) error {
 	return nil
 }
 
-func (s *Sandbox) DeleteContainer(ctx context.Context, id string) (ContainerTrait, error) {
+func (s *Sandbox) DeleteContainer(ctx context.Context, id string) (ContainerTraits, error) {
 	if s == nil {
 		return nil, er.ErrSandboxNil
 	}
@@ -376,7 +376,7 @@ func (s *Sandbox) DeleteContainer(ctx context.Context, id string) (ContainerTrai
 	return c, nil
 }
 
-func (s *Sandbox) StartContainer(ctx context.Context, id string) (ContainerTrait, error) {
+func (s *Sandbox) StartContainer(ctx context.Context, id string) (ContainerTraits, error) {
 	c, ok := s.containers[id]
 	if !ok {
 		return nil, er.ErrContainerNotFound
@@ -391,7 +391,7 @@ func (s *Sandbox) StartContainer(ctx context.Context, id string) (ContainerTrait
 	return c, nil
 }
 
-func (s *Sandbox) StopContainer(ctx context.Context, id string, force bool) (ContainerTrait, error) {
+func (s *Sandbox) StopContainer(ctx context.Context, id string, force bool) (ContainerTraits, error) {
 	c, ok := s.containers[id]
 	if !ok {
 		return nil, er.ErrContainerNotFound
@@ -406,7 +406,7 @@ func (s *Sandbox) StopContainer(ctx context.Context, id string, force bool) (Con
 	return c, nil
 }
 
-func (s *Sandbox) KillContainer(ctx context.Context, id string) (ContainerTrait, error) {
+func (s *Sandbox) KillContainer(ctx context.Context, id string) (ContainerTraits, error) {
 	c, ok := s.containers[id]
 	if !ok {
 		return nil, er.ErrContainerNotFound

@@ -16,14 +16,18 @@ type MicantainerManager interface {
 	CleanupContainer(ctx context.Context, sandboxID string, containerID string, force bool) error
 }
 
-type ContainerTrait interface {
+type ContainerTraits interface {
 	// RTOS may contains no the concept of PID, so we use a dummy value
 	ID() string
 	GetAnnotations() map[string]string
 	GetPid() int
 	Sandbox() SandboxTraits
 	TaskInfo() RTOSTask
-	// State and lifecycle methods would go here if they were in the interface
+	GetMemoryLimit() uint64
+	Status() StateString
+	State() *ContainerState
+	GetClientCPU() (int, error)
+	SaveState() error
 }
 
 // some of which required by containerd
@@ -35,8 +39,8 @@ type SandboxTraits interface {
 	AllAnnotations() map[string]string
 	CheckDaemon() *libmica.MicaDaemonState
 	Status() SandboxStatus
-	GetAllContainers() []ContainerTrait
-	GetContainer(id string) ContainerTrait
+	GetAllContainers() []ContainerTraits
+	GetContainer(id string) ContainerTraits
 	GetNetNamespace() string
 
 	// Lifecycle methods
@@ -45,11 +49,11 @@ type SandboxTraits interface {
 	Delete(ctx context.Context) error
 
 	// Container management methods
-	CreateContainer(ctx context.Context, config ContainerConfig) (ContainerTrait, error)
-	DeleteContainer(ctx context.Context, id string) (ContainerTrait, error)
-	StartContainer(ctx context.Context, id string) (ContainerTrait, error)
-	StopContainer(ctx context.Context, id string, force bool) (ContainerTrait, error)
-	KillContainer(ctx context.Context, id string) (ContainerTrait, error)
+	CreateContainer(ctx context.Context, config ContainerConfig) (ContainerTraits, error)
+	DeleteContainer(ctx context.Context, id string) (ContainerTraits, error)
+	StartContainer(ctx context.Context, id string) (ContainerTraits, error)
+	StopContainer(ctx context.Context, id string, force bool) (ContainerTraits, error)
+	KillContainer(ctx context.Context, id string) (ContainerTraits, error)
 	StatusContainer(id string) (ContainerState, error)
 	StatsContainer(ctx context.Context, id string) (ContainerStats, error)
 	WaitContainer(ctx context.Context, id string, pid string) (int32, error)

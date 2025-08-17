@@ -16,7 +16,7 @@ import (
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 )
 
-// Utility functions for bundle and rootfs validation
+// Validate the bundle and rootfs.
 func validBundle(containerID, bundlePath string) (string, error) {
 	if containerID == "" {
 		return "", fmt.Errorf("container ID is empty")
@@ -62,7 +62,7 @@ func validRootfs(resolved string) error {
 	return nil
 }
 
-// bundle is <CONTINAER_STATE_ROOT>/<container_id>
+// The bundle is <CONTINAER_STATE_ROOT>/<container_id>.
 func setInternalRootfs(bundle string) error {
 
 	// config := filepath.Join(bundle, "config.json")
@@ -76,9 +76,8 @@ func setInternalRootfs(bundle string) error {
 	return nil
 }
 
-// Utility functions for socket address generation
-// Generate socket address for pod managed by this shim in future
-// As for regular container and sandbox, the address will be handled in Create()
+// Generate the socket address for a pod managed by this shim.
+// For regular containers and sandboxes, the address will be handled in Create().
 func preparePodSocketAddr(ctx context.Context, bundle string, opts shimv2.StartOpts) (string, error) {
 
 	ociSpec, err := oci.ParseConfigJSON(bundle)
@@ -106,7 +105,7 @@ func preparePodSocketAddr(ctx context.Context, bundle string, opts shimv2.StartO
 	return "", nil
 }
 
-// Utility functions for pause container detection
+// Detect if the container is a pause container.
 func isPauseContainer(spec *specs.Spec) bool {
 	if spec.Process == nil || len(spec.Process.Args) == 0 {
 		log.Debugf("spec.Process is nil or empty: %v", spec.Process)
@@ -135,7 +134,7 @@ func getPausePatterns() []string {
 	return []string{"pause", "/pause", defs.PauseImage}
 }
 
-// Utility function for handling SCHED_CORE
+// Handle SCHED_CORE.
 func handleSchedCore() {
 	log.Infof(`The functions and features of SCHED_CORE can currently be partially accomplished and replaced by Pedestal (default is Xen), 
 	and micran does not need it for now. 

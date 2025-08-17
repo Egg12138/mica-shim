@@ -11,9 +11,9 @@ import (
 	"github.com/containerd/containerd/api/types/task"
 )
 
-// ContainerConfig represents the configuration similar to the project
+// ContainerConfig represents the configuration similar to the project.
 type ContainerConfig struct {
-	// OCI Specification fields (simplified for testing)
+	// OCI Specification fields (simplified for testing).
 	Spec struct {
 		Process struct {
 			Terminal bool `json:"terminal"`
@@ -42,20 +42,20 @@ type ContainerConfig struct {
 		} `json:"linux"`
 	} `json:"spec"`
 
-	// Bundle information
+	// Bundle information.
 	Bundle string            `json:"bundle"`
 	Type   ContainerType     `json:"type"`
 	Detach bool              `json:"detach"`
 	ExtraLabels map[string]string `json:"extra_labels"`
 
-	// MICA-specific configurations (simplified)
+	// MICA-specific configurations (simplified).
 	OS           string `json:"os"`
 	Ncpu         int    `json:"ncpu"`
 	CpuLimit     int    `json:"cpu_limit"`
 	MemoryLimit  int64  `json:"memory_limit"`
 }
 
-// ContainerType represents the type of container
+// ContainerType represents the type of container.
 type ContainerType string
 
 const (
@@ -65,13 +65,13 @@ const (
 	UnknownCtype ContainerType = "unknown"
 )
 
-// Container represents the container structure with static and dynamic fields
+// Container represents the container structure with static and dynamic fields.
 type Container struct {
-	// dynamic fields
+	// Dynamic fields.
 	ExitTime time.Time `json:"exit_time"`
 	ExitCode uint32    `json:"exit_code"`
 
-	// static fields
+	// Static fields.
 	Bundle   string        `json:"bundle"`
 	ID       string        `json:"id"`
 	ShortID  string        `json:"short_id"`
@@ -80,7 +80,7 @@ type Container struct {
 	Config   *ContainerConfig `json:"config"`
 }
 
-// State represents the static state of a container for saving/loading
+// State represents the static state of a container for saving/loading.
 type State struct {
 	Bundle   string        `json:"bundle"`
 	ID       string        `json:"id"`
@@ -159,7 +159,7 @@ func generateRandomContainer() *Container {
 	}
 }
 
-// State returns the static state of the container
+// Get the static state of the container.
 func (c *Container) State() *State {
 	return &State{
 		Bundle:   c.Bundle,
@@ -213,7 +213,7 @@ func LoadContainerFromState(filePath string) (*Container, error) {
 	}, nil
 }
 
-// compareContainers compares two containers to see if their static fields match
+// Compare two containers to see if their static fields match.
 func compareContainers(original, restored *Container) bool {
 	if original.Bundle != restored.Bundle {
 		fmt.Printf("Bundle mismatch: %s != %s\n", original.Bundle, restored.Bundle)

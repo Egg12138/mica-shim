@@ -9,12 +9,10 @@ import (
 	"path/filepath"
 )
 
-// Types
 type MicaCommand string
 type PedType int
 
 const (
-	// 0
 	Baremetal PedType = iota
 	Jailhouse
 	Xen
@@ -41,18 +39,17 @@ type McsFS struct {
 // NOTICE: we have to ensure the length of each field consistency with the length of the field in mica daemon
 // TODO: add explaination for each field
 type MicaClientConf struct {
-	// scheduled
+	// cpu is the scheduled CPU.
 	cpu uint32
-	// assigned by containerd
+	// name is assigned by containerd.
 	name [32]byte
-	// relative path in bundle
+	// path is the relative path in the bundle.
 	path   [128]byte
 	ped    [32]byte
 	pedcfg [128]byte
 	debug  bool
 }
 
-// Methods for MicaClientConf
 func (m *MicaClientConf) Init(cpu uint32, name string, path string, ped string, pedCfg string, debug bool) {
 	m.cpu = cpu
 	name = fileutils.ShortID(name)
@@ -81,15 +78,15 @@ func (m *MicaClientConf) pack() []byte {
 	return buf
 }
 
-// Public functions:
-// NewMicaCreateMsg creates a properly initialized micaCreateMsg
+// NewMicaCreateMsg creates and initializes a MicaClientConf.
 func NewMicaCreateMsg(cpu uint32, name string, path string, ped string, pedCfg string, debug bool) MicaClientConf {
 	msg := MicaClientConf{}
 	msg.Init(cpu, name, path, ped, pedCfg, debug)
 	return msg
 }
 
-// MicaCreate creates a new mica client; while MicaCtl is used to control the mica client
+// MicaCreate creates a new mica client.
+// Use MicaCtl to control the mica client.
 func MicaCreate(config MicaClientConf) (string, error) {
 	s := newMicaSocket(defs.MicaCreatSocketPath)
 	return s.handleMsg(config.pack())
@@ -97,7 +94,7 @@ func MicaCreate(config MicaClientConf) (string, error) {
 
 func CreateMicaClient(conf MicaClientConf) (string, error) {
 	s := newMicaSocket(defs.MicaCreatSocketPath)
-	// we do not deref s here, because it is dropped in handleMsg()
+	// Do not dereference s here, as it is dropped in handleMsg().
 	msg := conf.pack()
 	return s.handleMsg(msg)
 }

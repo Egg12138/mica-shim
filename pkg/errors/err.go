@@ -29,7 +29,7 @@ const (
 	AlreadyExists
 )
 
-// errors:
+// Pre-defined errors.
 var (
 	ErrInvalidState      = new(InvalidState, "invalid state")
 	ErrSocketFailed      = new(SocketFailed, "socket failed")
@@ -40,4 +40,4 @@ var (
 	ErrSandboxNil        = new(NotFound, "sandbox is nil")
 )
 
-// panic:
+// Panic-related errors.

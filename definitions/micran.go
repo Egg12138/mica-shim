@@ -15,31 +15,30 @@ const (
 	IsDebug  = true
 )
 
-// OCI and runtime annotations
+// OCI and runtime annotations.
 const (
-	MicraAnnotationPrefix = "io.micran." // used for runtime-level configurtaion
+	MicraAnnotationPrefix = "io.micran." // For runtime-level configuration
 	MicraLabelPrefix      = "io.micran."
 	PedConfPrefix         = MicraAnnotationPrefix + "ped."
 	RuntimePrefix         = MicraAnnotationPrefix + "runtime."
 	ContainerPrefix       = MicraAnnotationPrefix + "container."
 
-	// BundlePathKey is the annotation key to fetch the OCI configuration file path.
+	// BundlePathKey is the annotation key for the OCI configuration file path.
 	BundlePathKey = MicraAnnotationPrefix + "pkg.oci.bundle_path"
-	// ContainerTypeKey is the annotation key to fetch container type.
+	// ContainerTypeKey is the annotation key for the container type.
 	ContainerTypeKey     = MicraAnnotationPrefix + "pkg.oci.container_type"
 	SandboxConfigPathKey = MicraAnnotationPrefix + "config_path"
 )
 
-// Pedestal configurations
+// Pedestal configurations.
 const (
 // Basically about Xen
-
 )
 
-// Configuration for mica clients, passed to sandbox container
-// NOTICE: micad is shared for all micrans, which means that micad can not be configured differently
-// Hence the freedom degree is limited
-// TODO: an idea, support dynamic configuration loader module for micad
+// Configuration for mica clients, passed to the sandbox container.
+// NOTICE: micad is shared for all micrans, which means that micad can not be configured differently.
+// Hence the freedom degree is limited.
+// TODO: an idea, support dynamic configuration loader module for micad.
 const (
 
 	// ini config keys in [Mica] section of client.conf
@@ -50,12 +49,12 @@ const (
 	FirmwareHash = PedConfPrefix + "firmware_hash"
 
 	NetPlaceholder = PedConfPrefix + "net_placeholder"
-	// specifies the maximum number of CPUs allocated for the client
+	// DefaultMaxCPU specifies the maximum number of CPUs allocated for the client.
 	DefaultMaxCPU = PedConfPrefix + "defautl_max_cpu"
-	// specifies the maximum byte size of memory assigned for the client
+	// DefaulaMemory specifies the maximum byte size of memory assigned for the client.
 	DefaulaMemory = PedConfPrefix + "default_memory"
 
-	// Virtio into micran is in out roadmap
+	// Virtio into micran is in out roadmap.
 	VirtioMem = PedConfPrefix + "enable_virtio_mem"
 	// TODO: more xen-related options
 	// PedestalConf = ClientConfPrefix + "pedestalconf"
@@ -72,7 +71,7 @@ const (
 	SandboxVersion = 1
 )
 
-// client default values configs
+// Client default values.
 const (
 	DefaultNcpu       = 1
 	DefaultClientConf = "client.conf"

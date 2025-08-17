@@ -42,12 +42,12 @@ type ContainerStatus struct {
 	Annotations map[string]string
 }
 
-// NOTICE: `task` represent the process, thread or other task runner in RTOS
+// RTOSTask represents a task running in the RTOS.
 type RTOSTask struct {
 	StartTime time.Time
-	// TaskID is an indentifier of the task, managed by micran
+	// TaskID is the identifier of the task, managed by micran.
 	TaskID uint32
-	// memory address of the receiver inside rtos
+	// ReceiverAddr is the memory address of the receiver inside the RTOS.
 	ReceiverAddr uint64
 }
 
@@ -61,12 +61,13 @@ type RTOSTask struct {
 type Agent struct {
 }
 
+// ContainerConfig holds the configuration for a container.
 type ContainerConfig struct {
 	ID             string
 	Rootfs         RootFs
 	Mount          []Mount
 	ReadOnlyRootfs bool
-	// typically the shim pid
+	// Pid is typically the shim pid.
 	Pid         int
 	Annotations map[string]string
 
@@ -74,42 +75,41 @@ type ContainerConfig struct {
 	PedestalType PedType `json:"pedestal_type"`
 	PedestalConf string  `json:"pedestal_conf"`
 	OS           string  `json:"os"`
-	NCpu         int     `json:"ncpu"` // requested CPU count (default = 1)
+	NCpu         int     `json:"ncpu"` // Default = 1
 
-	CpuLimit   int    `json:"cpu_limit"`   // CPU limit from OCI spec
-	CpusetCpus string `json:"cpuset_cpus"` // cpuset.cpus specification
-	CpuShares  uint64 `json:"cpu_shares"`  // CPU shares (relative weight)
-	CpuQuota   int64  `json:"cpu_quota"`   // CPU quota in microseconds
-	CpuPeriod  uint64 `json:"cpu_period"`  // CPU period in microseconds
+	CpuLimit   int    `json:"cpu_limit"`
+	CpusetCpus string `json:"cpuset_cpus"`
+	CpuShares  uint64 `json:"cpu_shares"`
+	CpuQuota   int64  `json:"cpu_quota"`
+	CpuPeriod  uint64 `json:"cpu_period"`
 
-	// Memory resource limits from OCI spec
-	MemoryLimit       int64   `json:"memory_limit"`       // Memory limit in bytes
-	MemoryReservation int64   `json:"memory_reservation"` // Memory soft limit in bytes
-	MemorySwap        int64   `json:"memory_swap"`        // Memory + swap limit in bytes
-	MemoryKernel      int64   `json:"memory_kernel"`      // Kernel memory limit in bytes
-	MemorySwappiness  *uint64 `json:"memory_swappiness"`  // Memory swappiness (0-100)
-	OomKillDisable    bool    `json:"oom_kill_disable"`   // Whether to disable OOM killer
+	MemoryLimit       int64   `json:"memory_limit"`
+	MemoryReservation int64   `json:"memory_reservation"`
+	MemorySwap        int64   `json:"memory_swap"`
+	MemoryKernel      int64   `json:"memory_kernel"`
+	MemorySwappiness  *uint64 `json:"memory_swappiness"`
+	OomKillDisable    bool    `json:"oom_kill_disable"`
 
-	cpu int // allocated CPU (-1 if not allocated) after stat loaded
-
+	// cpu is the allocated CPU, -1 if not allocated.
+	cpu int
 }
 
+// RootFs represents the root filesystem of the container.
 type RootFs struct {
-	// Source specifies the path of the rootfs in host filesystem
+	// Source is the path to the rootfs on the host.
 	Source string
 	Target string
-	// Target specify where the rootfs is mounted if it has been mounted
-	// Type specifies the type of filesystem to mount.
+	// Type is the filesystem type.
 	Type string
-	// Options specifies zero or more fstab style mount options.
+	// Options are fstab-style mount options.
 	Options []string
-	// Mounted specifies whether the rootfs has be mounted or not
+	// Mounted indicates whether the rootfs is mounted.
 	Mounted bool
 }
 
 type ContainerType string
 
-// List different types of containers
+// Defines the different types of containers.
 const (
 	// PodContainer identifies a container that should be associated with an existing pod
 	PodContainer ContainerType = "pod_container"
@@ -125,12 +125,13 @@ const (
 	UnknownContainerType ContainerType = "unknown_container_type"
 )
 
+// Container represents a single container instance.
 type Container struct {
 	ctr     context.Context
 	config  *ContainerConfig
 	sandbox *Sandbox
 	id      string
-	// in dir <sandboxID>/<containerID>
+	// containerPath is the path to the container's directory: <sandboxID>/<containerID>.
 	containerPath string
 	mounts        []Mount
 	state         ContainerState
@@ -141,7 +142,8 @@ func (ct ContainerType) IsRegularContainer() bool {
 	return ct == SingleContainer
 }
 
-// A pod container can not be converted into a sandbox
+// CanBeSandbox checks if the container type can be a sandbox.
+// A pod container cannot be converted into a sandbox.
 func (ct ContainerType) CanBeSandbox() bool {
 	return ct == PodSandbox || ct == SingleContainer
 }
@@ -188,35 +190,8 @@ func cleanupPersistResource(ctx context.Context, sandboxID string) error {
 	return nil
 }
 
-// ******* container configs ops *******
 
-func (cc *ContainerConfig) GetFirmwarePath() string {
-	return cc.RelativePath
-}
-
-// PedestalType returns the pedestal type
-func (cc *ContainerConfig) GetPedestalType() PedType {
-	return cc.PedestalType
-}
-
-// cpuUnset is alway callee, hence lock is not needed
-func (cc *ContainerConfig) cpuUnset() bool {
-	return cc.cpu == -1
-}
-
-// PedestalConf returns the pedestal configuration
-func (cc *ContainerConfig) GetPedestalConf() string {
-	return cc.PedestalConf
-}
-
-func (cc *ContainerConfig) GetOS() string {
-	return cc.OS
-}
-
-// ******* core handler ********
-
-// A new container instance, initialized with complete configuration
-// func newContainer(r *taskAPI.CreateTaskRequest, config *ContainerConfig) (*Container, error) {
+// newContainer creates a new container instance.
 func newContainer(ctx context.Context, s *Sandbox, cc *ContainerConfig) (*Container, error) {
 	container := &Container{
 		id:     cc.ID,
@@ -323,7 +298,6 @@ func (c *Container) GetPid() int {
 	return c.config.Pid
 }
 
-// GetMemoryLimit returns the memory limit in bytes
 func (c *Container) GetMemoryLimit() uint64 {
 	return uint64(c.config.MemoryLimit)
 }
@@ -344,14 +318,13 @@ func (c *Container) State() *ContainerState {
 	return &c.state
 }
 
-// check OS value matches
 func validOS(os string) bool {
 	ret := inList(defs.PreservedOS[:], os)
 	return ret
 }
 
 func validFirmware(root, firmware string) bool {
-	// <bundle>/rootfs/<firmware>
+	// firmware path: <bundle>/rootfs/<firmware>
 	resolved, err := utils.ResolvePath(filepath.Join(root, firmware))
 	if err != nil {
 		return false
@@ -397,9 +370,8 @@ func (c *Container) setContainerState(ctx context.Context, state StateString) er
 	return nil
 }
 
-// GetMemoryLimit returns the memory limit in bytes
 func (c *Container) allocClientCPU() error {
-	// Use container-specific CPU limit instead of global HostMaxCPU
+	// Use the container-specific CPU limit instead of the global HostMaxCPU.
 	cpu, err := allocCPUWithLimit(c.config.NCpu, c.config)
 	if err != nil {
 		return err
@@ -433,13 +405,13 @@ func allocCPUWithLimit(ncpu int, config *ContainerConfig) (int, error) {
 	return allocatedCPU, nil
 }
 
-// getContainerCPULimit returns the effective CPU limit for a container
-// considering both OCI spec limits and system constraints
+// getContainerCPULimit returns the effective CPU limit for a container,
+// considering both OCI spec limits and system constraints.
 func getContainerCPULimit(cfg *ContainerConfig) int {
-	// TODO: runtime can not detect max CPU numbers Xen can handels
+	// TODO: The runtime cannot detect the max number of CPUs Xen can handle.
 	systemCPUs := maxCPUNumber()
 
-	// If container has specific CPU limit from OCI spec, use it
+	// Use the container-specific CPU limit from the OCI spec, if available.
 	if cfg != nil {
 		log.Debugf(`cpu config:
 		cpuLimit: %d, 
@@ -454,7 +426,7 @@ func getContainerCPULimit(cfg *ContainerConfig) int {
 		return min(cfg.CpuLimit, int(systemCPUs))
 	}
 
-	// Default fallback - use all available CPUs but reserve one for host
+	// As a fallback, use all available CPUs, but reserve one for the host.
 	defaultLimit := int(systemCPUs)
 	if defaultLimit > 1 {
 		defaultLimit -= 1
@@ -472,7 +444,6 @@ func (c *Container) GetClientCPU() (int, error) {
 	return c.config.cpu, nil
 }
 
-// Container::<static fields>
 func (c *Container) SaveState() error {
 	failed, failed1 := false, false
 	var err error

@@ -28,7 +28,8 @@ func ValidContainerID(id string) error {
 	return nil
 }
 
-// Truncated the original hash is good at collision resistance
+// Truncate the ID to the maximum allowed length.
+// Truncating the original hash is good at collision resistance.
 func truncateID(id string) string {
 	idBytes := []byte(id)
 	if len(idBytes) > MAX_ID_LENGTH {
