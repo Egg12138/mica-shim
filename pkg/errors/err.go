@@ -21,12 +21,15 @@ func new(code ErrCode, msg string) *MicranErr {
 	}
 }
 
+// TALK: 错误语义的一致性，包含性非常糟糕
 const (
 	InvalidState ErrCode = iota
 	SocketFailed
 	EmptyID
 	NotFound
 	AlreadyExists
+	MicaFailed
+	DuplicatedKey
 )
 
 // Pre-defined errors.
@@ -38,6 +41,13 @@ var (
 	ErrAlreadyExists     = new(AlreadyExists, "already exists")
 	ErrContainerNotFound = new(NotFound, "container not found")
 	ErrSandboxNil        = new(NotFound, "sandbox is nil")
+
+	ErrMicaStopFailed    = new(MicaFailed, "mica stop failed")
+)
+
+// Type errors
+var (
+	ErrDuplicatedKey     = new(DuplicatedKey, "duplicated key in the map")
 )
 
 // Panic-related errors.

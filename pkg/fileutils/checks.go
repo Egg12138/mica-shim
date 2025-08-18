@@ -8,7 +8,7 @@ import (
 	"regexp"
 )
 
-const MAX_ID_LENGTH = 32
+const MAX_ID_LENGTH = 31
 const validCIDRegex = "^[a-zA-Z0-9][a-zA-Z0-9_.-]+$"
 
 func ValidContainerID(id string) error {
