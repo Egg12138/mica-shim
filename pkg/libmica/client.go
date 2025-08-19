@@ -25,6 +25,7 @@ const (
 	MStart  MicaCommand = "start"
 	MStop   MicaCommand = "stop"
 	MRemove MicaCommand = "rm"
+	MPause  MicaCommand = "pause"
 	MStatus MicaCommand = "status"
 )
 
@@ -59,11 +60,11 @@ const (
 // MicaStatus represents the complete status of a MICA client
 // TODO: remove Raw field in the future for space saving
 type MicaStatus struct {
-	Name     string      `json:"name"`
-	CPU      string         `json:"cpu"`
-	State    MicaState   `json:"state"`
+	Name     string        `json:"name"`
+	CPU      string        `json:"cpu"`
+	State    MicaState     `json:"state"`
 	Services []MicaService `json:"services"`
-	Raw      string      `json:"raw"` // Original raw response
+	Raw      string        `json:"raw"` // Original raw response
 }
 
 // string returns a string representation of MicaStatus
@@ -189,16 +190,27 @@ func MicaCtl(cmd MicaCommand, rawId string) (string, error) {
 	return s.handleMsg([]byte(msg))
 }
 
-func StartMicaClient(id string) (string, error) {
-	return MicaCtl(MStart, id)
+func Start(id string) error {
+	if res, err := MicaCtl(MStart, id); err != nil || !success(res) {
+		return fmt.Errorf("failed to start container %s: %s", id, res)
+	}
+	return nil
 }
 
 // TODO: Extend mica response data, loading more information
 // BUG: mica daemon stop command does not handle error, always return success
-func Stop(id string) (error) {
+func Stop(id string) error {
 	res, err := MicaCtl(MStop, id)
 	if err != nil || !success(res) {
 		return fmt.Errorf("failed to stop mica client %s, resposne = <%s>: %w", id, res, err)
+	}
+	return nil
+}
+
+func Pause(id string) error {
+	res, err := MicaCtl(MPause, id)
+	if err != nil || !success(res) {
+		return fmt.Errorf("failed to pause mica client %s, resposne = <%s>: %w", id, res, err)
 	}
 	return nil
 }
@@ -318,7 +330,7 @@ func parseMicaStatus(rawResponse string) (*MicaStatus, error) {
 		return nil, fmt.Errorf("invalid status format: %s", rawResponse)
 	}
 
-	// Parse CPU field - now supports multi-core format like 
+	// Parse CPU field - now supports multi-core format like
 	// "1-3,5" and empty string
 	cpuStr := fields[1]
 	if !isValidCPUString(cpuStr) {
@@ -398,7 +410,6 @@ func parseMicaServices(fields []string) []MicaService {
 	return services
 }
 
-
 // isValidCPUString validates the CPU string format
 // Supports formats: "1", "1-3", "2-3,15", "1,13,5", ""(empty is All)
 // NOTICE: Xen-related validation function
@@ -407,27 +418,27 @@ func isValidCPUString(cpuStr string) bool {
 	if cpuStr == "" {
 		return true
 	}
-	
+
 	// Split by comma for multiple groups
 	groups := strings.Split(cpuStr, ",")
-	
+
 	for _, group := range groups {
 		group = strings.TrimSpace(group)
 		if group == "" {
 			return false
 		}
-		
+
 		// Check if it's a range (contains dash)
 		if strings.Contains(group, "-") {
 			parts := strings.Split(group, "-")
 			if len(parts) != 2 {
 				return false
 			}
-			
+
 			// Validate both parts are integers
 			start, err1 := strconv.Atoi(strings.TrimSpace(parts[0]))
 			end, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
-			
+
 			if err1 != nil || err2 != nil || start < 0 || end < 0 || start > end {
 				return false
 			}
@@ -438,7 +449,7 @@ func isValidCPUString(cpuStr string) bool {
 			}
 		}
 	}
-	
+
 	return true
 }
 
@@ -448,25 +459,25 @@ func ParseCPUString(cpuStr string) ([]int, error) {
 	if !isValidCPUString(cpuStr) {
 		return nil, fmt.Errorf("invalid CPU string format: %s", cpuStr)
 	}
-	
+
 	var cpus []int
-	
+
 	// Empty string means no specific CPUs
 	if cpuStr == "" {
 		return cpus, nil
 	}
-	
+
 	groups := strings.Split(cpuStr, ",")
-	
+
 	for _, group := range groups {
 		group = strings.TrimSpace(group)
-		
+
 		if strings.Contains(group, "-") {
 			// Range format: "1-3"
 			parts := strings.Split(group, "-")
 			start, _ := strconv.Atoi(strings.TrimSpace(parts[0]))
 			end, _ := strconv.Atoi(strings.TrimSpace(parts[1]))
-			
+
 			for i := start; i <= end; i++ {
 				cpus = append(cpus, i)
 			}
@@ -476,7 +487,7 @@ func ParseCPUString(cpuStr string) ([]int, error) {
 			cpus = append(cpus, cpu)
 		}
 	}
-	
+
 	return cpus, nil
 }
 

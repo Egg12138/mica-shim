@@ -99,7 +99,20 @@ func MkdirAllWithInheritedOwner(path string, perm os.FileMode) error {
 	return nil
 }
 
-func SaveStructToFile(file string, state any) error {
+func RestoreStructFromJSON(file string) (any, error) {
+	content, err := os.ReadFile(file)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file: %w", err)
+	}
+	var value any
+	err = json.Unmarshal(content, &value)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal JSON: %w", err)
+	}
+	return value, nil
+}
+
+func SaveStructToJSON(file string, state any) error {
 	structBytes, err := json.Marshal(state)
 	if err != nil {
 		log.Pretty("err: %v, state: %v", err, state)

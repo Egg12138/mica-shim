@@ -143,10 +143,8 @@ func ParseRuntimeConfig(annotations map[string]string) *RuntimeConfig {
 	return spec
 }
 
-func ParseConfigJSON(bundle string) (specs.Spec, error) {
-	// For docker , config.v2.json, this line is useless;
-	configPath := filepath.Join(bundle, "config.json")
-	configBytes, err := os.ReadFile(configPath)
+func parseConfigJSON(file string) (specs.Spec, error) {
+	configBytes, err := os.ReadFile(file)
 	if err != nil {
 		return specs.Spec{}, err
 	}
@@ -157,4 +155,11 @@ func ParseConfigJSON(bundle string) (specs.Spec, error) {
 	}
 
 	return config, nil
+}
+
+func LoadSpec(bundle string) (specs.Spec, error) {
+	// For docker , config.v2.json, this line is useless;
+	configPath := filepath.Join(bundle, "config.json")
+	return parseConfigJSON(configPath)
+
 }

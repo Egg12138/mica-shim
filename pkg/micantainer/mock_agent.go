@@ -18,10 +18,10 @@ import (
 //  1. 管理 rtos 的devices, net, tasks...
 //  2. 在agent中处理IO吗？
 //     3.
+//
 // NOTICE: here agent is a placeholder
 type MockAgent struct {
 }
-
 
 // nolint:golint
 func NewMockAgent() *MockAgent {
@@ -231,10 +231,15 @@ func (n *MockAgent) resizeGuestVolume(ctx context.Context, volumeGuestPath strin
 	return nil
 }
 
-func (k *MockAgent) getIPTables(ctx context.Context, isIPv6 bool) ([]byte, error) {
+func (n *MockAgent) getIPTables(ctx context.Context, isIPv6 bool) ([]byte, error) {
 	return nil, nil
 }
 
-func (k *MockAgent) setIPTables(ctx context.Context, isIPv6 bool, data []byte) error {
+func (n *MockAgent) setIPTables(ctx context.Context, isIPv6 bool, data []byte) error {
 	return nil
+}
+
+// Calling ped methods
+func (n *MockAgent) vcpuSet(ctx context.Context) (uint32, error) {
+	return maxVCPUNumber(), nil
 }

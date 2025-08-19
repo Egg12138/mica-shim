@@ -37,15 +37,16 @@
 > 1. 在micran state dir中维护一个db,存储state信息，提高性能
 > 1. 整个bundle都转到 micran state dir
 - [x] 从struct manager 迁移到struct shim
-- [ ] 重构项目，提高维护性
+- [x] 重构项目，提高维护性
 - [ ] SCHED_CORE 支持
 - [ ] 对Xen做适配，去掉jailhouse, baremetal这两个占位底座；
 - [ ] task events all completed
 - [x] io mock test
 - [ ] pty
-- [ ] k8s Pod, Sandbox support
+- [x] k8s Pod, Sandbox support
 - [x] 镜像规制考虑
-- [ ]
+- [x] Xen basic interface
+- [ ] use vendor
 
 ## ️ Roadmap
 
@@ -56,6 +57,8 @@
 - [x] 提供一个mica-from-scrach基础镜像,根据这个镜像来搭建混部容器镜像,并且可以根据这些镜像拉起服务
 - [x] Client OS 和 Shim Task process 的明确分离管理
 - [x] IO 接管
+- [ ] sandbox管理containers
+- [ ] k8s打通
 - [ ] 持久化
 - [ ] 网络
 - [ ] 保证mica daemon 和 micran 生命周期不一致时容器状态的一致性

@@ -25,29 +25,34 @@ func new(code ErrCode, msg string) *MicranErr {
 const (
 	InvalidState ErrCode = iota
 	SocketFailed
-	EmptyID
+	InvalidID
 	NotFound
 	AlreadyExists
 	MicadFailed
 	DuplicatedKey
+	NotRunning
+	IOClose
 )
 
 // Pre-defined errors.
 var (
 	ErrInvalidState      = new(InvalidState, "invalid state")
+	ErrInvalidCID        = new(InvalidID, "invalid container id")
 	ErrSocketFailed      = new(SocketFailed, "socket failed")
-	ErrEmptyContainerID  = new(EmptyID, "empty container id")
-	ErrEmptySandboxID    = new(EmptyID, "empty sandbox id")
+	ErrEmptyContainerID  = new(InvalidID, "empty container id")
+	ErrEmptySandboxID    = new(InvalidID, "empty sandbox id")
 	ErrAlreadyExists     = new(AlreadyExists, "already exists")
 	ErrContainerNotFound = new(NotFound, "container not found")
 	ErrSandboxNil        = new(NotFound, "sandbox is nil")
+	ErrSandboxDown       = new(NotRunning, "sandbox is not running")
+	ErrIOClose           = new(IOClose, "io closed")
 
-	ErrMicaStopFailed    = new(MicadFailed, "mica stop failed")
+	ErrMicaStopFailed = new(MicadFailed, "mica stop failed")
 )
 
 // Type errors
 var (
-	ErrDuplicatedKey     = new(DuplicatedKey, "duplicated key in the map")
+	ErrDuplicatedKey = new(DuplicatedKey, "duplicated key in the map")
 )
 
 // Panic-related errors.

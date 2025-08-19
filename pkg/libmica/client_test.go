@@ -102,7 +102,7 @@ func TestParseMicaStatus(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			gotStatus, err := parseMicaStatus(tt.response)
-			
+
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("parseMicaStatus() expected error, got nil")
@@ -113,12 +113,12 @@ func TestParseMicaStatus(t *testing.T) {
 				}
 				return
 			}
-			
+
 			if err != nil {
 				t.Errorf("parseMicaStatus() unexpected error = %v", err)
 				return
 			}
-			
+
 			if !reflect.DeepEqual(gotStatus, tt.wantStatus) {
 				t.Errorf("parseMicaStatus() = %v, want %v", gotStatus, tt.wantStatus)
 			}
@@ -183,7 +183,7 @@ func TestParseCPUString(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			gotCPUs, err := ParseCPUString(tt.cpuStr)
-			
+
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("ParseCPUString() expected error, got nil")
@@ -194,12 +194,12 @@ func TestParseCPUString(t *testing.T) {
 				}
 				return
 			}
-			
+
 			if err != nil {
 				t.Errorf("ParseCPUString() unexpected error = %v", err)
 				return
 			}
-			
+
 			if len(gotCPUs) != len(tt.wantCPUs) {
 				t.Errorf("ParseCPUString() length = %d, want %d", len(gotCPUs), len(tt.wantCPUs))
 			}
@@ -264,9 +264,9 @@ func TestMicaStatusMethods(t *testing.T) {
 }
 
 func contains(s, substr string) bool {
-	return len(s) >= len(substr) && s[:len(substr)] == substr || 
-		   len(s) > len(substr) && (s[len(s)-len(substr):] == substr || 
-		   findSubstring(s, substr))
+	return len(s) >= len(substr) && s[:len(substr)] == substr ||
+		len(s) > len(substr) && (s[len(s)-len(substr):] == substr ||
+			findSubstring(s, substr))
 }
 
 func findSubstring(s, substr string) bool {
@@ -344,7 +344,7 @@ func TestBoundaryConditions(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				gotCPUs, err := ParseCPUString(tt.cpuStr)
-				
+
 				if tt.wantErr {
 					if err == nil {
 						t.Errorf("ParseCPUString() expected error, got nil")
@@ -352,12 +352,12 @@ func TestBoundaryConditions(t *testing.T) {
 					}
 					return
 				}
-				
+
 				if err != nil {
 					t.Errorf("ParseCPUString() unexpected error = %v", err)
 					return
 				}
-				
+
 				if !reflect.DeepEqual(gotCPUs, tt.wantCPUs) {
 					t.Errorf("ParseCPUString() = %v, want %v", gotCPUs, tt.wantCPUs)
 				}
@@ -445,7 +445,7 @@ func TestBoundaryConditions(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				gotStatus, err := parseMicaStatus(tt.response)
-				
+
 				if tt.wantErr {
 					if err == nil {
 						t.Errorf("parseMicaStatus() expected error, got nil")
@@ -456,12 +456,12 @@ func TestBoundaryConditions(t *testing.T) {
 					}
 					return
 				}
-				
+
 				if err != nil {
 					t.Errorf("parseMicaStatus() unexpected error = %v", err)
 					return
 				}
-				
+
 				if !reflect.DeepEqual(gotStatus, tt.wantStatus) {
 					t.Errorf("parseMicaStatus() = %v, want %v", gotStatus, tt.wantStatus)
 				}
@@ -504,8 +504,8 @@ func TestBoundaryConditions(t *testing.T) {
 	// Test service parsing boundary conditions
 	t.Run("Service parsing boundary conditions", func(t *testing.T) {
 		tests := []struct {
-			name        string
-			fields      []string
+			name         string
+			fields       []string
 			wantServices []MicaService
 		}{
 			{"empty services", []string{}, []MicaService{}},

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	defs "mica-shim/definitions"
 	"os/exec"
 	"runtime"
 	"strconv"
@@ -44,30 +45,55 @@ import (
 //             xend_config_format     : 4
 
 type XlInfo struct {
-	host string
-	machine string
-	nrCpus uint32
+	host        string
+	machine     string
+	nrCpus      uint32
 	totalMemory uint64
-	freeMemory uint64
+	freeMemory  uint64
 	// xlver = <info::xen_major>.<info::xen_minor>.<info::xen_extra>
 	xlver string
+	// TODO: attach Xl... struct into XlInfo, in order to parse once, reuse thoudsand times
 }
 
-func newCommand() *exec.Cmd {
-	return exec.Command("xl", "info")
+type XlVcpuInfo struct {
 }
 
-func xinfo() (*XlInfo, error) {
-	cmd := newCommand()
-	
-	// Capture output
+type xlSubCmd string
+
+const (
+	info     xlSubCmd = "info"
+	vcpulist xlSubCmd = "vcpu-list"
+	vcpupin  xlSubCmd = "vcpu-pin"
+	vmlist   xlSubCmd = "vm-list"
+)
+
+func newCommand(subcmd xlSubCmd) *exec.Cmd {
+	return exec.Command("xl", string(subcmd))
+}
+
+func xlvcpu() (*XlVcpuInfo, error) {
+	var cmd *exec.Cmd
 	var out bytes.Buffer
+	cmd = newCommand(vcpulist)
 	cmd.Stdout = &out
-	
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("failed to run xl info: %v", err)
 	}
-	
+
+	return parseXlVcpuInfo(out.String())
+}
+
+func xinfo() (*XlInfo, error) {
+	cmd := newCommand(info)
+
+	// Capture output
+	var out bytes.Buffer
+	cmd.Stdout = &out
+
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("failed to run xl info: %v", err)
+	}
+
 	// Parse the output
 	return parseXlInfo(out.String())
 }
@@ -75,22 +101,22 @@ func xinfo() (*XlInfo, error) {
 func parseXlInfo(output string) (*XlInfo, error) {
 	info := &XlInfo{}
 	scanner := bufio.NewScanner(strings.NewReader(output))
-	
+
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
-		
+
 		// Split on ":" and trim whitespace
 		parts := strings.SplitN(line, ":", 2)
 		if len(parts) != 2 {
 			continue
 		}
-		
+
 		key := strings.TrimSpace(parts[0])
 		value := strings.TrimSpace(parts[1])
-		
+
 		switch key {
 		case "host":
 			info.host = value
@@ -121,12 +147,16 @@ func parseXlInfo(output string) (*XlInfo, error) {
 			}
 		}
 	}
-	
+
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("error reading xl info output: %v", err)
 	}
-	
+
 	return info, nil
+}
+
+func parseXlVcpuInfo(output string) (*XlVcpuInfo, error) {
+	return nil, nil
 }
 
 func (xi *XlInfo) nodePhysicalCPUNum() uint32 {
@@ -134,6 +164,9 @@ func (xi *XlInfo) nodePhysicalCPUNum() uint32 {
 }
 
 func MaxCPUNum() uint32 {
+	if defs.IsMock {
+		return uint32(runtime.NumCPU())
+	}
 	i, err := xinfo()
 	if err != nil {
 		return uint32(runtime.NumCPU())

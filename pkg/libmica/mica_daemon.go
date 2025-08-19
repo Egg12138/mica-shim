@@ -55,3 +55,7 @@ func DaemonState() (*MicaDaemonState, error) {
 
 	return &state, nil
 }
+
+func (m *MicaDaemonState) Active() bool {
+	return m.State == DaemonRunning
+}

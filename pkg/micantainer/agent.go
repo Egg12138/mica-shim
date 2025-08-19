@@ -2,8 +2,9 @@ package micantainer
 
 import (
 	"context"
+	"fmt"
+	"mica-shim/pkg/fileutils"
 	"mica-shim/pkg/libmica"
-	"syscall"
 	"time"
 
 	"github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/agent/protocols/grpc"
@@ -11,9 +12,12 @@ import (
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
+const (
+	maxHostnameLength = 64
+)
+
 type RealAgent struct {
 }
-
 
 // nolint:golint
 func NewMockRealRealAgent() *RealAgent {
@@ -27,11 +31,6 @@ func (n *RealAgent) init(ctx context.Context, sandbox *Sandbox) (bool, error) {
 
 func (n *RealAgent) longLiveConn() bool {
 	return false
-}
-
-// createSandbox is the Noop agent sandbox creation implementation. It does nothing.
-func (n *RealAgent) createSandbox(ctx context.Context, sandbox *Sandbox) error {
-	return nil
 }
 
 // capabilities returns empty capabilities, i.e no capabilties are supported.
@@ -49,39 +48,104 @@ func (n *RealAgent) exec(ctx context.Context, sandbox *Sandbox, c Container, cmd
 	return nil, nil
 }
 
-// startSandbox is the Noop agent Sandbox starting implementation. It does nothing.
-func (n *RealAgent) startSandbox(ctx context.Context, sandbox *Sandbox) error {
-	return nil
-}
-
 // stopSandbox is the Noop agent Sandbox stopping implementation. It does nothing.
 func (n *RealAgent) stopSandbox(ctx context.Context, sandbox *Sandbox) error {
-	if err := libmica.Stop(sandbox.id); err != nil {	
+	if err := libmica.Stop(sandbox.id); err != nil {
 		return err
 	}
 	return nil
 }
 
-// createContainer is the Noop agent Container creation implementation. It does nothing.
-func (n *RealAgent) createContainer(ctx context.Context, sandbox *Sandbox, c *Container) (*RTOSTask, error) {
-	return &RTOSTask{}, nil
-}
+// createSandbox creates a new sandbox by initializing MICA daemon
+// TODO: crutial network setup
+func (n *RealAgent) createSandbox(ctx context.Context, sandbox *Sandbox) error {
+	hostname := sandbox.config.Hostname
+	if len(hostname) > maxHostnameLength {
+		hostname = hostname[:maxHostnameLength]
+	}
 
-// startContainer is the Noop agent Container starting implementation. It does nothing.
-func (n *RealAgent) startContainer(ctx context.Context, sandbox *Sandbox, c *Container) error {
+	_, err := n.getDNS(sandbox)
+	if err != nil {
+		return err
+	}
+
+	if !sandbox.CheckDaemon().Active() {
+		return fmt.Errorf("mica daemon is not listening or not started")
+	}
 	return nil
 }
 
-// stopContainer is the Noop agent Container stopping implementation. It does nothing.
+// startSandbox starts the sandbox by booting RTOS clients
+func (n *RealAgent) startSandbox(ctx context.Context, sandbox *Sandbox) error {
+	// Start all containers in the sandbox
+	for _, container := range sandbox.containers {
+		if err := n.startContainer(ctx, sandbox, container); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// createContainer creates a new container in the sandbox
+func (n *RealAgent) createContainer(ctx context.Context, sandbox *Sandbox, c *Container) (*RTOSTask, error) {
+	// Create RTOS task through MICA daemon
+
+	// task, err := libmica.(c.id, c.config.FirmwarePath, c.config.PedConfig.PedType)
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// TODO: libmica
+	shortId := fileutils.ShortID(c.ID())
+	task := &RTOSTask{
+		TaskID:       shortId,
+		StartTime:    time.Now(),
+		ReceiverAddr: 0x4500000,
+	}
+
+	return task, nil
+}
+
+// startContainer starts a specific container
+func (n *RealAgent) startContainer(ctx context.Context, sandbox *Sandbox, c *Container) error {
+	// Start the RTOS task
+	if err := libmica.Start(c.id); err != nil {
+		return err
+	}
+	// Update container state
+	c.state.State = StateRunning
+	return nil
+}
+
+// statsContainer gets statistics for a specific container
+func (n *RealAgent) statsContainer(ctx context.Context, sandbox *Sandbox, c Container) (*ContainerStats, error) {
+	// Get container stats from MICA daemon
+	return &ContainerStats{}, nil
+}
+
+// waitTask waits for a task to complete
+// TODO: Implement wait in libmica, and then use it here
+// TODO: handling exit code
+func (n *RealAgent) waitTask(ctx context.Context, c *Container, processID string) (int32, error) {
+	// Wait for RTOS task to complete
+	err := libmica.Stop(c.ID())
+	if err != nil {
+		return 0, err
+	}
+
+	return 0, nil
+}
+
+// getOOMEvent gets OOM events from the agent
+func (n *RealAgent) getOOMEvent(ctx context.Context) (string, error) {
+	// Get OOM events from MICA daemon
+	return "", nil
+}
+
+// stopContainer stops a specific container
 func (n *RealAgent) stopContainer(ctx context.Context, sandbox *Sandbox, c Container) error {
 	if err := libmica.Stop(c.ID()); err != nil {
 		return err
 	}
-	return nil
-}
-
-// signalProcess is the Noop agent Container signaling implementation. It does nothing.
-func (n *RealAgent) signalProcess(ctx context.Context, c *Container, processID string, signal syscall.Signal, all bool) error {
 	return nil
 }
 
@@ -100,21 +164,6 @@ func (n *RealAgent) onlineCPUMem(ctx context.Context, cpus uint32, cpuOnly bool)
 	return nil
 }
 
-// check is the Noop agent health checker. It does nothing.
-func (n *RealAgent) check(ctx context.Context) error {
-	return nil
-}
-
-// statsContainer is the Noop agent Container stats implementation. It does nothing.
-func (n *RealAgent) statsContainer(ctx context.Context, sandbox *Sandbox, c Container) (*ContainerStats, error) {
-	return &ContainerStats{}, nil
-}
-
-// waitTask is the Noop agent process waiter. It does nothing.
-func (n *RealAgent) waitTask(ctx context.Context, c *Container, processID string) (int32, error) {
-	return 0, nil
-}
-
 // winsizeTask is the Noop agent process tty resizer. It does nothing.
 func (n *RealAgent) winsizeTask(ctx context.Context, c *Container, processID string, height, width uint32) error {
 	return nil
@@ -130,14 +179,19 @@ func (n *RealAgent) closeTaskStdin(ctx context.Context, c *Container, ProcessID 
 	return nil
 }
 
-// readTaskStdout is the Noop agent process stdout reader. It does nothing.
-func (n *RealAgent) readTaskStdout(ctx context.Context, c *Container, processID string, data []byte) (int, error) {
+// it is a temporary solution that merge stdout, stderr into ont output stream
+func (n *RealAgent) readOut(ctx context.Context, c *Container, taskID string, data []byte) (int, error) {
 	return 0, nil
 }
 
+// readTaskStdout is the Noop agent process stdout reader. It does nothing.
+func (n *RealAgent) readTaskStdout(ctx context.Context, c *Container, taskID string, data []byte) (int, error) {
+	return n.readOut(ctx, c, taskID, data)
+}
+
 // readTaskStderr is the Noop agent process stderr reader. It does nothing.
-func (n *RealAgent) readTaskStderr(ctx context.Context, c *Container, processID string, data []byte) (int, error) {
-	return 0, nil
+func (n *RealAgent) readTaskStderr(ctx context.Context, c *Container, taskID string, data []byte) (int, error) {
+	return n.readOut(ctx, c, taskID, data)
 }
 
 // pauseContainer is the Noop agent Container pause implementation. It does nothing.
@@ -205,11 +259,6 @@ func (n *RealAgent) markDead(ctx context.Context) {
 func (n *RealAgent) cleanup(ctx context.Context) {
 }
 
-
-func (n *RealAgent) getOOMEvent(ctx context.Context) (string, error) {
-	return "", nil
-}
-
 func (n *RealAgent) getRealAgentMetrics(ctx context.Context, req *grpc.GetMetricsRequest) (*grpc.Metrics, error) {
 	return nil, nil
 }
@@ -222,10 +271,20 @@ func (n *RealAgent) resizeGuestVolume(ctx context.Context, volumeGuestPath strin
 	return nil
 }
 
-func (k *RealAgent) getIPTables(ctx context.Context, isIPv6 bool) ([]byte, error) {
+func (n *RealAgent) getIPTables(ctx context.Context, isIPv6 bool) ([]byte, error) {
 	return nil, nil
 }
 
-func (k *RealAgent) setIPTables(ctx context.Context, isIPv6 bool, data []byte) error {
+func (n *RealAgent) setIPTables(ctx context.Context, isIPv6 bool, data []byte) error {
 	return nil
+}
+
+// TODO: Calling ped methods
+func (n *RealAgent) vcpuSet(ctx context.Context) (uint32, error) {
+	return maxVCPUNumber(), nil
+}
+
+func (n *RealAgent) getDNS(s *Sandbox) ([]string, error) {
+	ret := make([]string, 0)
+	return ret, nil
 }

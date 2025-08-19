@@ -80,7 +80,7 @@ func setInternalRootfs(bundle string) error {
 // For regular containers and sandboxes, the address will be handled in Create().
 func preparePodSocketAddr(ctx context.Context, bundle string, opts shimv2.StartOpts) (string, error) {
 
-	ociSpec, err := oci.ParseConfigJSON(bundle)
+	ociSpec, err := oci.LoadSpec(bundle)
 	if err != nil {
 		return "", fmt.Errorf("failed to load valid runtime config: %w", err)
 	}

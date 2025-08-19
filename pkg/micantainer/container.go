@@ -3,6 +3,7 @@ package micantainer
 import (
 	"context"
 	"fmt"
+	"io"
 	defs "mica-shim/definitions"
 	log "mica-shim/logger"
 	utils "mica-shim/pkg/fileutils"
@@ -11,6 +12,7 @@ import (
 
 	vc "github.com/kata-containers/kata-containers/src/runtime/virtcontainers"
 	"github.com/opencontainers/runtime-spec/specs-go"
+	"github.com/pkg/errors"
 )
 
 type ContainerStats struct {
@@ -18,10 +20,10 @@ type ContainerStats struct {
 }
 
 type ContainerState struct {
-	Bundle string        `json:"bundle"`
-	ID     string        `json:"id"`
-	CType  ContainerType `json:"c_type"`
-	State  StateString   `json:"state"`
+	Bundle string
+	ID     string
+	CType  ContainerType
+	State  StateString
 }
 
 func (s *ContainerState) Valid() bool {
@@ -33,11 +35,12 @@ func (s *ContainerState) ValidTransition(old StateString, new StateString) error
 }
 
 type ContainerStatus struct {
-	Spec        *specs.Spec
-	StartedAt   time.Time
-	State       ContainerState
-	ID          string
-	Rootfs      string
+	Spec      *specs.Spec
+	StartedAt time.Time
+	State     ContainerState
+	ID        string
+	Rootfs    string
+	// shim pid
 	Pid         int
 	Annotations map[string]string
 }
@@ -46,11 +49,10 @@ type ContainerStatus struct {
 type RTOSTask struct {
 	StartTime time.Time
 	// TaskID is the identifier of the task, managed by micran.
-	TaskID uint32
+	TaskID string
 	// ReceiverAddr is the memory address of the receiver inside the RTOS.
 	ReceiverAddr uint64
 }
-
 
 // ContainerConfig holds the configuration for a container.
 type ContainerConfig struct {
@@ -118,15 +120,21 @@ const (
 
 // Container represents a single container instance.
 type Container struct {
-	ctr     context.Context
-	config  *ContainerConfig
-	sandbox *Sandbox
-	id      string
+	ctx context.Context
+
+	config *ContainerConfig
+	id     string
+
+	sandbox   *Sandbox
+	sandboxId string
+
+	mounts []Mount
+	rootfs RootFs
 	// containerPath is the path to the container's directory: <sandboxID>/<containerID>.
 	containerPath string
-	mounts        []Mount
-	state         ContainerState
-	taskInfo      RTOSTask
+
+	state    ContainerState
+	taskInfo RTOSTask
 }
 
 func (ct ContainerType) IsRegularContainer() bool {
@@ -181,7 +189,6 @@ func cleanupPersistResource(ctx context.Context, sandboxID string) error {
 	return nil
 }
 
-
 // newContainer creates a new container instance.
 func newContainer(ctx context.Context, s *Sandbox, cc *ContainerConfig) (*Container, error) {
 	container := &Container{
@@ -218,7 +225,7 @@ func (c *Container) start(ctx context.Context) error {
 
 func (c *Container) checkSandboxRunnig(op string) error {
 	if op == "" {
-		return fmt.Errorf("operation cannot be empty")
+		return fmt.Errorf("operation to sandbox cannot be empty")
 	}
 	if c.sandbox.state.State != StateRunning {
 		return fmt.Errorf("sandbox is not running, cannot %s container", op)
@@ -253,7 +260,7 @@ func (c *Container) stop(ctx context.Context, force bool) error {
 
 	c.kill(ctx, true)
 	c.sandbox.agent.waitTask(ctx, c, c.id)
-	if err := c.sandbox.agent.stopContainer(ctx, c.sandbox, *c); err != nil && !force{
+	if err := c.sandbox.agent.stopContainer(ctx, c.sandbox, *c); err != nil && !force {
 		return err
 	}
 
@@ -448,12 +455,12 @@ func (c *Container) SaveState() error {
 	stateInBundle := filepath.Join(c.containerPath, defs.MicantainerStateFile)
 	stateInMicranDir := filepath.Join(defs.MicranStateDir, c.id, defs.MicantainerStateFile)
 
-	if err = utils.SaveStructToFile(stateInBundle, st); err != nil {
+	if err = utils.SaveStructToJSON(stateInBundle, st); err != nil {
 		failed = true
 		err = fmt.Errorf("failed to save state to <%s>: %w", stateInBundle, err)
 	}
 
-	if err1 = utils.SaveStructToFile(stateInMicranDir, st); err1 != nil {
+	if err1 = utils.SaveStructToJSON(stateInMicranDir, st); err1 != nil {
 		failed1 = true
 		err1 = fmt.Errorf("failed to save state to <%s>: %w", stateInMicranDir, err1)
 	}
@@ -462,4 +469,32 @@ func (c *Container) SaveState() error {
 		return fmt.Errorf("failed to save container state to both locations: %w, %w", err, err1)
 	}
 	return nil
+}
+
+func (c *Container) stats(ctx context.Context) (*ContainerStats, error) {
+	if err := c.checkSandboxRunnig("stats"); err != nil {
+		return nil, err
+	}
+	return c.sandbox.agent.statsContainer(ctx, c.sandbox, *c)
+}
+
+// TODO: for now, taskId is always a dummy because one client, one task
+// BUT It is possible to apply a new task to the client os in future,
+// TALK: By Xen?
+func (c *Container) wait4exit(ctx context.Context, taskId string) (int32, error) {
+	if c.state.State != StateReady &&
+		c.state.State != StateRunning {
+		return 0, errors.New("container is not ready or running, cannot wait for exit")
+	}
+	return c.sandbox.agent.waitTask(ctx, c, taskId)
+}
+
+func (c *Container) ioStream(taskID string) (io.WriteCloser, io.Reader, io.Reader, error) {
+	if c.state.State != StateReady && c.state.State != StateRunning {
+		return nil, nil, nil, fmt.Errorf("Container not ready or running, impossible to signal the container")
+	}
+
+	stream := newIOStream(c.sandbox, c, taskID)
+
+	return stream.stdin(), stream.stdout(), stream.stderr(), nil
 }

@@ -151,7 +151,7 @@ func (s *shimService) Cleanup(ctx context.Context) (*taskAPI.DeleteResponse, err
 		return nil, fmt.Errorf("container ID is required")
 	}
 
-	ociSpec, err := oci.ParseConfigJSON(cwd)
+	ociSpec, err := oci.LoadSpec(cwd)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load valid runtime config: %w", err)
 	}

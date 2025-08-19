@@ -42,8 +42,9 @@ type SandboxTraits interface {
 	GetAllContainers() []ContainerTraits
 	GetContainer(id string) ContainerTraits
 	GetNetNamespace() string
+	Stats(ctx context.Context) (SandboxStats, error)
 
-	// Lifecycle methods
+	// Sandbox Lifecycle methods
 	Start(ctx context.Context) error
 	Stop(ctx context.Context, force bool) error
 	Delete(ctx context.Context) error
@@ -54,22 +55,19 @@ type SandboxTraits interface {
 	StartContainer(ctx context.Context, id string) (ContainerTraits, error)
 	StopContainer(ctx context.Context, id string, force bool) (ContainerTraits, error)
 	KillContainer(ctx context.Context, id string) (ContainerTraits, error)
-	StatusContainer(id string) (ContainerState, error)
+	StatusContainer(id string) (ContainerStatus, error)
 	StatsContainer(ctx context.Context, id string) (ContainerStats, error)
-	WaitContainer(ctx context.Context, id string, pid string) (int32, error)
-	IOStream(containerID, processID string) (io.WriteCloser, io.Reader, io.Reader, error)
+	IOStream(containerID, taskID string) (io.WriteCloser, io.Reader, io.Reader, error)
 	GetOOMEvent(ctx context.Context) (string, error)
 	// Not supported well
 	// TODO: aftet unified micran and micad, we can achive sending signals to RTOS clients
 	PauseContainer(ctx context.Context, id string) error
 	ResumeContainer(ctx context.Context, id string) error
 	UpdateContainer(ctx context.Context, id string, resources specs.LinuxResources) error
-	WaitTaskExit(ctx context.Context, containerID string, taskid uint32) (int32, error)
+	WaitTaskExit(ctx context.Context, id string, pid string) (int32, error)
 	SignalTask(ctx context.Context, containerID, processID string, signal syscall.Signal, all bool) error
 	WinsizeTask(ctx context.Context, containerID, processID string, height, width uint32) error
 }
 
-
 type PedTrait struct {
-
 }

@@ -26,6 +26,10 @@ type SandboxStatus struct {
 	State           SandboxState
 }
 
+type SandboxStats struct {
+	Cpus int
+}
+
 type SandboxConfig struct {
 	ID               string
 	Hostname         string
@@ -245,7 +249,7 @@ func (s *Sandbox) Stop(ctx context.Context, force bool) error {
 	}
 
 	// TODO: add stopClient()
-	if err := s.stopClient(ctx); err != nil && !force{
+	if err := s.stopClient(ctx); err != nil && !force {
 		return err
 	}
 
@@ -412,12 +416,16 @@ func (s *Sandbox) StartContainer(ctx context.Context, id string) (ContainerTrait
 		return nil, er.ErrContainerNotFound
 	}
 
-	// start client os, os start the task from entry inside the OS image 
+	// start client os, os start the task from entry inside the OS image
 	if err := c.start(ctx); err != nil {
 		return nil, err
 	}
 
 	if err := s.StoreSandbox(ctx); err != nil {
+		return nil, err
+	}
+
+	if err := s.checkVCPUsPinning(ctx); err != nil {
 		return nil, err
 	}
 	return c, nil
@@ -449,40 +457,89 @@ func (s *Sandbox) KillContainer(ctx context.Context, id string) (ContainerTraits
 	return c, nil
 }
 
-func (s *Sandbox) StatusContainer(id string) (ContainerState, error) {
-	cs := ContainerState{}
+func (s *Sandbox) StatusContainer(id string) (ContainerStatus, error) {
+	cs := ContainerStatus{}
 	if id == "" {
 		return cs, er.ErrEmptyContainerID
 	}
 
-	// TODO:  status contaienr of sandbox
-	if _, ok := s.containers[id]; !ok {
-		log.Debugf("container %s not found in sandbox %s", id, s.id)
+	if c, ok := s.containers[id]; ok {
+		rootfs := c.config.Rootfs.Source
+		if c.config.Rootfs.Mounted {
+			rootfs = c.config.Rootfs.Target
+		}
+
+		// TODO: no need to store starttime in taskinfo, collapsing is unneeded
+		cs.Spec = nil
+		cs.StartedAt = c.taskInfo.StartTime
+		cs.State = c.state
+		cs.ID = c.id
+		cs.Rootfs = rootfs
+		cs.Pid = c.GetPid()
+		cs.Annotations = c.config.Annotations
 		return cs, er.ErrContainerNotFound
 	}
+	log.Debugf("container %s not found in sandbox %s", id, s.id)
 	return cs, nil
 }
 
 func (s *Sandbox) StatsContainer(ctx context.Context, id string) (ContainerStats, error) {
-	return ContainerStats{}, nil
+	c, ok := s.containers[id]
+	if !ok {
+		return ContainerStats{}, er.ErrContainerNotFound
+	}
+
+	stats, err := c.stats(ctx)
+	if err != nil {
+		log.Errorf("failed to get stats for container %s: %v", id, err)
+		return ContainerStats{}, err
+	}
+	return *stats, nil
 }
 
-func (s *Sandbox) WaitContainer(ctx context.Context, id string, pid string) (int32, error) {
-	return 0, nil
+func (s *Sandbox) Stats(ctx context.Context) (SandboxStats, error) {
+	stats := SandboxStats{}
+
+	// BUG: logic leaks
+	vCpuNum, err := s.agent.vcpuSet(ctx)
+	if err != nil {
+		log.Errorf("failed to get vcpu number: %v", err)
+		return stats, err
+	}
+	stats.Cpus = int(vCpuNum)
+	return stats, nil
 }
 
-func (s *Sandbox) IOStream(containerID, processID string) (io.WriteCloser, io.Reader, io.Reader, error) {
-	return nil, nil, nil, nil
+func (s *Sandbox) IOStream(containerID, taskID string) (io.WriteCloser, io.Reader, io.Reader, error) {
+	if s.state.State != StateRunning {
+		return nil, nil, nil, er.ErrSandboxDown
+	}
+
+	c, ok := s.containers[containerID]
+	if !ok {
+		return nil, nil, nil, er.ErrContainerNotFound
+	}
+
+	return c.ioStream(taskID)
 }
 
 func (s *Sandbox) GetOOMEvent(ctx context.Context) (string, error) {
-	return "", nil
+	return s.agent.getOOMEvent(ctx)
 }
 
 // Not supported well
 // TODO: aftet unified micran and micad, we can achive sending signals to RTOS clients
-func (s *Sandbox) WaitTaskExit(ctx context.Context, containerID string, taskid uint32) (int32, error) {
-	return libmica.ConvertToPosixError("zephyr", 0), nil
+// NOTICE: container == task == RTOS Client
+func (s *Sandbox) WaitTaskExit(ctx context.Context, containerID string, taskid string) (int32, error) {
+	if s.state.State != StateRunning {
+		return 0, er.ErrSandboxDown
+	}
+	c, ok := s.containers[containerID]
+	if !ok {
+		return 0, er.ErrContainerNotFound
+	}
+
+	return c.wait4exit(ctx, taskid)
 }
 
 func (s *Sandbox) SignalTask(ctx context.Context, containerID, processID string, signal syscall.Signal, all bool) error {
@@ -494,6 +551,10 @@ func (s *Sandbox) WinsizeTask(ctx context.Context, containerID, processID string
 }
 
 func (s *Sandbox) PauseContainer(ctx context.Context, id string) error {
+	err := libmica.Pause(id)
+	if err != nil {
+		return er.ErrMicaStopFailed
+	}
 	return nil
 }
 
@@ -523,6 +584,7 @@ type FlattenedSandboxState struct {
 	Network            NetworkConfig `json:"network"`
 	Version            uint          `json:"version"`
 }
+
 
 func (s *Sandbox) dumpState(f *FlattenedSandboxState) {
 	f.SandboxContainerID = s.id
@@ -563,7 +625,7 @@ func (s *Sandbox) StoreSandbox(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := fileutils.SaveStructToFile(target, flatterned); err != nil {
+	if err := fileutils.SaveStructToJSON(target, flatterned); err != nil {
 		return err
 	}
 	return nil
@@ -581,7 +643,6 @@ func (s *Sandbox) newSandboxStoragePath() (string, error) {
 	stateFile := filepath.Join(dir, defs.SandboxStateFile)
 	return stateFile, nil
 }
-
 
 func (s *Sandbox) addContainer(c *Container) error {
 
@@ -612,15 +673,79 @@ func (s *Sandbox) removeNetwork(ctx context.Context) error {
 func (s *Sandbox) stopClient(ctx context.Context) error {
 	log.Debugf("stop sandbox %s", s.id)
 	if err := s.agent.stopSandbox(ctx, s); err != nil {
-		log.Errorf("failed to stop sandbox %s: %v", s.id, err)	
+		log.Errorf("failed to stop sandbox %s: %v", s.id, err)
 		return err
 	}
 	log.Info("stopping client os")
 	return nil
 }
 
-
 // considering pinning vCPUs on different pedestal
 func (s *Sandbox) checkVCPUsPinning(ctx context.Context) error {
 	return nil
+}
+
+// NewSandbox creates a new sandbox instance
+func NewSandbox(ctx context.Context, config *SandboxConfig) (*Sandbox, error) {
+	s := &Sandbox{
+		ctx:        ctx,
+		config:     *config,
+		containers: make(map[string]*Container),
+		id:         config.ID,
+		state: SandboxState{
+			State:   StateCreating,
+			Ped:     HostPedType.String(),
+			Version: defs.SandboxVersion,
+		},
+		network: &DummyNetwork{},
+		agent:   *NewMockRealRealAgent(),
+	}
+
+	// Initialize the sandbox
+	if _, err := s.agent.init(ctx, s); err != nil {
+		return nil, err
+	}
+
+	// Create the sandbox through the agent
+	if err := s.agent.createSandbox(ctx, s); err != nil {
+		return nil, err
+	}
+
+	// Set initial state
+	if err := s.setSandboxState(StateReady); err != nil {
+		return nil, err
+	}
+
+	return s, nil
+}
+
+// LoadSandbox loads an existing sandbox from storage
+func LoadSandbox(ctx context.Context, id string) (*Sandbox, error) {
+	// Load sandbox configuration from storage
+	_ = filepath.Join(defs.SandboxDataDir, id, defs.SandboxStateFile)
+	config := &SandboxConfig{}
+	fileutils.SaveStructToJSON()
+	// if err := fileutils.(configPath, config); err != nil {
+	// 	return nil, err
+	// }
+
+	s := &Sandbox{
+		ctx:        ctx,
+		config:     *config,
+		containers: make(map[string]*Container),
+		id:         id,
+		network:    &DummyNetwork{},
+		agent:      *NewMockRealRealAgent(),
+	}
+
+	// Load containers
+	for containerID, containerConfig := range config.ContainerConfigs {
+		c, err := newContainer(ctx, s, containerConfig)
+		if err != nil {
+			return nil, err
+		}
+		s.containers[containerID] = c
+	}
+
+	return s, nil
 }

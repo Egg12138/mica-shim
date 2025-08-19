@@ -53,6 +53,20 @@ type Network interface {
 	NetworkCleanup() error
 }
 
+type DummyNetwork struct{}
+
+func (dn *DummyNetwork) NetworkIsCreated() bool {
+	return true
+}
+
+func (dn *DummyNetwork) NetID() string {
+	return "dummy"
+}
+
+func (dn *DummyNetwork) NetworkCleanup() error {
+	return nil
+}
+
 // TODO: analyse how to setup netdevice in zephyr, rtthread via mica-Xen
 func NetworkSetup(id string, ipAddr string, config NetworkConfig, spec specs.Spec) (netlink.Link, error) {
 	uid, gid := spec.Process.User.UID, spec.Process.User.GID
