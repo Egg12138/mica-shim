@@ -51,15 +51,6 @@ type RTOSTask struct {
 	ReceiverAddr uint64
 }
 
-// TALK： 在micran层面，我们有时候需要适当跳过mica,来直接通过Xen对rtos传输信息；
-// 未来整合的时候，都作为mica 一部分
-// Agent 本身始终在 host中
-// 我们需要一个通用的 Agent 设计策略 来：
-//  1. 管理 rtos 的devices, net, tasks...
-//  2. 在agent中处理IO吗？
-//     3.
-type Agent struct {
-}
 
 // ContainerConfig holds the configuration for a container.
 type ContainerConfig struct {
@@ -261,6 +252,11 @@ func (c *Container) stop(ctx context.Context, force bool) error {
 	}
 
 	c.kill(ctx, true)
+	c.sandbox.agent.waitTask(ctx, c, c.id)
+	if err := c.sandbox.agent.stopContainer(ctx, c.sandbox, *c); err != nil && !force{
+		return err
+	}
+
 	if err := c.setContainerState(ctx, StateStopped); err != nil {
 		return err
 	}

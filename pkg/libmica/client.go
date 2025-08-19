@@ -57,9 +57,10 @@ const (
 // Structs and Methods
 
 // MicaStatus represents the complete status of a MICA client
+// TODO: remove Raw field in the future for space saving
 type MicaStatus struct {
 	Name     string      `json:"name"`
-	CPU      int         `json:"cpu"`
+	CPU      string         `json:"cpu"`
 	State    MicaState   `json:"state"`
 	Services []MicaService `json:"services"`
 	Raw      string      `json:"raw"` // Original raw response
@@ -67,7 +68,7 @@ type MicaStatus struct {
 
 // string returns a string representation of MicaStatus
 func (ms MicaStatus) string() string {
-	return fmt.Sprintf("Name: %s, CPU: %d, State: %s, Services: %v",
+	return fmt.Sprintf("Name: %s, CPU: %s, State: %s, Services: %v",
 		ms.Name, ms.CPU, ms.State, ms.Services)
 }
 
@@ -93,7 +94,7 @@ func (ms MicaStatus) hasService(service MicaService) bool {
 
 // isValid checks if the status contains valid information
 func (ms MicaStatus) isValid() bool {
-	return ms.Name != "" && ms.CPU >= 0 && ms.State != unknown
+	return ms.Name != "" && isValidCPUString(ms.CPU) && ms.State != unknown
 }
 
 type mcsFS struct {
@@ -192,9 +193,14 @@ func StartMicaClient(id string) (string, error) {
 	return MicaCtl(MStart, id)
 }
 
-// TODO: adjust mica stop parameter
-func Stop(id string) (string, error) {
-	return MicaCtl(MStop, id)
+// TODO: Extend mica response data, loading more information
+// BUG: mica daemon stop command does not handle error, always return success
+func Stop(id string) (error) {
+	res, err := MicaCtl(MStop, id)
+	if err != nil || !success(res) {
+		return fmt.Errorf("failed to stop mica client %s, resposne = <%s>: %w", id, res, err)
+	}
+	return nil
 }
 
 func Remove(id string) (string, error) {
@@ -312,10 +318,22 @@ func parseMicaStatus(rawResponse string) (*MicaStatus, error) {
 		return nil, fmt.Errorf("invalid status format: %s", rawResponse)
 	}
 
-	// Parse CPU field
-	cpu, err := strconv.Atoi(fields[1])
-	if err != nil {
-		return nil, fmt.Errorf("invalid CPU field: %s", fields[1])
+	// Parse CPU field - now supports multi-core format like 
+	// "1-3,5" and empty string
+	cpuStr := fields[1]
+	if !isValidCPUString(cpuStr) {
+		return nil, fmt.Errorf("invalid CPU field format: %s", cpuStr)
+	}
+
+	// If CPU string is empty, use MaxCPUNum() as fallback
+	if cpuStr == "" {
+		maxCPU := MaxCPUNum()
+		if maxCPU > 0 {
+			// Convert to range format (e.g., "0-3" for 4 CPUs)
+			cpuStr = fmt.Sprintf("0-%d", maxCPU-1)
+		} else {
+			return nil, fmt.Errorf("failed to get max CPU number for empty CPU string")
+		}
 	}
 
 	// Parse state
@@ -329,7 +347,7 @@ func parseMicaStatus(rawResponse string) (*MicaStatus, error) {
 
 	return &MicaStatus{
 		Name:     fields[0],
-		CPU:      cpu,
+		CPU:      cpuStr,
 		State:    state,
 		Services: services,
 		Raw:      rawResponse,
@@ -378,4 +396,90 @@ func parseMicaServices(fields []string) []MicaService {
 	}
 
 	return services
+}
+
+
+// isValidCPUString validates the CPU string format
+// Supports formats: "1", "1-3", "2-3,15", "1,13,5", ""(empty is All)
+// NOTICE: Xen-related validation function
+func isValidCPUString(cpuStr string) bool {
+	// cpuStr == "" means all physical CPUs which are not pinned to Dom0
+	if cpuStr == "" {
+		return true
+	}
+	
+	// Split by comma for multiple groups
+	groups := strings.Split(cpuStr, ",")
+	
+	for _, group := range groups {
+		group = strings.TrimSpace(group)
+		if group == "" {
+			return false
+		}
+		
+		// Check if it's a range (contains dash)
+		if strings.Contains(group, "-") {
+			parts := strings.Split(group, "-")
+			if len(parts) != 2 {
+				return false
+			}
+			
+			// Validate both parts are integers
+			start, err1 := strconv.Atoi(strings.TrimSpace(parts[0]))
+			end, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
+			
+			if err1 != nil || err2 != nil || start < 0 || end < 0 || start > end {
+				return false
+			}
+		} else {
+			// Single CPU number
+			if _, err := strconv.Atoi(group); err != nil {
+				return false
+			}
+		}
+	}
+	
+	return true
+}
+
+// ParseCPUString parses the CPU string format and returns individual CPU cores
+// Examples: "1-3" -> [1,2,3], "2-3,5" -> [2,3,5], "1,3,5" -> [1,3,5]
+func ParseCPUString(cpuStr string) ([]int, error) {
+	if !isValidCPUString(cpuStr) {
+		return nil, fmt.Errorf("invalid CPU string format: %s", cpuStr)
+	}
+	
+	var cpus []int
+	
+	// Empty string means no specific CPUs
+	if cpuStr == "" {
+		return cpus, nil
+	}
+	
+	groups := strings.Split(cpuStr, ",")
+	
+	for _, group := range groups {
+		group = strings.TrimSpace(group)
+		
+		if strings.Contains(group, "-") {
+			// Range format: "1-3"
+			parts := strings.Split(group, "-")
+			start, _ := strconv.Atoi(strings.TrimSpace(parts[0]))
+			end, _ := strconv.Atoi(strings.TrimSpace(parts[1]))
+			
+			for i := start; i <= end; i++ {
+				cpus = append(cpus, i)
+			}
+		} else {
+			// Single CPU: "5"
+			cpu, _ := strconv.Atoi(group)
+			cpus = append(cpus, cpu)
+		}
+	}
+	
+	return cpus, nil
+}
+
+func success(res string) bool {
+	return res != "" && !strings.Contains(res, defs.MicaFailed) && !strings.Contains(res, "Error")
 }

@@ -28,7 +28,7 @@ const (
 	EmptyID
 	NotFound
 	AlreadyExists
-	MicaFailed
+	MicadFailed
 	DuplicatedKey
 )
 
@@ -42,7 +42,7 @@ var (
 	ErrContainerNotFound = new(NotFound, "container not found")
 	ErrSandboxNil        = new(NotFound, "sandbox is nil")
 
-	ErrMicaStopFailed    = new(MicaFailed, "mica stop failed")
+	ErrMicaStopFailed    = new(MicadFailed, "mica stop failed")
 )
 
 // Type errors

@@ -131,7 +131,7 @@ type Sandbox struct {
 	mu  sync.Mutex
 	// fs, storage, devices, volumes...
 	// monitor
-	agent      Agent
+	agent      RealAgent
 	config     SandboxConfig
 	containers map[string]*Container
 	id         string
@@ -244,6 +244,14 @@ func (s *Sandbox) Stop(ctx context.Context, force bool) error {
 		}
 	}
 
+	// TODO: add stopClient()
+	if err := s.stopClient(ctx); err != nil && !force{
+		return err
+	}
+
+	// TODO: IO and monitor stopped
+	log.Debug("stop monitor and console")
+
 	if err := s.setSandboxState(StateStopped); err != nil {
 		return err
 	}
@@ -285,6 +293,7 @@ func (s *Sandbox) CreateContainer(ctx context.Context, config ContainerConfig) (
 	}
 	s.config.ContainerConfigs[id] = &config
 	newc := s.config.ContainerConfigs[id]
+
 	var err error
 	defer func() {
 		if err != nil {
@@ -295,10 +304,27 @@ func (s *Sandbox) CreateContainer(ctx context.Context, config ContainerConfig) (
 	}()
 
 	c, err := newContainer(ctx, s, newc)
-	if err != nil {
+	if err = c.createInSanbox(ctx); err != nil {
 		return nil, err
 	}
-	if err = c.createInSanbox(ctx); err != nil {
+
+	if err = s.addContainer(c); err != nil {
+		return nil, err
+
+	}
+	defer func() {
+		if err != nil {
+			log.Errorf("failed to create container %s: %v", id, err)
+		}
+
+		if errStop := c.stop(ctx, true); errStop != nil {
+			log.Errorf("failed to stop container %s after creation failure: %v", id, errStop)
+		}
+		log.Debug("remove stopped container from sandbox")
+		s.removeContainer(c.id)
+	}()
+
+	if err = s.checkVCPUsPinning(ctx); err != nil {
 		return nil, err
 	}
 
@@ -370,6 +396,10 @@ func (s *Sandbox) DeleteContainer(ctx context.Context, id string) (ContainerTrai
 		return nil, err
 	}
 
+	if err := s.checkVCPUsPinning(ctx); err != nil {
+		return nil, err
+	}
+
 	if err := s.StoreSandbox(ctx); err != nil {
 		return nil, err
 	}
@@ -381,6 +411,8 @@ func (s *Sandbox) StartContainer(ctx context.Context, id string) (ContainerTrait
 	if !ok {
 		return nil, er.ErrContainerNotFound
 	}
+
+	// start client os, os start the task from entry inside the OS image 
 	if err := c.start(ctx); err != nil {
 		return nil, err
 	}
@@ -550,6 +582,16 @@ func (s *Sandbox) newSandboxStoragePath() (string, error) {
 	return stateFile, nil
 }
 
+
+func (s *Sandbox) addContainer(c *Container) error {
+
+	if _, ok := s.containers[c.id]; ok {
+		return er.ErrDuplicatedKey
+	}
+	s.containers[c.id] = c
+	return nil
+}
+
 func (s *Sandbox) rmSandboxStorage() error {
 	if s.id == "" {
 		return er.ErrEmptySandboxID
@@ -564,5 +606,21 @@ func (s *Sandbox) rmSandboxStorage() error {
 func (s *Sandbox) removeNetwork(ctx context.Context) error {
 	log.Infof("removed network of sandbox %s", s.id)
 	log.Debugf("remove network for sandbox %s", s.id)
+	return nil
+}
+
+func (s *Sandbox) stopClient(ctx context.Context) error {
+	log.Debugf("stop sandbox %s", s.id)
+	if err := s.agent.stopSandbox(ctx, s); err != nil {
+		log.Errorf("failed to stop sandbox %s: %v", s.id, err)	
+		return err
+	}
+	log.Info("stopping client os")
+	return nil
+}
+
+
+// considering pinning vCPUs on different pedestal
+func (s *Sandbox) checkVCPUsPinning(ctx context.Context) error {
 	return nil
 }
