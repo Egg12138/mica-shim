@@ -70,14 +70,3 @@ const (
 	PauseImage     = "k8s.gcr.io/pause"
 	SandboxVersion = 1
 )
-
-// Client default values.
-const (
-	DefaultNcpu       = 1
-	DefaultClientConf = "client.conf"
-)
-
-var (
-	PreservedOS   = [...]string{"zephyr", "uniproton", "linux"}
-	OKSectionList = [...]string{"mica", "more"}
-)

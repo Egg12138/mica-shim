@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"syscall"
 
+	cdtypes "github.com/containerd/containerd/api/types"
+	"github.com/containerd/containerd/mount"
+
 	log "mica-shim/logger"
 )
 
@@ -148,4 +151,30 @@ func RemoveExternalStatFile(id string) error {
 
 func RemoveStateDir(id string) error {
 	return os.RemoveAll(filepath.Join(defs.MicranStateDir, id))
+}
+
+
+func MountDirs(mounts []*cdtypes.Mount, dest string) error {
+	if len(mounts) == 0 {
+		return nil
+	}
+
+	if _, err := os.Stat(dest); os.IsNotExist(err) {
+		if err := os.Mkdir(dest, 0711); err != nil {
+			return err
+		}
+	}
+
+	for _, rm := range mounts {
+		m := &mount.Mount{
+			Type:    rm.Type,
+			Source:  rm.Source,
+			Options: rm.Options,
+		}
+		if err := m.Mount(dest); err != nil {
+			return fmt.Errorf( "failed to mount: %v", m)
+		}
+	}
+	return nil
+
 }

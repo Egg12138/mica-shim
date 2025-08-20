@@ -36,9 +36,10 @@ type exit struct {
 }
 
 type shimService struct {
-	sandbox    *cntr.SandboxTraits
-	containers map[string]*cntr.Container
+	sandbox    cntr.SandboxTraits
+	containers map[string]*container
 	shimPid    uint32
+	micadPid   uint32
 	// context:
 	ctx context.Context
 	// shutdown will be initialized as shutdown.Shutdown, with context,
@@ -46,6 +47,7 @@ type shimService struct {
 	ss func()
 	// events:
 	events  chan any
+	// TODO: future
 	monitor chan error
 	ec      chan exit
 	// configs
@@ -79,9 +81,11 @@ func New(ctx context.Context, id string, publisher shimv2.Publisher, shutdown fu
 	}
 	s := &shimService{
 		id:        id,
-		namespace: ns,
+		micadPid:  getMicadPid(),
 		shimPid:   uint32(os.Getpid()),
+		namespace: ns,
 		ctx:       ctx,
+		containers:make(map[string]*container),
 		events:    make(chan any, channelSize),
 		ec:        make(chan exit, channelSize),
 		ss:        shutdown,
@@ -89,6 +93,10 @@ func New(ctx context.Context, id string, publisher shimv2.Publisher, shutdown fu
 	}
 
 	go s.listenAndReportExits()
+
+	// Start events forwarder to publish events to containerd
+	forwarder := s.newEventsForwarder(ctx, publisher)
+	go forwarder.forward()
 
 	return s, nil
 }
@@ -191,6 +199,7 @@ func (s *shimService) Cleanup(ctx context.Context) (*taskAPI.DeleteResponse, err
 func cleanupContainer(ctx context.Context, sandboxID, containerID, bundle string) error {
 	return cntr.CleanupContainer(ctx, sandboxID, containerID, false)
 }
+
 
 func (s *shimService) StartShim(ctx context.Context, opts shimv2.StartOpts) (_ string, retErr error) {
 	bundle, err := os.Getwd()
@@ -328,4 +337,44 @@ func getTopic(e interface{}) string {
 		log.Warnf("no topic for event type: %v", e)
 	}
 	return cdruntime.TaskUnknownTopic
+}
+
+// eventsForwarder handles forwarding events from the shim to containerd
+type eventsForwarder struct {
+	service   *shimService
+	context   context.Context
+	publisher shimv2.Publisher
+}
+
+// newEventsForwarder creates a new events forwarder
+func (s *shimService) newEventsForwarder(ctx context.Context, publisher shimv2.Publisher) *eventsForwarder {
+	return &eventsForwarder{
+		service:   s,
+		context:   ctx,
+		publisher: publisher,
+	}
+}
+
+// forward listens for events and publishes them to containerd/isulad
+func (ef *eventsForwarder) forward() {
+	for e := range ef.service.events {
+		ctx, cancel := context.WithTimeout(ef.context, timeOut)
+		err := ef.publisher.Publish(ctx, getTopic(e), e)
+		cancel()
+		if err != nil {
+			log.Errorf("failed to post event, %w", err)
+		}
+		topic := getTopic(e)
+		if topic == cdruntime.TaskUnknownTopic {
+			log.Warnf("unknown event type, skipping: %v", e)
+			continue
+		}
+		
+		// Publish the event to containerd
+		if err := ef.publisher.Publish(ef.context, topic, e); err != nil {
+			log.Errorf("failed to publish event topic=%s: %v", topic, err)
+		} else {
+			log.Debugf("Successfully forwarded event topic=%s", topic)
+		}
+	}
 }

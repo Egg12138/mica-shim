@@ -6,6 +6,7 @@ import (
 	defs "mica-shim/definitions"
 	log "mica-shim/logger"
 	"mica-shim/pkg/fileutils"
+	"mica-shim/pkg/libmica"
 	cntr "mica-shim/pkg/micantainer"
 	"mica-shim/pkg/oci"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"strings"
 
 	shimv2 "github.com/containerd/containerd/runtime/v2/shim"
+	protobuf_types "github.com/gogo/protobuf/types"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 )
 
@@ -43,7 +45,7 @@ func validBundle(containerID, bundlePath string) (string, error) {
 	return resolved, nil
 }
 
-func validRootfs(resolved string) error {
+func validateRootfs(resolved string) error {
 	// always mkdir rootfs inside bundle, whatever containerd use externalrootfs or not
 	rootfs := filepath.Join(resolved, "rootfs")
 	stat, err := os.Stat(rootfs)
@@ -139,4 +141,27 @@ func handleSchedCore() {
 	log.Infof(`The functions and features of SCHED_CORE can currently be partially accomplished and replaced by Pedestal (default is Xen), 
 	and micran does not need it for now. 
 	However, in the future, we may provide a more unique way to combine the advantages of SCHED_CORE with the isolation strategy of Pedestal.`)
+}
+
+
+func getMicadPid() uint32 {
+	// Get MICA daemon state which includes PID
+	daemonState, err := libmica.DaemonState()
+	if err != nil {
+		log.Warnf("Failed to get micad daemon state: %v", err)
+		return 0
+	}
+	
+	// Check if daemon is actually running before returning PID
+	if daemonState.State != libmica.DaemonRunning {
+		log.Warnf("Micad daemon is not running (state: %s)", daemonState.State)
+		return 0
+	}
+	
+	return uint32(daemonState.Pid)
+}
+
+
+func marshalStats(ctx, stat *cntr.ContainerStats)	(*protobuf_types.Any, error) {
+	return nil, nil
 }

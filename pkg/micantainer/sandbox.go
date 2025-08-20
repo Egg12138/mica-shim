@@ -177,6 +177,7 @@ func (s *Sandbox) SetAnnotations(annotations map[string]string) {
 	for k, v := range annotations {
 		s.config.Annotations[k] = v
 	}
+
 }
 
 func (s *Sandbox) AllAnnotations() map[string]string {
@@ -193,6 +194,10 @@ func (s *Sandbox) CheckDaemon() *libmica.MicaDaemonState {
 	}
 	log.Pretty("%v", state)
 	return state
+}
+
+func (s *Sandbox) Monitor() {
+
 }
 
 func (s *Sandbox) GetNetNamespace() string {
@@ -717,8 +722,45 @@ func (s *Sandbox) checkVCPUsPinning(ctx context.Context) error {
 	return nil
 }
 
-// NewSandbox creates a new sandbox instance
-func NewSandbox(ctx context.Context, config *SandboxConfig) (*Sandbox, error) {
+// DummySandboxConfig creates a minimal sandbox config for quick development
+func DummySandboxConfig(cid string, spec *specs.Spec) (*SandboxConfig, error) {
+	return &SandboxConfig{
+		ID:        cid,
+		Hostname:  spec.Hostname,
+		Annotations: map[string]string{
+			"org.openeuler.mica.test": "true",
+		},
+		ContainerConfigs: make(map[string]*ContainerConfig),
+		SharedMemorySize: 64 * 1024 * 1024, // 64MB
+		SandboxResources: SandboxResourceSizing{
+			WorkloadCPUs: 1,
+			BaseCPUs:     1,
+			WorkloadMemMB: 128,
+			BaseMemMB:     64,
+		},
+	}, nil
+}
+
+// setup sandbox
+func CreateSandbox(ctx context.Context, cfg *SandboxConfig) (*Sandbox, error) {
+	s, err := newSandbox(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	if s.state.State != "" {
+		return s, nil
+	}
+
+	if err = s.setSandboxState(StateReady); err != nil {
+		return nil, err
+	}
+
+	return s, nil
+}
+
+// newSandbox creates a new sandbox instance
+func newSandbox(ctx context.Context, config *SandboxConfig) (*Sandbox, error) {
 	s := &Sandbox{
 		ctx:        ctx,
 		config:     *config,

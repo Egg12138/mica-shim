@@ -26,6 +26,13 @@ type MicaDaemonState struct {
 // Functions
 // TODO: check more about kernel-level state
 func DaemonState() (*MicaDaemonState, error) {
+	if defs.IsMock {
+		return &MicaDaemonState{
+			Pid:       114514,
+			State:     DaemonRunning,
+			Listening: true,
+		}, nil
+	}
 	pidFile, err := os.OpenFile(MICAD_PIDFILE, os.O_RDONLY, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open mica daemon pid file: %w", err)

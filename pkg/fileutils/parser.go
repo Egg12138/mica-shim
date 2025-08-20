@@ -5,7 +5,6 @@ import (
 	"fmt"
 	defs "mica-shim/definitions"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -20,9 +19,8 @@ func stripQuotes(s string) string {
 }
 
 // a faster ini parsing method, by reading line by line
-func parseConfigINI(bundle string) (map[string]string, error) {
-	configPath := filepath.Join(bundle, "rootfs", defs.DefaultClientConf)
-
+// Add checks for new syntax: "1,3-5"
+func ParseConfigINI(configPath string) (map[string]string, error) {
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		// If config file doesn't exist, return empty map (not an error)
 		return make(map[string]string), nil

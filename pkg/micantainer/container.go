@@ -352,6 +352,7 @@ func (c *Container) State() *ContainerState {
 	return &c.state
 }
 
+
 func validOS(os string) bool {
 	ret := utils.InList(defs.PreservedOS[:], os)
 	return ret

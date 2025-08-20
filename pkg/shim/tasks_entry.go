@@ -6,13 +6,18 @@ import (
 	log "mica-shim/logger"
 	er "mica-shim/pkg/errors"
 	utils "mica-shim/pkg/fileutils"
-	cntr "mica-shim/pkg/micantainer"
+	"os"
+
+	"github.com/containerd/containerd/api/events"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	taskAPI "github.com/containerd/containerd/api/runtime/task/v2"
 	"github.com/containerd/containerd/api/types/task"
 	"github.com/containerd/containerd/errdefs"
 	ptypes "github.com/containerd/containerd/protobuf/types"
 )
+
+var emptyResponse         = &ptypes.Empty{}
 
 // Create creates a new containerd task and **setup rtos Client**
 // The init process is now a true init process :
@@ -31,12 +36,14 @@ func (s *shimService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) 
 	}
 
 	type Result struct {
-		container *cntr.Container
+		container *container
 		err       error
 	}
 
 	ch := make(chan Result, 1)
 	go func() {
+		container, err := create(ctx, s, r)
+		ch <- Result{container, err}
 	}()
 
 	select {
@@ -47,24 +54,23 @@ func (s *shimService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) 
 			return nil, res.err
 		}
 		container := res.container
-		container.SetStatus(task.Status_CREATED)
-		// TODO: proc -> container
-		// Create startup context - this will be signaled when the task is ready
-		startupCtx, startupCancel := context.WithCancel(context.Background())
-		// Create lifecycle context for actual task management
-		lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
-		// Create done context for proper task exit handling
-		doneCtx, doneCancel := context.WithCancel(context.Background())
+		container.status = task.Status_CREATED
+		s.containers[r.ID] = container
 
-		s.procs[r.ID] = &initProcess{
-			pid:             1,
-			doneCtx:         doneCtx,
-			doneCancel:      doneCancel,
-			lifecycleCtx:    lifecycleCtx,
-			lifecycleCancel: lifecycleCancel,
-			startupCtx:      startupCtx,
-			startupCancel:   startupCancel,
-		}
+		s.send(&events.TaskCreate{
+			ContainerID: r.ID,
+			Bundle: r.Bundle,
+			Rootfs: r.Rootfs,
+			IO: &events.TaskIO{
+				Stdin:    r.Stdin,
+				Stdout:   r.Stdout,
+				Stderr:   r.Stderr,
+				Terminal: r.Terminal,
+			},
+			Checkpoint: r.Checkpoint,
+			Pid:        s.micadPid,
+		})
+
 		return &taskAPI.CreateTaskResponse{
 			Pid: 1,
 		}, nil
@@ -75,11 +81,73 @@ func (s *shimService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) 
 
 
 func (s *shimService) Start(ctx context.Context, r *taskAPI.StartRequest) (*taskAPI.StartResponse, error) {
-	return nil, errdefs.ErrNotImplemented
+	log.Infof("shim Start() container %s", r.ID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.containers[r.ID]
+	if c == nil || !ok {
+		log.Debugf("container %s not found in shimservice storage", r.ID)
+		return nil, er.ErrContainerNotFound
+	}
+
+	s.eventSendMu.Lock()
+	defer s.eventSendMu.Unlock()
+
+	if r.ExecID != "" {
+		log.Debugf("container %s has no exec process", r.ID)
+		s.send(&events.TaskExecStarted{
+			ContainerID: c.id,
+			ExecID:      r.ExecID,
+			Pid:         s.micadPid,
+		})
+	}
+
+	err := startContainer(ctx, s, c)
+	if err != nil {
+		return nil, errdefs.ToGRPC(err)
+	}
+
+	s.send(&events.TaskStart{
+		ContainerID: c.id,
+		Pid:         s.micadPid,
+	})
+
+	return &taskAPI.StartResponse{
+		Pid: s.micadPid,
+	}, nil
 }
 
+// Delete alwasy delete container
 func (s *shimService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*taskAPI.DeleteResponse, error) {
-	return nil, errdefs.ErrNotImplemented
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	c, ok := s.containers[r.ID]
+	if c == nil || !ok {
+		log.Debugf("container %s not found in shimservice storage")
+		return nil, errdefs.ToGRPCf(errdefs.ErrNotFound, "container %s not found", r.ID)
+	}
+
+	if r.ExecID != "" {
+		log.Debugf("container %s has no exec process", r.ID)
+	}
+
+	if err := deleteContainer(ctx, s, c); err != nil {
+		return nil, err
+	}
+	s.send(&events.TaskDelete{
+		ContainerID: r.ID,
+		ExitedAt:    timestamppb.New(c.exitTime),
+		Pid:        s.micadPid,
+		ExitStatus:  c.exit,
+	})
+
+	return &taskAPI.DeleteResponse{
+		ExitStatus: c.exit,
+		ExitedAt:   timestamppb.New(c.exitTime),
+		Pid:        s.micadPid,
+	}, nil
 }
 
 func (s *shimService) Pids(ctx context.Context, r *taskAPI.PidsRequest) (*taskAPI.PidsResponse, error) {
@@ -99,23 +167,31 @@ func (s *shimService) Kill(ctx context.Context, r *taskAPI.KillRequest) (*ptypes
 }
 
 func (s *shimService) Exec(ctx context.Context, r *taskAPI.ExecProcessRequest) (*ptypes.Empty, error) {
-	return nil, errdefs.ErrNotImplemented
+	log.Warn("exec a new task is not supported")
+	log.Pretty("exec request: %v", r)
+	s.send(&events.TaskExecAdded{
+		ContainerID: r.ID,
+		ExecID:      r.ExecID,
+	})
+	return emptyResponse, nil
 }
 
 func (s *shimService) ResizePty(ctx context.Context, r *taskAPI.ResizePtyRequest) (*ptypes.Empty, error) {
-	return nil, errdefs.ErrNotImplemented
+	log.Debugf("resize pty: (%d, %d)", r.Height, r.Width)
+	return emptyResponse, nil
 }
 
 func (s *shimService) CloseIO(ctx context.Context, r *taskAPI.CloseIORequest) (*ptypes.Empty, error) {
-	return nil, errdefs.ErrNotImplemented
+	return emptyResponse, nil
 }
 
 func (s *shimService) Checkpoint(ctx context.Context, r *taskAPI.CheckpointTaskRequest) (*ptypes.Empty, error) {
-	return nil, errdefs.ErrNotImplemented
+	return nil, errdefs.ToGRPCf(errdefs.ErrNotImplemented, "service Checkpoint")
 }
 
 func (s *shimService) Update(ctx context.Context, r *taskAPI.UpdateTaskRequest) (*ptypes.Empty, error) {
-	return nil, errdefs.ErrNotImplemented
+	log.Debugf("update task: %v", r.Annotations)
+	return emptyResponse, nil
 }
 
 func (s *shimService) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*taskAPI.WaitResponse, error) {
@@ -124,25 +200,69 @@ func (s *shimService) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*taskAP
 }
 
 func (s *shimService) Connect(ctx context.Context, r *taskAPI.ConnectRequest) (*taskAPI.ConnectResponse, error) {
-	return nil, errdefs.ErrNotImplemented
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return &taskAPI.ConnectResponse{
+		ShimPid: s.shimPid,
+		TaskPid: s.micadPid,
+	}, nil
 }
 
+// shutdown shimv2 but keep mica dameon active, when no containers in sandbox
+// NOTICE: micran have no permission to manage the life cycle of mica daemon
+// TALK:   in future, after micran embedded into mica, shutdown will close mica daemon when
+//         there is no any sandbox in mica daemon scope
 func (s *shimService) Shutdown(ctx context.Context, r *taskAPI.ShutdownRequest) (*ptypes.Empty, error) {
-	return nil, errdefs.ErrNotImplemented
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if len(s.containers) != 0 {
+		s.mu.Unlock()
+		return emptyResponse, nil
+	}
+
+	s.mu.Unlock()
+	s.ss()
+
+	// os.Exit() will terminate program immediately, the defer functions won't be executed,
+	// so we add defer functions again before os.Exit().
+	// Refer to https://pkg.go.dev/os#Exit
+	os.Exit(0)
+
+	// This will never be called, but this is only there to make sure the
+	// program can compile.
+	return emptyResponse, nil
 
 }
 
 func (s *shimService) Stats(ctx context.Context, r *taskAPI.StatsRequest) (*taskAPI.StatsResponse, error) {
-	return nil, errdefs.ErrNotImplemented
-
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	log.Warnf("protocol not implemented yet")
+	return &taskAPI.StatsResponse{Stats: nil}, nil
 }
 
 func (s *shimService) State(ctx context.Context, r *taskAPI.StateRequest) (*taskAPI.StateResponse, error) {
-	return nil, errdefs.ErrNotImplemented
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
+	c, ok := s.containers[r.ID]
+	if c == nil || !ok {
+		return nil, fmt.Errorf("container %s not found", r.ID)
+	}
+
+	return &taskAPI.StateResponse{
+			ID:         c.id,
+			Bundle:     c.bundle,
+			Pid:        s.micadPid,
+			Status:     c.status,
+			Stdin:      c.stdin,
+			Stdout:     c.stdout,
+			Stderr:     c.stderr,
+			Terminal:   c.terminal,
+			ExitStatus: c.exit,
+			ExitedAt:   timestamppb.New(c.exitTime),
+			ExecID:     r.ExecID,
+		}, nil
 }
 
-
-func (s *shimService) Checkpoint(ctx context.Context, r *taskAPI.CheckpointTaskRequest) (*ptypes.Empty, error) {
-	return nil, errdefs.ErrNotImplemented
-}

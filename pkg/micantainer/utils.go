@@ -3,7 +3,11 @@ package micantainer
 import (
 	"context"
 	"fmt"
+	log "mica-shim/logger"
 	"mica-shim/pkg/libmica"
+	"os"
+	"strconv"
+	"strings"
 
 	"github.com/containerd/errdefs"
 )
@@ -54,3 +58,29 @@ func createMicaConf(container *Container) (libmica.MicaClientConf, error) {
 	return conf, nil
 }
 
+
+// getSystemMemoryBytes returns the total system memory in bytes
+// BUG: 
+func getSystemMemoryBytes() int64 {
+	data, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		log.Warnf("failed to read /proc/meminfo, using default: %v", err)
+		return 2 * 1024 * 1024 * 1024 // Default to 2GB
+	}
+
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "MemTotal:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				if memKB, err := strconv.ParseInt(fields[1], 10, 64); err == nil {
+					return memKB * 1024 // Convert KB to bytes
+				}
+			}
+			break
+		}
+	}
+
+	log.Warnf("failed to parse MemTotal from /proc/meminfo, using default")
+	return 2 * 1024 * 1024 * 1024 // Default to 2GB
+}

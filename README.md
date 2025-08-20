@@ -64,6 +64,7 @@
 - [ ] 保证mica daemon 和 micran 生命周期不一致时容器状态的一致性
 - [ ] k8s deployment demo
 - [ ] kubeedge deployment demo
+- [ ] libmica 不恰当地参与了service等packages,需要再做解耦
 
 ## 近期Issues
 

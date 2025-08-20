@@ -27,6 +27,13 @@ func MaxCPUNum() int {
 	return dummyCPUNum()
 }
 
+func MaxClientCPUNum() int {
+	if defs.IsMock {
+		return 1
+	}
+	return MaxCPUNum() - runtime.NumCPU()
+}
+
 func dummyCPUNum() int {
 	return runtime.NumCPU()
 }
