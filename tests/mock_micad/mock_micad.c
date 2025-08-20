@@ -25,6 +25,9 @@
 #define MAX_EVENTS 64
 #define MAX_CLIENTS 10
 #define MAX_NAME_LEN 32
+#define MAX_FIRMWARE_PATH_LEN 128
+#define MAX_CPU_STRING_LEN 128
+#define MAX_NETWORK_LEN 512
 #define RESPONSE_SUCCESS "MICA-SUCCESS\n"
 #define RESPONSE_FAILED "MICA-FAILED\n"
 
@@ -47,12 +50,22 @@
 #define WARN(fmt, ...) printf("!WARN! " fmt "\n", ##__VA_ARGS__)
 
 /* Message format matching mica.py's CreateMsg */
+// Updated to match the new MicaClientConf structure
 struct create_msg {
-	uint32_t cpu;
+	/* required configs */
 	char name[MAX_NAME_LEN];
-	char path[128];
+	char path[MAX_FIRMWARE_PATH_LEN];
+	/*optional configs for MICA*/
 	char ped[MAX_NAME_LEN];
-	char ped_cfg[128];
+	char ped_cfg[MAX_FIRMWARE_PATH_LEN];
+	bool debug;
+	/*optional configs for pedestal */
+	char cpu_str[MAX_CPU_STRING_LEN];
+	int vcpu_num;
+	int cpu_weight;
+	int cpu_capacity;
+	int memory;
+	char network[MAX_NETWORK_LEN];
 };
 
 /* RTOS Communication Structures */
@@ -169,12 +182,17 @@ static void signal_handler(int signum)
 static void print_create_msg(const struct create_msg *msg)
 {
 	printf("\nReceived Create Message:\n");
-	printf("CPU: %u\n", msg->cpu);
 	printf("Name: %.*s\n", (int)strnlen(msg->name, sizeof(msg->name)), msg->name);
 	printf("Path: %.*s\n", (int)strnlen(msg->path, sizeof(msg->path)), msg->path);
 	printf("Ped: %.*s\n", (int)strnlen(msg->ped, sizeof(msg->ped)), msg->ped);
 	printf("PedCfg: %.*s\n", (int)strnlen(msg->ped_cfg, sizeof(msg->ped_cfg)), msg->ped_cfg);
-	// printf("Debug: %s\n", msg->debug ? "true" : "false");
+	printf("Debug: %s\n", msg->debug ? "true" : "false");
+	printf("CPU String: %.*s\n", (int)strnlen(msg->cpu_str, sizeof(msg->cpu_str)), msg->cpu_str);
+	printf("VCPU Num: %d\n", msg->vcpu_num);
+	printf("CPU Weight: %d\n", msg->cpu_weight);
+	printf("CPU Capacity: %d\n", msg->cpu_capacity);
+	printf("Memory: %d\n", msg->memory);
+	printf("Network: %.*s\n", (int)strnlen(msg->network, sizeof(msg->network)), msg->network);
 	printf("\n");
 }
 
@@ -1054,7 +1072,14 @@ static void handle_client(int client_fd)
 		
 		/* Also create RTOS instance for IO handling */
 		if (create_ret == 0) {
-			create_ret = create_rtos_instance(client_name, msg->cpu);
+			// Parse the CPU string to get the first CPU ID for the RTOS instance
+			// For simplicity, we just use the first character of the cpu_str as a placeholder
+			// A full implementation would parse the cpu_str properly
+			uint32_t cpu_id = 0;
+			if (msg->cpu_str[0] >= '0' && msg->cpu_str[0] <= '9') {
+				cpu_id = msg->cpu_str[0] - '0';
+			}
+			create_ret = create_rtos_instance(client_name, cpu_id);
 		}
 		
 		if (create_ret == 0) {

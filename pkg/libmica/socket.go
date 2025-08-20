@@ -109,30 +109,30 @@ func (ms *micaSocket) rx() (string, error) {
 // TODO: We need to manually fetch information from managed clients
 // Because mica daemon print clients information by its own format, which is not
 // compatible with containerd
-func (ms *micaSocket) handleMsg(msg []byte) (string, error) {
+func (ms *micaSocket) handleMsg(msg []byte) error {
 
 	if err := ms.connect(); err != nil {
-		return "", fmt.Errorf("failed to connect to socket: %w", err)
+		return fmt.Errorf("failed to connect to socket: %w", err)
 	}
 	defer func() {
 		ms.close()
 	}()
 
 	if err := ms.tx(msg); err != nil {
-		return "", fmt.Errorf("failed to send command: %w", err)
+		return fmt.Errorf("failed to send command: %w", err)
 	}
 
 	response, err := ms.rx()
 	if err != nil {
-		return "", fmt.Errorf("failed to receive response: %w", err)
+		return fmt.Errorf("failed to receive response: %w", err)
 	}
 
 	switch response {
 	case defs.MicaSuccess:
-		return response, nil
+		return nil
 	case defs.MicaFailed:
-		return response, fmt.Errorf("mica daemon reported failure")
+		return fmt.Errorf("mica daemon reported failure")
 	default:
-		return response, fmt.Errorf("unexpected response format from mica daemon: %s", response)
+		return fmt.Errorf("unexpected response format from mica daemon: %s, communication might broken?", response)
 	}
 }

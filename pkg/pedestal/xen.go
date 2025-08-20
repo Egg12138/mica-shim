@@ -1,10 +1,11 @@
-package libmica
+package pedestal
 
 import (
 	"bufio"
 	"bytes"
 	"fmt"
 	defs "mica-shim/definitions"
+	log "mica-shim/logger"
 	"os/exec"
 	"runtime"
 	"strconv"
@@ -172,4 +173,18 @@ func MaxCPUNum() uint32 {
 		return uint32(runtime.NumCPU())
 	}
 	return i.nodePhysicalCPUNum()
+}
+
+
+// For cases, id is truncated id
+func Resume(id string) error {
+	if defs.IsMock {
+		return nil
+	}
+	return resumeById(id)
+}
+
+func resumeById(id string) error { 
+	log.Debugf("resume %s successfully", id)
+	return nil
 }

@@ -6,7 +6,10 @@ import (
 	"io"
 	defs "mica-shim/definitions"
 	log "mica-shim/logger"
+	er "mica-shim/pkg/errors"
 	utils "mica-shim/pkg/fileutils"
+	"mica-shim/pkg/libmica"
+	ped "mica-shim/pkg/pedestal"
 	"path/filepath"
 	"time"
 
@@ -64,8 +67,9 @@ type ContainerConfig struct {
 	Pid         int
 	Annotations map[string]string
 
-	RelativePath string  `json:"relative_path"`
-	PedestalType PedType `json:"pedestal_type"`
+	// relative path of <os>.elf in bundle
+	ElfPath string  `json:"relative_path"`
+	PedestalType ped.PedType `json:"pedestal_type"`
 	PedestalConf string  `json:"pedestal_conf"`
 	OS           string  `json:"os"`
 	NCpu         int     `json:"ncpu"` // Default = 1
@@ -131,6 +135,7 @@ type Container struct {
 	mounts []Mount
 	rootfs RootFs
 	// containerPath is the path to the container's directory: <sandboxID>/<containerID>.
+	// must be resolved, and stored as a absolute path!
 	containerPath string
 
 	state    ContainerState
@@ -189,7 +194,8 @@ func cleanupPersistResource(ctx context.Context, sandboxID string) error {
 	return nil
 }
 
-// newContainer creates a new container instance.
+// newContainer creates a new container struct instance.
+// suppose that container config is already parsed!
 func newContainer(ctx context.Context, s *Sandbox, cc *ContainerConfig) (*Container, error) {
 	container := &Container{
 		id:     cc.ID,
@@ -204,16 +210,21 @@ func newContainer(ctx context.Context, s *Sandbox, cc *ContainerConfig) (*Contai
 }
 
 func (c *Container) start(ctx context.Context) error {
-	if err := c.checkSandboxRunnig("start"); err != nil {
-		return err
+
+	if c.state.State == StateRunning {
+		return fmt.Errorf("container %s is already running", c.id)
 	}
 
 	if c.state.State != StateReady && c.state.State != StateStopped {
 		return fmt.Errorf("container is not ready or stopped, cannot start")
 	}
 
-	if err := startContainerInSandbox(ctx, c.sandbox, c.config); err != nil {
-		log.Error("failed to start cotnainer")
+	if err := c.state.ValidTransition(c.state.State, StateRunning); err != nil {
+		return err
+	}
+
+	if err := startClient(ctx, c.sandbox, c); err != nil {
+		log.Error("failed to start container")
 		if err := c.stop(ctx, true); err != nil {
 			log.Warn("failed to stop the container after start failed")
 		}
@@ -223,17 +234,7 @@ func (c *Container) start(ctx context.Context) error {
 	return c.setContainerState(ctx, StateRunning)
 }
 
-func (c *Container) checkSandboxRunnig(op string) error {
-	if op == "" {
-		return fmt.Errorf("operation to sandbox cannot be empty")
-	}
-	if c.sandbox.state.State != StateRunning {
-		return fmt.Errorf("sandbox is not running, cannot %s container", op)
-	}
-	return nil
-}
-
-func (c *Container) createInSanbox(ctx context.Context) error {
+func (c *Container) create(ctx context.Context) error {
 
 	// TODO:  TOO many works
 	rtosTask, err := createContainerInSandbox(ctx, c.sandbox, c.config)
@@ -260,7 +261,8 @@ func (c *Container) stop(ctx context.Context, force bool) error {
 
 	c.kill(ctx, true)
 	c.sandbox.agent.waitTask(ctx, c, c.id)
-	if err := c.sandbox.agent.stopContainer(ctx, c.sandbox, *c); err != nil && !force {
+
+	if err := libmica.Stop(c.ID()); err != nil {
 		return err
 	}
 
@@ -271,10 +273,13 @@ func (c *Container) stop(ctx context.Context, force bool) error {
 	return nil
 }
 
+// consider kill as stop  for now
 func (c *Container) kill(ctx context.Context, force bool) error {
-	return nil
+	return c.stop(ctx, true)
 }
 
+// Difference from mica: mica rm will force to stop client
+// But for container engine, it is bad
 func (c *Container) delete(ctx context.Context) error {
 	if c.state.State != StateReady &&
 		c.state.State != StatePaused &&
@@ -282,11 +287,37 @@ func (c *Container) delete(ctx context.Context) error {
 		return fmt.Errorf("sandbox is not ready, paused, or stopped, cannot delete container")
 	}
 
+	if err := libmica.Remove(c.id); err != nil {
+		log.Debugf("failed to remove container %s", err)
+		return err
+	}
 	if err := c.sandbox.removeContainer(c.id); err != nil {
 		return err
 	}
 
 	return c.sandbox.StoreSandbox(ctx)
+}
+
+func (c *Container) pause(ctx context.Context) error {
+	if c.state.State != StateRunning {
+		return fmt.Errorf("container is not running, cannot pause container")
+	}
+	err := libmica.Pause(c.id)
+	if err != nil {
+		return er.ErrMicaStopFailed
+	}
+	return c.setContainerState(ctx, StatePaused)
+}
+
+func (c *Container) resume(ctx context.Context) error {
+if c.state.State != StatePaused {
+		return fmt.Errorf("container is not paused, cannot resume container")
+	}
+	err := libmica.Resume(c.id)
+	if err != nil {
+		return er.ErrMicaStopFailed
+	}
+	return c.setContainerState(ctx, StateRunning)
 }
 
 func (c *Container) ID() string {
@@ -322,7 +353,7 @@ func (c *Container) State() *ContainerState {
 }
 
 func validOS(os string) bool {
-	ret := inList(defs.PreservedOS[:], os)
+	ret := utils.InList(defs.PreservedOS[:], os)
 	return ret
 }
 
@@ -335,6 +366,16 @@ func validFirmware(root, firmware string) bool {
 	ret := utils.FileExist(resolved)
 	return ret
 }
+func validBinfile(root, binpath string) bool {
+	// firmware path: <bundle>/rootfs/<firmware>
+	resolved, err := utils.ResolvePath(filepath.Join(root, binpath))
+	if err != nil {
+		return false
+	}
+	ret := utils.FileExist(resolved)
+	return ret
+}
+
 
 func validCompatibility(_ *ContainerConfig) bool {
 	// TODO: needed to ? how to check compatibility?
@@ -344,8 +385,13 @@ func validCompatibility(_ *ContainerConfig) bool {
 // NOTICE: Xen is the only supported ped for now
 func (c *Container) validMicaContainer() bool {
 
-	osValid := validOS(c.config.GetOS())
-	fwValid := validFirmware(c.containerPath, c.config.GetFirmwarePath())
+	osValid := validOS(c.GetOS())
+	fwValid := validFirmware(c.containerPath, c.GetFirmwarePath())
+	if HostPedType == ped.Xen {
+		log.Infof("xen pedestal requires a image *.bin file for boot")
+		binFile := validBinfile(c.containerPath, c.GetPedestalConf())
+		fwValid = binFile && fwValid
+	}
 	compatValid := validCompatibility(c.config)
 	judge := osValid && fwValid && compatValid
 	log.Debugf(`
@@ -439,7 +485,7 @@ func getContainerCPULimit(cfg *ContainerConfig) int {
 }
 
 func (c *Container) GetClientCPU() (int, error) {
-	if c.config.cpuUnset() {
+	if c.cpuUnset() {
 		if err := c.allocClientCPU(); err != nil {
 			return c.config.cpu, err
 		}
@@ -472,8 +518,9 @@ func (c *Container) SaveState() error {
 }
 
 func (c *Container) stats(ctx context.Context) (*ContainerStats, error) {
-	if err := c.checkSandboxRunnig("stats"); err != nil {
-		return nil, err
+
+	if c.sandbox.state.State != StateRunning {
+		return nil, fmt.Errorf("sandbox is not running, cannot stats container")
 	}
 	return c.sandbox.agent.statsContainer(ctx, c.sandbox, *c)
 }
@@ -483,8 +530,8 @@ func (c *Container) stats(ctx context.Context) (*ContainerStats, error) {
 // TALK: By Xen?
 func (c *Container) wait4exit(ctx context.Context, taskId string) (int32, error) {
 	if c.state.State != StateReady &&
-		c.state.State != StateRunning {
-		return 0, errors.New("container is not ready or running, cannot wait for exit")
+			c.state.State != StateRunning {
+			return 0, errors.New("container is not ready or running, cannot wait for exit")
 	}
 	return c.sandbox.agent.waitTask(ctx, c, taskId)
 }
@@ -498,3 +545,33 @@ func (c *Container) ioStream(taskID string) (io.WriteCloser, io.Reader, io.Reade
 
 	return stream.stdin(), stream.stdout(), stream.stderr(), nil
 }
+
+func (c *Container) GetFirmwarePath() string {
+	return c.config.ElfPath
+}
+
+
+func (c *Container) GetPedestalConf() string {
+	return c.config.PedestalConf
+}
+
+func (c *Container) GetOS() string {
+	return c.config.OS
+}
+
+func (c *Container) cpuUnset() bool {
+	return c.config.cpu == -1
+}
+
+func (c *Container) GetPedGuestBootBin() string {
+	if HostPedType == ped.Xen {
+		return c.config.PedestalConf
+	}
+	return ""
+}
+
+// PedestalType returns the pedestal type
+func (c *Container) GetPedestalType() ped.PedType {
+	return c.config.PedestalType
+}
+

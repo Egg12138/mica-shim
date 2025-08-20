@@ -9,11 +9,13 @@ import (
 	er "mica-shim/pkg/errors"
 	"mica-shim/pkg/fileutils"
 	"mica-shim/pkg/libmica"
+	ped "mica-shim/pkg/pedestal"
 	"os"
 	"path/filepath"
 	"sync"
 	"syscall"
 
+	"github.com/containerd/errdefs"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 )
@@ -34,7 +36,7 @@ type SandboxConfig struct {
 	ID               string
 	Hostname         string
 	NetworkConfig    NetworkConfig
-	PedConfig        PedConfig
+	PedConfig        ped.PedConfig
 	ContainerConfigs map[string]*ContainerConfig
 	Annotations      map[string]string
 	// TODO: Pod resource
@@ -285,14 +287,18 @@ func (s *Sandbox) Delete(ctx context.Context) error {
 		}
 	}
 
-	return s.rmSandboxStorage()
+	s.agent.Cleanup(ctx)
+
+	return s.cleanSandboxStorage()
 }
 
+// CreateContainer creates a new container in the sandbox
+// This should be called only when the sandbox is already created.
+// It will add new container config to sandbox.config.Containers
 func (s *Sandbox) CreateContainer(ctx context.Context, config ContainerConfig) (ContainerTraits, error) {
-
 	id := config.ID
 	if _, ok := s.containers[id]; ok {
-		log.Warnf("container %s already exists", id)
+		log.Errorf("container %s already exists", id)
 		return nil, er.ErrAlreadyExists
 	}
 	s.config.ContainerConfigs[id] = &config
@@ -308,7 +314,7 @@ func (s *Sandbox) CreateContainer(ctx context.Context, config ContainerConfig) (
 	}()
 
 	c, err := newContainer(ctx, s, newc)
-	if err = c.createInSanbox(ctx); err != nil {
+	if err = c.create(ctx); err != nil {
 		return nil, err
 	}
 
@@ -543,26 +549,51 @@ func (s *Sandbox) WaitTaskExit(ctx context.Context, containerID string, taskid s
 }
 
 func (s *Sandbox) SignalTask(ctx context.Context, containerID, processID string, signal syscall.Signal, all bool) error {
-	return nil
+	return errdefs.ErrNotImplemented
 }
 
 func (s *Sandbox) WinsizeTask(ctx context.Context, containerID, processID string, height, width uint32) error {
-	return nil
+	return errdefs.ErrNotImplemented
 }
 
 func (s *Sandbox) PauseContainer(ctx context.Context, id string) error {
-	err := libmica.Pause(id)
-	if err != nil {
-		return er.ErrMicaStopFailed
+	
+	c, ok := s.containers[id]
+	if !ok {	
+		return er.ErrContainerNotFound
 	}
+
+	if err := c.pause(ctx); err != nil {
+		return err
+	}
+
+	if err := s.StoreSandbox(ctx); err != nil {
+		return err
+	}
+
+
 	return nil
 }
 
 func (s *Sandbox) ResumeContainer(ctx context.Context, id string) error {
+	c, ok := s.containers[id]
+	if !ok {	
+		return er.ErrContainerNotFound
+	}
+
+	if err := c.resume(ctx); err != nil {
+		return err
+	}
+
+	if err := s.StoreSandbox(ctx); err != nil {
+		return err
+	}
+
 	return nil
 }
 
 func (s *Sandbox) UpdateContainer(ctx context.Context, id string, resources specs.LinuxResources) error {
+	log.Debugf("Updated container %v resources", resources)
 	return nil
 }
 
@@ -576,7 +607,6 @@ func (s *Sandbox) setSandboxState(state StateString) error {
 	return nil
 }
 
-// extracted from sandbox, for serialization
 type FlattenedSandboxState struct {
 	// sandboxContainer SandboxContainerID
 	SandboxContainerID string        `json:"sandbox_container_id"`
@@ -592,13 +622,15 @@ func (s *Sandbox) dumpState(f *FlattenedSandboxState) {
 }
 
 func (s *Sandbox) dumpNet(f *FlattenedSandboxState) {
-	id := s.network.NetID()
-	created := s.network.NetworkIsCreated()
-	netConfig := NetworkConfig{
+	if dummyNetwork, ok := s.network.(*DummyNetwork); ok {
+		id := dummyNetwork.NetID()
+		created := dummyNetwork.NetworkIsCreated()
+		netConfig := NetworkConfig{
 		NetworkID:      id,
 		NetworkCreated: created,
 	}
 	f.Network = netConfig
+	}
 }
 
 func (s *Sandbox) dumpVersion(f *FlattenedSandboxState) {
@@ -653,7 +685,7 @@ func (s *Sandbox) addContainer(c *Container) error {
 	return nil
 }
 
-func (s *Sandbox) rmSandboxStorage() error {
+func (s *Sandbox) cleanSandboxStorage() error {
 	if s.id == "" {
 		return er.ErrEmptySandboxID
 	}
@@ -722,29 +754,56 @@ func NewSandbox(ctx context.Context, config *SandboxConfig) (*Sandbox, error) {
 // LoadSandbox loads an existing sandbox from storage
 func LoadSandbox(ctx context.Context, id string) (*Sandbox, error) {
 	// Load sandbox configuration from storage
-	_ = filepath.Join(defs.SandboxDataDir, id, defs.SandboxStateFile)
-	config := &SandboxConfig{}
-	fileutils.SaveStructToJSON()
-	// if err := fileutils.(configPath, config); err != nil {
-	// 	return nil, err
-	// }
-
-	s := &Sandbox{
-		ctx:        ctx,
-		config:     *config,
-		containers: make(map[string]*Container),
-		id:         id,
-		network:    &DummyNetwork{},
-		agent:      *NewMockRealRealAgent(),
+	configPath := filepath.Join(defs.SandboxDataDir, id, defs.SandboxStateFile)
+	flattened := FlattenedSandboxState{}
+	raw, err := fileutils.RestoreStructFromJSON(configPath)
+	if err != nil {
+		return nil, err
 	}
 
-	// Load containers
-	for containerID, containerConfig := range config.ContainerConfigs {
-		c, err := newContainer(ctx, s, containerConfig)
-		if err != nil {
-			return nil, err
+	// Type assert and convert the raw data to FlattenedSandboxState
+	rawMap, ok := raw.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("failed to parse sandbox state file")
+	}
+
+	// Extract fields from the map
+	if sandboxID, ok := rawMap["sandbox_container_id"].(string); ok {
+		flattened.SandboxContainerID = sandboxID
+	}
+
+	if state, ok := rawMap["state"].(string); ok {
+		flattened.State = StateString(state)
+	}
+
+	if version, ok := rawMap["version"].(float64); ok {
+		flattened.Version = uint(version)
+	}
+
+	// Extract network config
+	if network, ok := rawMap["network"].(map[string]interface{}); ok {
+		if networkID, ok := network["network_id"].(string); ok {
+			flattened.Network.NetworkID = networkID
 		}
-		s.containers[containerID] = c
+		if networkCreated, ok := network["network_created"].(bool); ok {
+			flattened.Network.NetworkCreated = networkCreated
+		}
+	}
+
+	// Create a new sandbox with the loaded configuration
+	network := &DummyNetwork{}
+	
+	s := &Sandbox{
+		ctx:        ctx,
+		containers: make(map[string]*Container),
+		id:         id,
+		state: SandboxState{
+			State:   flattened.State,
+			Ped:     HostPedType.String(),
+			Version: flattened.Version,
+		},
+		network: network,
+		agent:   *NewMockRealRealAgent(),
 	}
 
 	return s, nil

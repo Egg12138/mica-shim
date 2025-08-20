@@ -3,11 +3,7 @@ package micantainer
 import (
 	"context"
 	"fmt"
-	defs "mica-shim/definitions"
-	log "mica-shim/logger"
-	"mica-shim/pkg/fileutils"
-	"os/exec"
-	"time"
+	"mica-shim/pkg/libmica"
 
 	"github.com/containerd/errdefs"
 )
@@ -16,83 +12,45 @@ func createContainerInSandbox(ctx context.Context, sandbox SandboxTraits, config
 	return nil, errdefs.ErrNotImplemented
 }
 
-func startContainerInSandbox(ctx context.Context, sandbox SandboxTraits, config *ContainerConfig) error {
-	return nil
-}
-
-func HostPed() PedType {
-	if defs.IsMock {
-		return Xen
-	}
-	if detectXen() {
-		return Xen
-	}
-
-	if detectACRN() {
-		return ACRN
-	}
-	return Unsupported
-}
-
-func detectXen() bool {
-	// xl binary exist
-	if !fileutils.FileExist("/proc/xen/xenbus") {
-		log.Debug("missing xen bus")
-		return false
-	}
-
-	if err := checkXLCommand(); err != nil {
-		log.Debug("xl command not found or not working correctly")
-		return false
-	}
-
-	if err := checkXenKos(); err != nil {
-		log.Debug("xen kernel modules requirements not met")
-		return false
-	}
-
-	return true
-}
-
-func checkXenKos() error {
-	// xen_netback, xen_blkback, xen_gntalloc, xen_gntdev
-	// TODO: migrate xen-essentials ko to mica-xen related ko
-	essentials := []string{"xen_gntalloc", "xen_gntdev"}
-	for i, ko := range essentials {
-		loaded, err := fileutils.KoLoaded(ko)
-		if err != nil {
-			return err
-		}
-		if !loaded {
-			return fmt.Errorf("xl: %s is not loaded", essentials[i])
-		}
-	}
-	return nil
-}
-
-func checkXLCommand() error {
-	path, err := exec.LookPath("xl")
+func startClient(ctx context.Context, sandbox SandboxTraits, c *Container) error {
+	// TODO" 
+	conf, err := createMicaConf(c)
 	if err != nil {
-		return fmt.Errorf("xl not found in PATH: %v", err)
+		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-	defer cancel()
-	// 3. 执行命令并捕获输出
-	cmd := exec.CommandContext(ctx, path, "vcpu-list")
-	output, err := cmd.CombinedOutput() // 合并stdout/stderr
-
-	if err != nil {
-		return fmt.Errorf("command failed: %v\nOutput: %s", err, output)
+	if err = libmica.Create(conf); err != nil {
+		return err
 	}
-
-	if len(output) == 0 {
-		return fmt.Errorf("command produced no output")
-	}
-
 	return nil
 }
 
-func detectACRN() bool {
-	return false
+// 1. search bundle/.../<clientOSname>.elf
+// 2. if missing, log and search for binary in bundle recursively
+// TODO: Only copy values, the evaluation procedure is in the caller function
+func createMicaConf(container *Container) (libmica.MicaClientConf, error) {
+	config := container.config
+	firmware := container.GetFirmwarePath()
+	pedestal := HostPedType
+	name := container.ID()
+	cpu, err := container.GetClientCPU()
+	conf := libmica.MicaClientConf{}
+	if err != nil {
+		return conf, fmt.Errorf("failed to get client cpu: %w", err)
+	}
+	mem := uint64(config.MemoryLimit)
+	conf.InitWithOpts(libmica.MicaClientConfCreateOptions{
+		CPU:      []int{cpu},
+		// TODO: dummy settings
+		CPUCapacity: int(config.CpuQuota),
+		CPUWeight: int(config.CpuShares),
+		Debug:    false,
+		Memory:   int(mem),
+		Name:     name,
+		Network:  "",
+		Path:     firmware,
+		Ped:      pedestal.String(),
+	})
+	return conf, nil
 }
+

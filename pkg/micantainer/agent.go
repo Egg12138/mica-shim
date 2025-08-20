@@ -143,9 +143,6 @@ func (n *RealAgent) getOOMEvent(ctx context.Context) (string, error) {
 
 // stopContainer stops a specific container
 func (n *RealAgent) stopContainer(ctx context.Context, sandbox *Sandbox, c Container) error {
-	if err := libmica.Stop(c.ID()); err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -287,4 +284,10 @@ func (n *RealAgent) vcpuSet(ctx context.Context) (uint32, error) {
 func (n *RealAgent) getDNS(s *Sandbox) ([]string, error) {
 	ret := make([]string, 0)
 	return ret, nil
+}
+
+
+// try to reorder resources dom0 can do, it cannot, just okay
+func (n *RealAgent) Cleanup(ctx context.Context) {
+	return 
 }

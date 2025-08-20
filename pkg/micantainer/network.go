@@ -43,8 +43,8 @@ type NetworkStats struct {
 }
 
 type NetworkConfig struct {
-	NetworkID      string
-	NetworkCreated bool
+	NetworkID      string `json:"network_id"`
+	NetworkCreated bool   `json:"network_created"`
 }
 
 type Network interface {

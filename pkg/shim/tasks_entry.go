@@ -20,7 +20,6 @@ import (
 // 2. as an agent, managing something needed in future(may be removed or not)
 // TALK: the init process receives signals from containerd,
 func (s *shimService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) (*taskAPI.CreateTaskResponse, error) {
-
 	log.Debugf("*** TASK CREATE: Request details - Bundle: %s, Stdin: %s, Stdout: %s, Stderr: %s, Terminal: %v",
 		r.Bundle, r.Stdin, r.Stdout, r.Stderr, r.Terminal)
 
@@ -38,14 +37,6 @@ func (s *shimService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) 
 
 	ch := make(chan Result, 1)
 	go func() {
-		container, err := createContainer(r)
-		select {
-		case ch <- Result{container, err}:
-			// Result sent successfully
-		case <-ctx.Done():
-			// Context canceled, discard result to prevent goroutine leak
-			log.Debugf("Create container for %s canceled, result discarded", r.ID)
-		}
 	}()
 
 	select {
@@ -80,6 +71,8 @@ func (s *shimService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) 
 	}
 
 }
+
+
 
 func (s *shimService) Start(ctx context.Context, r *taskAPI.StartRequest) (*taskAPI.StartResponse, error) {
 	return nil, errdefs.ErrNotImplemented
@@ -148,6 +141,7 @@ func (s *shimService) State(ctx context.Context, r *taskAPI.StateRequest) (*task
 	return nil, errdefs.ErrNotImplemented
 
 }
+
 
 func (s *shimService) Checkpoint(ctx context.Context, r *taskAPI.CheckpointTaskRequest) (*ptypes.Empty, error) {
 	return nil, errdefs.ErrNotImplemented

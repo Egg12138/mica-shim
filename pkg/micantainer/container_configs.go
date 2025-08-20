@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	defs "mica-shim/definitions"
-	"mica-shim/pkg/fileutils"
+	utils "mica-shim/pkg/fileutils"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,28 +12,8 @@ import (
 
 // ******* container configs ops *******
 
-func (cc *ContainerConfig) GetFirmwarePath() string {
-	return cc.RelativePath
-}
 
-// PedestalType returns the pedestal type
-func (cc *ContainerConfig) GetPedestalType() PedType {
-	return cc.PedestalType
-}
 
-// cpuUnset is alway callee, hence lock is not needed
-func (cc *ContainerConfig) cpuUnset() bool {
-	return cc.cpu == -1
-}
-
-// PedestalConf returns the pedestal configuration
-func (cc *ContainerConfig) GetPedestalConf() string {
-	return cc.PedestalConf
-}
-
-func (cc *ContainerConfig) GetOS() string {
-	return cc.OS
-}
 
 // stripQuotes removes surrounding quotes from a string if both start and end quotes match
 func stripQuotes(s string) string {
@@ -75,7 +55,7 @@ func parseConfigINI(bundle string) (map[string]string, error) {
 
 		if line[0] == '[' && line[len(line)-1] == ']' {
 			sectionName := strings.ToLower(line[1 : len(line)-1])
-			inMicaSection = fileutils.InList(defs.OKSectionList[:], sectionName)
+			inMicaSection = utils.InList(defs.OKSectionList[:], sectionName)
 			continue
 		}
 
