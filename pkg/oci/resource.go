@@ -10,7 +10,6 @@ import (
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
-
 func CalculateSandboxSizing(spec *specs.Spec) (uint32, uint32) {
 	var memory, quota int64
 	var period uint64
@@ -19,7 +18,7 @@ func CalculateSandboxSizing(spec *specs.Spec) (uint32, uint32) {
 	if spec == nil || spec.Annotations == nil {
 		return 0, 0
 	}
-	
+
 	annotation, ok := spec.Annotations[ctrAnnotations.SandboxCPUPeriod]
 	if ok {
 		period, err = strconv.ParseUint(annotation, 10, 64)
@@ -50,8 +49,6 @@ func CalculateSandboxSizing(spec *specs.Spec) (uint32, uint32) {
 	return clientResources(period, quota, memory)
 }
 
-
-
 // CalculateContainerSizing will calculate the number of CPUs and amount of memory that is needed
 // based on the provided LinuxResources
 func CalculateContainerSizing(spec *specs.Spec) (numCPU, memSizeMB uint32) {
@@ -75,8 +72,6 @@ func CalculateContainerSizing(spec *specs.Spec) (numCPU, memSizeMB uint32) {
 	return clientResources(period, quota, memory)
 }
 
-	
-
 func clientResources(period uint64, quota int64, memory int64) (numCPU, memSizeMB uint32) {
 	numCPU = CalculateVCpusFromMilliCpus(CalculateMilliCPUs(quota, period))
 
@@ -91,8 +86,6 @@ func clientResources(period uint64, quota int64, memory int64) (numCPU, memSizeM
 	}
 	return numCPU, memSizeMB
 }
-
-
 
 // CalculateVCpusFromMilliCpus converts from mCPU to CPU, taking the ceiling
 // value when necessary

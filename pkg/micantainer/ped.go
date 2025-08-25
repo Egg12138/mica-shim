@@ -5,7 +5,6 @@ import (
 	"runtime"
 )
 
-
 func maxCPUNumber() uint32 {
 	return uint32(libmica.MaxCPUNum())
 }

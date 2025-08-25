@@ -239,6 +239,7 @@ func (s *Sandbox) Start(ctx context.Context) error {
 	return nil
 }
 
+// Stop stops all containers inside the sandbox as well as sandbox itself
 func (s *Sandbox) Stop(ctx context.Context, force bool) error {
 	if s.state.State == StateStopped {
 		log.Infof("sandbox %s is already stopped", s.id)
@@ -457,12 +458,13 @@ func (s *Sandbox) StopContainer(ctx context.Context, id string, force bool) (Con
 	return c, nil
 }
 
+// Stop the container forcely and pop it, not storing sandbox state
 func (s *Sandbox) KillContainer(ctx context.Context, id string) (ContainerTraits, error) {
 	c, ok := s.containers[id]
 	if !ok {
 		return nil, er.ErrContainerNotFound
 	}
-	if err := c.kill(ctx, true); err != nil {
+	if err := c.kill(); err != nil {
 		return nil, err
 	}
 	return c, nil
@@ -535,7 +537,7 @@ func (s *Sandbox) IOStream(containerID, taskID string) (io.WriteCloser, io.Reade
 }
 
 func (s *Sandbox) GetOOMEvent(ctx context.Context) (string, error) {
-	return s.agent.getOOMEvent(ctx)
+	return "", nil
 }
 
 // Not supported well
@@ -553,8 +555,27 @@ func (s *Sandbox) WaitTaskExit(ctx context.Context, containerID string, taskid s
 	return c.wait4exit(ctx, taskid)
 }
 
-func (s *Sandbox) SignalTask(ctx context.Context, containerID, processID string, signal syscall.Signal, all bool) error {
-	return errdefs.ErrNotImplemented
+func (s *Sandbox) SignalTask(ctx context.Context, containerID string, signal syscall.Signal, all bool) error {
+	// if all, ignore the containerID parameter
+	if all {
+		log.Debugf("boardcast signal %s for all containers in sandbox %s", uint32(signal), s.id)
+		for _, c := range s.containers {
+			if err := c.Signal(ctx, signal); errors.Is(err, er.ErrInvalidSig) || err == nil {
+				continue
+			} else {
+				log.Errorf("failed to signal container %s: %v", c.ID(), err)
+			}
+		}
+	} else {
+		log.Debugf("sending signal %s for containers %s in sandbox %s", uint32(signal), containerID, s.id)
+		c, ok := s.containers[containerID]
+		if !ok || c == nil {
+			return er.ErrContainerNotFound
+		}
+
+		return c.Signal(ctx, signal)
+	}
+	return nil
 }
 
 func (s *Sandbox) WinsizeTask(ctx context.Context, containerID, processID string, height, width uint32) error {
@@ -562,9 +583,9 @@ func (s *Sandbox) WinsizeTask(ctx context.Context, containerID, processID string
 }
 
 func (s *Sandbox) PauseContainer(ctx context.Context, id string) error {
-	
+
 	c, ok := s.containers[id]
-	if !ok {	
+	if !ok {
 		return er.ErrContainerNotFound
 	}
 
@@ -576,13 +597,12 @@ func (s *Sandbox) PauseContainer(ctx context.Context, id string) error {
 		return err
 	}
 
-
 	return nil
 }
 
 func (s *Sandbox) ResumeContainer(ctx context.Context, id string) error {
 	c, ok := s.containers[id]
-	if !ok {	
+	if !ok {
 		return er.ErrContainerNotFound
 	}
 
@@ -620,7 +640,6 @@ type FlattenedSandboxState struct {
 	Version            uint          `json:"version"`
 }
 
-
 func (s *Sandbox) dumpState(f *FlattenedSandboxState) {
 	f.SandboxContainerID = s.id
 	f.State = s.state.State
@@ -631,10 +650,10 @@ func (s *Sandbox) dumpNet(f *FlattenedSandboxState) {
 		id := dummyNetwork.NetID()
 		created := dummyNetwork.NetworkIsCreated()
 		netConfig := NetworkConfig{
-		NetworkID:      id,
-		NetworkCreated: created,
-	}
-	f.Network = netConfig
+			NetworkID:      id,
+			NetworkCreated: created,
+		}
+		f.Network = netConfig
 	}
 }
 
@@ -725,16 +744,16 @@ func (s *Sandbox) checkVCPUsPinning(ctx context.Context) error {
 // DummySandboxConfig creates a minimal sandbox config for quick development
 func DummySandboxConfig(cid string, spec *specs.Spec) (*SandboxConfig, error) {
 	return &SandboxConfig{
-		ID:        cid,
-		Hostname:  spec.Hostname,
+		ID:       cid,
+		Hostname: spec.Hostname,
 		Annotations: map[string]string{
 			"org.openeuler.mica.test": "true",
 		},
 		ContainerConfigs: make(map[string]*ContainerConfig),
 		SharedMemorySize: 64 * 1024 * 1024, // 64MB
 		SandboxResources: SandboxResourceSizing{
-			WorkloadCPUs: 1,
-			BaseCPUs:     1,
+			WorkloadCPUs:  1,
+			BaseCPUs:      1,
 			WorkloadMemMB: 128,
 			BaseMemMB:     64,
 		},
@@ -793,8 +812,9 @@ func newSandbox(ctx context.Context, config *SandboxConfig) (*Sandbox, error) {
 	return s, nil
 }
 
-// LoadSandbox loads an existing sandbox from storage
-func LoadSandbox(ctx context.Context, id string) (*Sandbox, error) {
+// LoadSandboxFromStorage loads an existing sandbox from storage, by sandbox id
+// TODO finish LoadSandboxFromStorage
+func LoadSandboxFromStorage(ctx context.Context, id string) (*Sandbox, error) {
 	// Load sandbox configuration from storage
 	configPath := filepath.Join(defs.SandboxDataDir, id, defs.SandboxStateFile)
 	flattened := FlattenedSandboxState{}
@@ -834,7 +854,7 @@ func LoadSandbox(ctx context.Context, id string) (*Sandbox, error) {
 
 	// Create a new sandbox with the loaded configuration
 	network := &DummyNetwork{}
-	
+
 	s := &Sandbox{
 		ctx:        ctx,
 		containers: make(map[string]*Container),

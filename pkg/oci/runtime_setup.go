@@ -161,5 +161,4 @@ func LoadSpec(bundle string) (specs.Spec, error) {
 	// For docker , config.v2.json, this line is useless;
 	configPath := filepath.Join(bundle, "config.json")
 	return parseConfigJSON(configPath)
-
 }

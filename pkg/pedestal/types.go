@@ -21,8 +21,6 @@ const (
 	Unsupported
 )
 
-
-
 // String returns the string representation of PedType
 func (p PedType) String() string {
 	switch p {
@@ -68,7 +66,7 @@ func detectXen() bool {
 		return false
 	}
 
-// TODO: check new xen ko
+	// TODO: check new xen ko
 	if err := checkXenKos(); err != nil {
 		log.Debug("xen kernel modules requirements not met")
 		return false

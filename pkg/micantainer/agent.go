@@ -286,8 +286,7 @@ func (n *RealAgent) getDNS(s *Sandbox) ([]string, error) {
 	return ret, nil
 }
 
-
 // try to reorder resources dom0 can do, it cannot, just okay
 func (n *RealAgent) Cleanup(ctx context.Context) {
-	return 
+	return
 }

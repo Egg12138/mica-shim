@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/containerd/containerd/api/types/task"
+	"github.com/containerd/containerd/mount"
 	shimv2 "github.com/containerd/containerd/runtime/v2/shim"
 	protobuf_types "github.com/gogo/protobuf/types"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
@@ -143,7 +145,6 @@ func handleSchedCore() {
 	However, in the future, we may provide a more unique way to combine the advantages of SCHED_CORE with the isolation strategy of Pedestal.`)
 }
 
-
 func getMicadPid() uint32 {
 	// Get MICA daemon state which includes PID
 	daemonState, err := libmica.DaemonState()
@@ -151,17 +152,73 @@ func getMicadPid() uint32 {
 		log.Warnf("Failed to get micad daemon state: %v", err)
 		return 0
 	}
-	
+
 	// Check if daemon is actually running before returning PID
 	if daemonState.State != libmica.DaemonRunning {
 		log.Warnf("Micad daemon is not running (state: %s)", daemonState.State)
 		return 0
 	}
-	
+
 	return uint32(daemonState.Pid)
 }
 
-
-func marshalStats(ctx, stat *cntr.ContainerStats)	(*protobuf_types.Any, error) {
+func marshalStats(ctx, stat *cntr.ContainerStats) (*protobuf_types.Any, error) {
 	return nil, nil
+}
+
+func watchSandbox(ctx context.Context, s *shimService) {
+	if s.monitor == nil {
+		return
+	}
+
+	err := <-s.monitor
+	log.Errorf("sandbox %s received an error or stop monitor", s.sandbox.SandboxID())
+	if err == nil {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	log.Debugf("trying to clean up containers resource inside sandbox %s", s.sandbox.SandboxID())
+	err = s.sandbox.Stop(ctx, true)
+	if err != nil {
+		log.Warnf("stop sandbox failed: %w", err)
+	}
+	err = s.sandbox.Delete(ctx)
+	if err != nil {
+		log.Warnf("delete sandbox failed: %w", err)
+	}
+
+	for _, c := range s.containers {
+		if !c.mounted {
+			continue
+		}
+		rootfs := filepath.Join(c.bundle, "rootfs")
+		log.Debugf("container %s umounting rootfs", c.id)
+		if err := mount.UnmountAll(rootfs, 0); err != nil {
+			log.Warn("failed to cleanup rootfs mount")
+		}
+	}
+}
+
+func (s *shimService) getContainerStatus(id string) (task.Status, error) {
+	cs, err := s.sandbox.StatusContainer(id)
+	if err != nil {
+		return task.Status_UNKNOWN, err
+	}
+
+	var st task.Status
+	switch cs.State.State {
+	case cntr.StateReady:
+		st = task.Status_CREATED
+	case cntr.StateRunning:
+		st = task.Status_RUNNING
+	case cntr.StatePaused:
+		st = task.Status_PAUSED
+	case cntr.StateStopped:
+		st = task.Status_STOPPED
+	}
+
+	return st, nil
 }

@@ -153,7 +153,6 @@ func RemoveStateDir(id string) error {
 	return os.RemoveAll(filepath.Join(defs.MicranStateDir, id))
 }
 
-
 func MountDirs(mounts []*cdtypes.Mount, dest string) error {
 	if len(mounts) == 0 {
 		return nil
@@ -172,7 +171,7 @@ func MountDirs(mounts []*cdtypes.Mount, dest string) error {
 			Options: rm.Options,
 		}
 		if err := m.Mount(dest); err != nil {
-			return fmt.Errorf( "failed to mount: %v", m)
+			return fmt.Errorf("failed to mount: %v", m)
 		}
 	}
 	return nil

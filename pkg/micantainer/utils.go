@@ -17,7 +17,7 @@ func createContainerInSandbox(ctx context.Context, sandbox SandboxTraits, config
 }
 
 func startClient(ctx context.Context, sandbox SandboxTraits, c *Container) error {
-	// TODO" 
+	// TODO"
 	conf, err := createMicaConf(c)
 	if err != nil {
 		return err
@@ -44,23 +44,22 @@ func createMicaConf(container *Container) (libmica.MicaClientConf, error) {
 	}
 	mem := uint64(config.MemoryLimit)
 	conf.InitWithOpts(libmica.MicaClientConfCreateOptions{
-		CPU:      []int{cpu},
+		CPU: []int{cpu},
 		// TODO: dummy settings
 		CPUCapacity: int(config.CpuQuota),
-		CPUWeight: int(config.CpuShares),
-		Debug:    false,
-		Memory:   int(mem),
-		Name:     name,
-		Network:  "",
-		Path:     firmware,
-		Ped:      pedestal.String(),
+		CPUWeight:   int(config.CpuShares),
+		Debug:       false,
+		Memory:      int(mem),
+		Name:        name,
+		Network:     "",
+		Path:        firmware,
+		Ped:         pedestal.String(),
 	})
 	return conf, nil
 }
 
-
 // getSystemMemoryBytes returns the total system memory in bytes
-// BUG: 
+// BUG:
 func getSystemMemoryBytes() int64 {
 	data, err := os.ReadFile("/proc/meminfo")
 	if err != nil {

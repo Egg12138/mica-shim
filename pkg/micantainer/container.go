@@ -11,8 +11,10 @@ import (
 	"mica-shim/pkg/libmica"
 	ped "mica-shim/pkg/pedestal"
 	"path/filepath"
+	"syscall"
 	"time"
 
+	"github.com/containerd/errdefs"
 	vc "github.com/kata-containers/kata-containers/src/runtime/virtcontainers"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
@@ -68,11 +70,11 @@ type ContainerConfig struct {
 	Annotations map[string]string
 
 	// relative path of <os>.elf in bundle
-	ElfPath string  `json:"relative_path"`
+	ElfPath      string      `json:"relative_path"`
 	PedestalType ped.PedType `json:"pedestal_type"`
-	PedestalConf string  `json:"pedestal_conf"`
-	OS           string  `json:"os"`
-	NCpu         int     `json:"ncpu"` // Default = 1
+	PedestalConf string      `json:"pedestal_conf"`
+	OS           string      `json:"os"`
+	NCpu         int         `json:"ncpu"` // Default = 1
 
 	CpuLimit   int    `json:"cpu_limit"`
 	CpusetCpus string `json:"cpuset_cpus"`
@@ -173,26 +175,47 @@ func From(ct vc.ContainerType) ContainerType {
 
 // NOTICE: cleanup exclusively
 func CleanupContainer(ctx context.Context, sandboxID string, containerID string, force bool) error {
-	if sandboxID == "" || containerID == "" {
-		return fmt.Errorf("sandboxID or containerID is empty")
+	if sandboxID == "" {
+		return er.ErrEmptySandboxID
 	}
 
-	err := cleanupPersistResource(ctx, sandboxID)
+	if containerID == "" {
+		return er.ErrEmptyContainerID
+	}
+
+	// BUG: logic error, config loader is incomplete:
+	//  1. multithread unsafe
+	//  2. missing fields
+	//  3. lacks verfications
+	sandbox, err := LoadSandboxFromStorage(ctx, sandboxID)
 	if err != nil {
 		return err
 	}
-	return nil
+	_, err = sandbox.StopContainer(ctx, containerID, force)
+	if err != nil && !force {
+		return err
+	}
 
-	// err = cleanupContainer(ctx, sandboxID, containerID, force)
-	// if err != nil {
-	// 	return err
-	// }
+	_, err = sandbox.DeleteContainer(ctx, containerID)
+	if err != nil && !force {
+		return err
+	}
+
+	if len(sandbox.AllAnnotations()) > 0 {
+		return nil
+	}
+
+	if err = sandbox.Stop(ctx, force); err != nil && !force {
+		return err
+	}
+
+	if err = sandbox.Delete(ctx); err != nil {
+		return err
+	}
+
+	return nil
 }
 
-func cleanupPersistResource(ctx context.Context, sandboxID string) error {
-	log.Infof("persist resource is not supported yet")
-	return nil
-}
 
 // newContainer creates a new container struct instance.
 // suppose that container config is already parsed!
@@ -250,32 +273,53 @@ func (c *Container) create(ctx context.Context) error {
 	return nil
 }
 
-func (c *Container) stop(ctx context.Context, force bool) error {
+func (c *Container) doStop(force bool) error {
 	if c.state.State == StateStopped {
 		log.Infof("Container %s is already stopped", c.id)
 		return nil
 	}
-	if err := c.state.State.validTransition(c.state.State, StateStopped); err != nil {
+
+	if err := c.state.State.validTransition(c.state.State, StateStopped); err != nil && !force {
 		return err
 	}
-
-	c.kill(ctx, true)
-	c.sandbox.agent.waitTask(ctx, c, c.id)
 
 	if err := libmica.Stop(c.ID()); err != nil {
 		return err
 	}
+	return nil
+}
 
-	if err := c.setContainerState(ctx, StateStopped); err != nil {
+func (c *Container) stop(ctx context.Context, force bool) error {
+
+	var err error
+	if err = c.doStop(force); err != nil {
+		return err
+	}
+
+	if err = c.setContainerState(ctx, StateStopped); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-// consider kill as stop  for now
-func (c *Container) kill(ctx context.Context, force bool) error {
-	return c.stop(ctx, true)
+// consider kill as stop for now
+// Due to the relationship that mica's Container:ClientOS:Task = 1:1:1, container kill() is basically contaienr stop()
+func (c *Container) kill() error {
+	if c.sandbox.state.State != StateReady && c.sandbox.state.State != StateRunning {
+		return fmt.Errorf("sandbox is not running or ready, can not signal container")
+	}
+	if c.state.State != StateRunning && c.state.State != StateReady && c.state.State != StatePaused {
+		return fmt.Errorf("container is not running, ready or paused, can not be killed")
+	}
+
+	if err := c.doStop(true); err != nil {
+		return err
+	}
+
+	c.state.State = StateStopped
+
+	return nil
 }
 
 // Difference from mica: mica rm will force to stop client
@@ -310,7 +354,7 @@ func (c *Container) pause(ctx context.Context) error {
 }
 
 func (c *Container) resume(ctx context.Context) error {
-if c.state.State != StatePaused {
+	if c.state.State != StatePaused {
 		return fmt.Errorf("container is not paused, cannot resume container")
 	}
 	err := libmica.Resume(c.id)
@@ -352,6 +396,16 @@ func (c *Container) State() *ContainerState {
 	return &c.state
 }
 
+func (c *Container) Signal(ctx context.Context, signal syscall.Signal) error {
+	if c.sandbox.state.State != StateReady && c.sandbox.state.State != StateRunning {
+		return fmt.Errorf("sandbox is not running or ready, can not signal container")
+	}
+	if c.state.State != StateRunning && c.state.State != StateReady && c.state.State != StatePaused {
+		return fmt.Errorf("client os is not running, ready or paused, can not signal container")
+	}
+	log.Errorf("container signal is not implemented")
+	return errdefs.ErrNotImplemented
+}
 
 func validOS(os string) bool {
 	ret := utils.InList(defs.PreservedOS[:], os)
@@ -376,7 +430,6 @@ func validBinfile(root, binpath string) bool {
 	ret := utils.FileExist(resolved)
 	return ret
 }
-
 
 func validCompatibility(_ *ContainerConfig) bool {
 	// TODO: needed to ? how to check compatibility?
@@ -531,10 +584,14 @@ func (c *Container) stats(ctx context.Context) (*ContainerStats, error) {
 // TALK: By Xen?
 func (c *Container) wait4exit(ctx context.Context, taskId string) (int32, error) {
 	if c.state.State != StateReady &&
-			c.state.State != StateRunning {
-			return 0, errors.New("container is not ready or running, cannot wait for exit")
+		c.state.State != StateRunning {
+		return 0, errors.New("container is not ready or running, cannot wait for exit")
 	}
-	return c.sandbox.agent.waitTask(ctx, c, taskId)
+	err := libmica.Stop(c.ID())
+	if err != nil {
+		return 0, err
+	}
+	return 0, nil
 }
 
 func (c *Container) ioStream(taskID string) (io.WriteCloser, io.Reader, io.Reader, error) {
@@ -550,7 +607,6 @@ func (c *Container) ioStream(taskID string) (io.WriteCloser, io.Reader, io.Reade
 func (c *Container) GetFirmwarePath() string {
 	return c.config.ElfPath
 }
-
 
 func (c *Container) GetPedestalConf() string {
 	return c.config.PedestalConf
@@ -575,4 +631,3 @@ func (c *Container) GetPedGuestBootBin() string {
 func (c *Container) GetPedestalType() ped.PedType {
 	return c.config.PedestalType
 }
-

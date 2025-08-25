@@ -29,8 +29,8 @@ const (
 	MRemove MicaCommand = "rm"
 	MPause  MicaCommand = "pause"
 	MStatus MicaCommand = "status"
-	
-	// TODO: 
+
+	// TODO:
 	// Mica message field length constants
 	MaxNameLen         = 32
 	MaxFirmwarePathLen = 128
@@ -116,17 +116,17 @@ type mcsFS struct {
 
 // MicaClientConfCreateOptions is an intermediate layer to pass configurations to MicaClientConf
 type MicaClientConfCreateOptions struct {
-	CPU      []int
-	Name     string
-	Path     string
-	Ped      string
-	PedCfg   string
-	Debug    bool
-	VCPU     int
-	CPUWeight int
+	CPU         []int
+	Name        string
+	Path        string
+	Ped         string
+	PedCfg      string
+	Debug       bool
+	VCPU        int
+	CPUWeight   int
 	CPUCapacity int
-	Memory   int
-	Network  string
+	Memory      int
+	Network     string
 }
 
 // This is the conf struct mica daemon will see
@@ -191,7 +191,7 @@ func ParseCPUArr(cpus []int) string {
 	// Sort the CPU array
 	sorted := make([]int, len(cpus))
 	copy(sorted, cpus)
-	
+
 	// Simple bubble sort for small arrays
 	for i := 0; i < len(sorted)-1; i++ {
 		for j := 0; j < len(sorted)-i-1; j++ {
@@ -250,17 +250,17 @@ func (m *MicaClientConf) Init(cpu uint32, name string, path string, ped string, 
 	copy(m.ped[:], ped)
 	copy(m.pedcfg[:], pedCfg)
 	m.debug = debug
-	
+
 	// Set default values for new fields
 	// Use dummy CPU array and convert to string
 	cpuStr := ParseCPUArr(dummyCPUArr())
 	copy(m.cpuStr[:], cpuStr)
-	
+
 	m.vcpuNum = 0
 	m.cpuWeight = 0
 	m.cpuCapacity = 0
 	m.memory = 0
-	
+
 	// Clear network field
 	for i := range m.network {
 		m.network[i] = 0
@@ -290,7 +290,7 @@ func (m *MicaClientConf) InitWithOpts(opts MicaClientConfCreateOptions) {
 
 func (m *MicaClientConf) pack() []byte {
 	// Calculate total buffer size:
-	// name[32] + path[128] + ped[32] + pedcfg[128] + debug(1) + cpuStr[128] + 
+	// name[32] + path[128] + ped[32] + pedcfg[128] + debug(1) + cpuStr[128] +
 	// vcpuNum(4) + cpuWeight(4) + cpuCapacity(4) + memory(4) + network[512]
 	buf := make([]byte, MaxNameLen+MaxFirmwarePathLen+MaxNameLen+MaxFirmwarePathLen+1+MaxCPUStringLen+4+4+4+4+MaxNetworkLen) // Total: 993 bytes
 
@@ -303,14 +303,14 @@ func (m *MicaClientConf) pack() []byte {
 	offset += MaxNameLen
 	copy(buf[offset:offset+MaxFirmwarePathLen], m.pedcfg[:])
 	offset += MaxFirmwarePathLen
-	
+
 	if m.debug {
 		buf[offset] = 1
 	} else {
 		buf[offset] = 0
 	}
 	offset += 1
-	
+
 	copy(buf[offset:offset+MaxCPUStringLen], m.cpuStr[:])
 	offset += MaxCPUStringLen
 	binary.LittleEndian.PutUint32(buf[offset:], uint32(m.vcpuNum))
@@ -340,17 +340,17 @@ func NewMicaCreateMsg(cpu uint32, name string, path string, ped string, pedCfg s
 	msg := MicaClientConf{}
 	// Convert simple parameters to the new options format
 	opts := MicaClientConfCreateOptions{
-		CPU:      dummyCPUArr(), // Use dummy CPU array as default
-		Name:     name,
-		Path:     path,
-		Ped:      ped,
-		PedCfg:   pedCfg,
-		Debug:    debug,
-		VCPU:     0,
-		CPUWeight: 0,
+		CPU:         dummyCPUArr(), // Use dummy CPU array as default
+		Name:        name,
+		Path:        path,
+		Ped:         ped,
+		PedCfg:      pedCfg,
+		Debug:       debug,
+		VCPU:        0,
+		CPUWeight:   0,
 		CPUCapacity: 0,
-		Memory:   0,
-		Network:  "",
+		Memory:      0,
+		Network:     "",
 	}
 	msg.InitWithOpts(opts)
 	return msg
@@ -382,7 +382,7 @@ func CreateMicaClient(conf MicaClientConf) error {
 
 func MicaCtl(cmd MicaCommand, rawId string) error {
 	if !validSocketPath(defs.MicaCreatSocketPath) {
-		return  fmt.Errorf("mica socket directory does not exist, please check if micad is running")
+		return fmt.Errorf("mica socket directory does not exist, please check if micad is running")
 	}
 	shortId := utils.ShortID(rawId)
 	clientSocketPath := filepath.Join(defs.MicaStateDir, shortId+".socket")
@@ -390,7 +390,6 @@ func MicaCtl(cmd MicaCommand, rawId string) error {
 	msg := string(cmd)
 	return s.handleMsg([]byte(msg))
 }
-
 
 func Start(id string) error {
 	if err := MicaCtl(MStart, id); err != nil {
@@ -507,8 +506,7 @@ func validStatusResponse(res string) bool {
 	return status.isValid()
 }
 
-
-func queryStatus(id string)  (string, error) {
+func queryStatus(id string) (string, error) {
 	// MicaCtl will construct the path to the client's specific control socket:
 	// e.g., /tmp/mica/<socketId>.socket
 	// It will then send the MStatus command to this socket.

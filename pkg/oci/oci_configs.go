@@ -83,7 +83,7 @@ func ContainerConfig(bundle string, ocispec specs.Spec, cType cntr.ContainerType
 
 	config := &cntr.ContainerConfig{
 		// OCI and bundle info
-		ElfPath	: micaConf[defs.ElfPathKey],
+		ElfPath:      micaConf[defs.ElfPath],
 		PedestalType: pedestal.Unsupported,
 		PedestalConf: "",
 		OS:           "",
@@ -101,9 +101,7 @@ func ContainerConfig(bundle string, ocispec specs.Spec, cType cntr.ContainerType
 		MemoryKernel:      0,
 		MemorySwappiness:  nil,
 		OomKillDisable:    false,
-
 	}
-
 
 	if err := config.ParseOCICPUResources(&ocispec); err != nil {
 		return nil, err
@@ -131,14 +129,12 @@ func ContainerConfig(bundle string, ocispec specs.Spec, cType cntr.ContainerType
 	return config, nil
 }
 
-
-func SandboxConfig(ocispec spec.Spec, runtime RuntimeConfig, bundle, cid string, detach bool) (cntr.SandboxConfig, error) {
-	cc, err := 	nil, nil
+func SandboxConfig(ocispec specs.Spec, runtime RuntimeConfig, bundle, cid string, detach bool) (cntr.SandboxConfig, error) {
+	return cntr.SandboxConfig{}, nil
 }
 
-
 // formatCPULimit formats CPU limit information into human readable string
-func formatCPULimit(config *ContainerConfig) string {
+func formatCPULimit(config *cntr.ContainerConfig) string {
 	if config == nil {
 		return "unlimited"
 	}
@@ -207,9 +203,6 @@ func formatMemoryLimit(config *cntr.ContainerConfig) string {
 
 	return strings.Join(parts, ", ")
 }
-
-
-
 
 // formatBytes formats bytes into human readable string
 func formatBytes(bytes int64) string {

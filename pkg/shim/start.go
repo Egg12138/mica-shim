@@ -8,7 +8,7 @@ import (
 	"github.com/containerd/containerd/api/types/task"
 )
 
-func startContainer(ctx context.Context, s *shimService, c *container) error {
+func startContainer(ctx context.Context, s *shimService, c *container) (retErr error) {
 
 	defer func() {
 		if retErr != nil {
@@ -31,6 +31,8 @@ func startContainer(ctx context.Context, s *shimService, c *container) error {
 		if err != nil {
 			return err
 		}
+
+		go watchSandbox(ctx, s)
 	} else {
 		_, err := s.sandbox.StartContainer(ctx, c.id)
 		if err != nil {
@@ -38,18 +40,33 @@ func startContainer(ctx context.Context, s *shimService, c *container) error {
 		}
 	}
 
-
 	c.status = task.Status_RUNNING
-	stdin, stdou, stderr, err := s.sandbox.IOStream(c.id, c.id)
+	stdin, stdout, stderr, err := s.sandbox.IOStream(c.id, c.id)
 	if err != nil {
 		return err
 	}
-	log.Debugf("=> io stream: %v %v %v", stdin, stdou, stderr)
+	log.Debugf("=> io stream: %v %v %v", stdin, stdout, stderr)
 
 	c.stdinPipe = stdin
 
-	go wait(ctx, s, c, "")
+	if c.stdin != "" || c.stdout != "" || c.stderr != "" {
+		tty, err := newTtyIO(ctx, c.id, c.stdin, c.stdout, c.stderr, c.terminal)
+		if err != nil {
+			return err
+		}
+		c.ttyio = tty
 
+		go ioCopy(c.exitIOch, c.stdinCloser, tty, stdin, stdout)
+	} else {
+		// close the io exit channel, since there is no io for this container,
+		// otherwise the following wait goroutine will hang on this channel.
+		close(c.exitIOch)
+		// close the stdin closer channel to notify that it's safe to close process's
+		// io.
+		close(c.stdinCloser)
+	}
+
+	go waitContainerExit(ctx, s, c)
 
 	return nil
 }

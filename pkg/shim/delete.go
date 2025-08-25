@@ -11,7 +11,6 @@ import (
 	"github.com/containerd/containerd/mount"
 )
 
-
 func deleteContainer(ctx context.Context, s *shimService, c *container) error {
 	if c == nil {
 		return nil

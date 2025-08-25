@@ -21,8 +21,6 @@ func stripQuotes(s string) string {
 	return s
 }
 
-
-
 // parseOCICPUResources parses CPU resource limits from OCI spec
 func (r *ContainerConfig) ParseOCICPUResources(spec *specs.Spec) error {
 	if spec.Linux == nil || spec.Linux.Resources == nil || spec.Linux.Resources.CPU == nil {
@@ -96,7 +94,6 @@ func (r *ContainerConfig) ParseOCIMemoryResources(spec *specs.Spec) error {
 
 	return nil
 }
-
 
 func cgroupV1() bool {
 	return cgroups.Mode() == cgroups.Legacy || cgroups.Mode() == cgroups.Hybrid

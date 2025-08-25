@@ -175,7 +175,6 @@ func MaxCPUNum() uint32 {
 	return i.nodePhysicalCPUNum()
 }
 
-
 // For cases, id is truncated id
 func Resume(id string) error {
 	if defs.IsMock {
@@ -184,7 +183,7 @@ func Resume(id string) error {
 	return resumeById(id)
 }
 
-func resumeById(id string) error { 
+func resumeById(id string) error {
 	log.Debugf("resume %s successfully", id)
 	return nil
 }

@@ -155,6 +155,12 @@ dev-setup:
 	@make install
 	@echo "✅ Development setup complete!"
 
+test-pty:
+	@cd tests/pty
+	@make all
+
+
+
 # Help
 help:
 	@echo "🚀 Mica Shim Build System"

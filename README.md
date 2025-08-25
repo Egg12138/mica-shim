@@ -192,6 +192,79 @@ Linux Host Core (ARM Core 0)         RTOS Remote Core (ARM Core 1)
          └────────────────────────────────────────────────┘
 ```
 
+## Agent Architecture Considerations
+
+### Current Status: No Agent Needed
+
+Micran currently uses a **direct communication model** without an Agent abstraction layer:
+```
+Containerd → Micran (Sandbox) → libmica → Unix Socket → micad → RTOS
+```
+
+This simple model is sufficient for micran's current requirements:
+- Single RTOS type (Zephyr) support
+- 1:1:1 mapping (Container:RTOS Client:Task)
+- Static task deployment (tasks auto-start with RTOS boot)
+- Basic resource management (CPU core assignment)
+- Simple PTY-based I/O
+
+### Evolution Thresholds Requiring Agent
+
+An Agent pattern would become necessary when micran evolves to support more complex scenarios:
+
+#### High Priority Thresholds
+1. **Multiple RTOS Types** (≥3 distinct RTOS)
+   - Current: Zephyr only
+   - Future: Zephyr + FreeRTOS + RT-Thread + custom RTOS
+   - Agent needed: Protocol translation and RTOS abstraction
+
+2. **Dynamic Task Management**
+   - Current: Tasks auto-start with RTOS boot
+   - Future: Start/stop tasks dynamically after RTOS is running
+   - Agent needed: In-RTOS task manager and service registry
+
+#### Medium Priority Thresholds
+3. **Advanced Resource Management**
+   - Memory hotplug, CPU sharing, QoS guarantees
+   - Agent needed: Resource negotiation and enforcement
+
+4. **Network Service Mesh**
+   - Inter-RTOS communication, service discovery
+   - Agent needed: Network proxy and service registry
+
+5. **Security Isolation Levels**
+   - Trusted execution, encrypted communication
+   - Agent needed: Security policy enforcement
+
+#### Low Priority Thresholds
+6. **Deep Monitoring & Observability**
+   - Performance profiling, distributed tracing
+   - Agent needed: Metrics collection and aggregation
+
+7. **Stateful Service Support**
+   - Database services, message queues
+   - Agent needed: State synchronization and recovery
+
+### Strategic Approach
+
+**Phase 1 (Current)**: Remove existing Agent pattern and use direct libmica calls from Sandbox
+
+**Phase 2 (Preparation)**: When approaching thresholds:
+- Standardize RTOS communication protocols
+- Implement service discovery in micad
+- Create resource allocation APIs
+- Build async event notification system
+
+**Phase 3 (Implementation)**: Introduce Agent when crossing ≥2 high-priority thresholds or ≥4 total thresholds
+
+The Agent would act as an RTOS-side service manager, handling:
+- Protocol translation for multiple RTOS types
+- In-RTOS service lifecycle management
+- Resource abstraction and enforcement
+- Security policy enforcement
+
+**Key Insight**: Agent should be introduced when transitioning from simple containerization to distributed RTOS orchestration.
+
 ## Future Plans
 
 * containerd 2.0 (shim-v3)

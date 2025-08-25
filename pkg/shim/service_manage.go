@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"time"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/containerd/containerd/api/events"
 	taskAPI "github.com/containerd/containerd/api/runtime/task/v2"
+	"github.com/containerd/containerd/mount"
 	"github.com/containerd/containerd/namespaces"
 	cdruntime "github.com/containerd/containerd/runtime"
 	"golang.org/x/sys/unix"
@@ -46,13 +48,14 @@ type shimService struct {
 	// inside shim.run so that no need to setup shutdown service manually.
 	ss func()
 	// events:
-	events  chan any
-	// TODO: future
+	events chan any
+	// TODO: future -> implement sandbox monitor
 	monitor chan error
 	ec      chan exit
 	// configs
 	config    *oci.RuntimeConfig
 	namespace string
+	// sandbox container id
 	id        string
 	// sync:
 	mu          sync.Mutex
@@ -80,16 +83,16 @@ func New(ctx context.Context, id string, publisher shimv2.Publisher, shutdown fu
 		return nil, fmt.Errorf("namespace is required")
 	}
 	s := &shimService{
-		id:        id,
-		micadPid:  getMicadPid(),
-		shimPid:   uint32(os.Getpid()),
-		namespace: ns,
-		ctx:       ctx,
-		containers:make(map[string]*container),
-		events:    make(chan any, channelSize),
-		ec:        make(chan exit, channelSize),
-		ss:        shutdown,
-		monitor:   make(chan error),
+		id:         id,
+		micadPid:   getMicadPid(),
+		shimPid:    uint32(os.Getpid()),
+		namespace:  ns,
+		ctx:        ctx,
+		containers: make(map[string]*container),
+		events:     make(chan any, channelSize),
+		ec:         make(chan exit, channelSize),
+		ss:         shutdown,
+		monitor:    make(chan error),
 	}
 
 	go s.listenAndReportExits()
@@ -197,9 +200,17 @@ func (s *shimService) Cleanup(ctx context.Context) (*taskAPI.DeleteResponse, err
 
 // Cleanup a Container instance from a pod
 func cleanupContainer(ctx context.Context, sandboxID, containerID, bundle string) error {
-	return cntr.CleanupContainer(ctx, sandboxID, containerID, false)
-}
+	if err := cntr.CleanupContainer(ctx, sandboxID, containerID, false); err != nil {
+		return fmt.Errorf("failed to cleanup container %s: %w")
+	}
 
+	rootfs := filepath.Join(bundle, "rootfs")
+	if err := mount.UnmountAll(rootfs, 0); err != nil {
+		log.Errorf("failed to umount: %s", rootfs)
+		return err
+	}
+	return nil
+}
 
 func (s *shimService) StartShim(ctx context.Context, opts shimv2.StartOpts) (_ string, retErr error) {
 	bundle, err := os.Getwd()
@@ -369,7 +380,7 @@ func (ef *eventsForwarder) forward() {
 			log.Warnf("unknown event type, skipping: %v", e)
 			continue
 		}
-		
+
 		// Publish the event to containerd
 		if err := ef.publisher.Publish(ef.context, topic, e); err != nil {
 			log.Errorf("failed to publish event topic=%s: %v", topic, err)

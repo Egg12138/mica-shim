@@ -25,29 +25,33 @@ func new(code ErrCode, msg string) *MicranErr {
 const (
 	InvalidState ErrCode = iota
 	SocketFailed
-	InvalidID
+	Invalid
 	NotFound
 	AlreadyExists
 	MicadFailed
 	DuplicatedKey
 	NotRunning
 	IOClose
+	NotSuppoted
 )
 
 // Pre-defined errors.
 var (
 	ErrInvalidState      = new(InvalidState, "invalid state")
-	ErrInvalidCID        = new(InvalidID, "invalid container id")
+	ErrInvalidCID        = new(Invalid, "invalid container id")
 	ErrSocketFailed      = new(SocketFailed, "socket failed")
-	ErrEmptyContainerID  = new(InvalidID, "empty container id")
-	ErrEmptySandboxID    = new(InvalidID, "empty sandbox id")
+	ErrEmptyContainerID  = new(Invalid, "empty container id")
+	ErrEmptySandboxID    = new(Invalid, "empty sandbox id")
 	ErrAlreadyExists     = new(AlreadyExists, "already exists")
 	ErrContainerNotFound = new(NotFound, "container not found")
 	ErrSandboxNil        = new(NotFound, "sandbox is nil")
 	ErrSandboxDown       = new(NotRunning, "sandbox is not running")
 	ErrIOClose           = new(IOClose, "io closed")
+	ErrNotRunning        = new(NotRunning, "container is not running")
 
 	ErrMicaStopFailed = new(MicadFailed, "mica stop failed")
+	ErrNotSuppoted    = new(NotSuppoted, "micran or mica does not support this")
+	ErrInvalidSig     = new(Invalid, "invalid signal for client os")
 )
 
 // Type errors
@@ -56,3 +60,9 @@ var (
 )
 
 // Panic-related errors.
+
+// Warnings
+
+var (
+	FlexibleTaskUnsupported = new(MicadFailed, "micran does not support exec task, task are immutable inside client os")
+)

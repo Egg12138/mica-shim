@@ -28,6 +28,7 @@ type ContainerTraits interface {
 	State() *ContainerState
 	GetClientCPU() (int, error)
 	SaveState() error
+	Signal(ctx context.Context, signal syscall.Signal) error
 }
 
 // some of which required by containerd
@@ -65,7 +66,7 @@ type SandboxTraits interface {
 	ResumeContainer(ctx context.Context, id string) error
 	UpdateContainer(ctx context.Context, id string, resources specs.LinuxResources) error
 	WaitTaskExit(ctx context.Context, id string, pid string) (int32, error)
-	SignalTask(ctx context.Context, containerID, processID string, signal syscall.Signal, all bool) error
+	SignalTask(ctx context.Context, containerID string, signal syscall.Signal, all bool) error
 	WinsizeTask(ctx context.Context, containerID, processID string, height, width uint32) error
 }
 
