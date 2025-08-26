@@ -1,4 +1,4 @@
-.PHONY: all build-prod build build-arm64 build-prod-arm64 test-prod test clean clean-all help run-debug run-prod containerd-client build-containerd-client install install-arm64 install-prod-arm64 mock-micad mock-micad-py mock-micad-py-quiet test-sched bench-sched profile-flame profile-flame-prod profile-cntr
+.PHONY: all build-prod build build-arm64 build-prod-arm64 test-prod test clean clean-all help run-debug run-prod containerd-client build-containerd-client install install-arm64 install-prod-arm64 mock-micad mock-micad-py mock-micad-py-quiet test-sched bench-sched
 
 SHIM_NAME := io.containerd.mica.v2
 # containerd shim v2 命名规约转换
@@ -78,30 +78,6 @@ bench-sched:
 	@echo "📊 Benchmarking CPU scheduler performance..."
 	cd libmica && go test -bench=BenchmarkSched -benchmem -v
 
-profile-flame: build
-	@echo "🔥 Generating flame graph (debug build)..."
-	MICA_SHIM_PPROF=1 ./${BIN} & \
-	SHIM_PID=$$!; \
-	sleep 3; \
-	go tool pprof -svg http://localhost:6060/debug/pprof/profile?seconds=30 > flamegraph.svg; \
-	kill $$SHIM_PID; \
-	echo "✅ Flame graph saved to flamegraph.svg"
-
-profile-flame-prod: build-prod
-	@echo "🔥 Generating flame graph (production build)..."
-	MICA_SHIM_PPROF=1 ./${BIN_PROD} & \
-	SHIM_PID=$$!; \
-	sleep 3; \
-	go tool pprof -svg http://localhost:6060/debug/pprof/profile?seconds=30 > flamegraph.svg; \
-	kill $$SHIM_PID; \
-	echo "✅ Flame graph saved to flamegraph.svg"
-
-profile-cntr:
-	@echo "🔥 Profiling cntr package operations..."
-	cd cntr && go test -run TestDummy -bench . -cpuprofile cntr_cpu.prof -memprofile cntr_mem.prof || true \
-	&& go tool pprof -svg cntr_cpu.prof > cntr_flamegraph.svg; \
-	echo "✅ cntr flame graph saved to cntr_flamegraph.svg"
-
 containerd-client: build-containerd-client
 	@echo "🐳 Testing containerd client integration..."
 	cd tests/containerd_client && sudo ./containerd_client
@@ -122,7 +98,7 @@ clean-all: clean
 	@echo "🧹 Cleaning up all components including tests and simulations..."
 	cd tests/mock_micad && make clean
 	cd tests/containerd_client && rm -f containerd_client
-	rm -f ${BIN} ${BIN_PROD} ${BIN_ARM64} ${BIN_PROD_ARM64} ${BIN}.profile ${BIN_PROD}.profile cpu*.prof cpu*.txt mem*.prof flamegraph*.svg cntr*.prof cntr*.txt cntr_flamegraph*.svg ${BUILD_DIRS}cntr-profile
+	rm -f ${BIN} ${BIN_PROD} ${BIN_ARM64} ${BIN_PROD_ARM64}
 
 clean:
 	@echo "🧹 Cleaning up build artifacts..."
@@ -194,11 +170,6 @@ help:
 	@echo "  make dev-setup     - Complete development setup"
 	@echo "  make clean         - Clean build artifacts"
 	@echo "  make help          - Show this help"
-	@echo ""
-	@echo "Profiling & Performance:"
-	@echo "  make profile-flame      - Generate CPU profile and flame graph (debug)"
-	@echo "  make profile-flame-prod - Generate CPU profile and flame graph (production)"
-	@echo "  make profile-cntr       - Profile cntr package operations"
 	@echo ""
 	@echo "Containerd Shimv2 Tests:"
 	@echo "	 In progress"
