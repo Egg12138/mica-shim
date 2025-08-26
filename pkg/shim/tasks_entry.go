@@ -18,6 +18,10 @@ import (
 	ptypes "github.com/containerd/containerd/protobuf/types"
 )
 
+const (
+	okExitCode = 0
+	Exit255    = 255
+)
 var emptyResponse = &ptypes.Empty{}
 
 // Create creates a new containerd task and **setup rtos Client**
@@ -69,11 +73,12 @@ func (s *shimService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) 
 				Terminal: r.Terminal,
 			},
 			Checkpoint: r.Checkpoint,
-			Pid:        s.micadPid,
+			// Pid is ExecID in comming task requests
+			Pid:        s.shimPid,
 		})
 
 		return &taskAPI.CreateTaskResponse{
-			Pid: 1,
+			Pid: s.shimPid,
 		}, nil
 	}
 
@@ -92,32 +97,32 @@ func (s *shimService) Start(ctx context.Context, r *taskAPI.StartRequest) (*task
 	s.eventSendMu.Lock()
 	defer s.eventSendMu.Unlock()
 
-	err := startContainer(ctx, s, c)
-	if err != nil {
-		return nil, errdefs.ToGRPC(err)
-	}
+	// wannna start a exec process in a container
 	if r.ExecID != "" {
 		log.Debugf("container %s has no exec process", r.ID)
 		s.send(&events.TaskExecStarted{
 			ContainerID: c.id,
 			ExecID:      r.ExecID,
-			Pid:         s.micadPid,
+			Pid:         s.shimPid,
 		})
 	} else {
+		err := startContainer(ctx, s, c)
+		if err != nil {
+			return nil, errdefs.ToGRPC(err)
+		}
 		s.send(&events.TaskStart{
 			ContainerID: c.id,
-			Pid:         s.micadPid,
+			Pid:         s.shimPid,
 		})
 	}
 
 	return &taskAPI.StartResponse{
-		Pid: s.micadPid,
+		Pid: s.shimPid,
 	}, nil
 }
 
 // Delete alwasy delete container
 func (s *shimService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*taskAPI.DeleteResponse, error) {
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -129,22 +134,28 @@ func (s *shimService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*ta
 
 	if r.ExecID != "" {
 		log.Debugf("container %s has no exec process", r.ID)
+		return &taskAPI.DeleteResponse{
+			ExitStatus: okExitCode,
+			ExitedAt:   timestamppb.Now(),
+			Pid:        s.shimPid,
+		}, nil
 	}
 
 	if err := deleteContainer(ctx, s, c); err != nil {
 		return nil, err
 	}
+
 	s.send(&events.TaskDelete{
 		ContainerID: r.ID,
 		ExitedAt:    timestamppb.New(c.exitTime),
-		Pid:         s.micadPid,
+		Pid:         s.shimPid,
 		ExitStatus:  c.exit,
 	})
 
 	return &taskAPI.DeleteResponse{
 		ExitStatus: c.exit,
 		ExitedAt:   timestamppb.New(c.exitTime),
-		Pid:        s.micadPid,
+		Pid:        s.shimPid,
 	}, nil
 }
 
@@ -215,17 +226,23 @@ func (s *shimService) Resume(ctx context.Context, r *taskAPI.ResumeRequest) (*pt
 
 }
 
-// convert some POSIX signals into sandbox operations
+// convert some POSIX signals into sandbox operations, and apply the operation to the task
 func (s *shimService) Kill(ctx context.Context, r *taskAPI.KillRequest) (*ptypes.Empty, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var err error
 	// TODO: after mica supports passing POSIX signals to client os, we use sandbox.SignalTask to kill task
 	signum := syscall.Signal(r.Signal)
 
 	c, ok := s.containers[r.ID]
 	if c == nil || !ok {
 		return nil, er.ErrContainerNotFound
+	}
+
+	// reject kill request for some exec process in a container due to micran 1:1:1 model
+	// if r.All = true, we can pass the signal to the container
+	if r.ExecID != "" && r.All == false {
+		log.Warnf("container %s has no exec process %s", r.ID, r.ExecID)
+		return emptyResponse, nil
 	}
 
 	switch signum {
@@ -243,12 +260,16 @@ func (s *shimService) Kill(ctx context.Context, r *taskAPI.KillRequest) (*ptypes
 		return emptyResponse, nil
 	case syscall.SIGSTOP | syscall.SIGCONT:
 		if c.status == task.Status_PAUSING {
-			return emptyResponse, fmt.Errorf("container %s already pausing, wait for pausing done")
+			log.Infof("container %s pausing, wait for pausing done")
+			return emptyResponse, nil
 		}
-		
+		if err := s.sandbox.PauseContainer(ctx, c.id); err != nil {
+			log.Debugf("sandbox pause container %s failed %v", c.id, err)
+		}
+	default:
+		return emptyResponse, nil
 	}
-
-	return emptyResponse, s.sandbox.SignalTask(ctx, c.id, signum, r.All)
+	return emptyResponse, nil
 }
 
 // really passing signals to sandbox
@@ -265,15 +286,11 @@ func (s *shimService) KillBySignal(ctx context.Context, r *taskAPI.KillRequest) 
 	}
 
 	// Only supported
-	if signum == syscall.SIGKILL || signum == syscall.SIGTERM {
-		if c.status == task.Status_STOPPED {
-			log.Infof("container %s already stopped", c.id)
-			return emptyResponse, nil
-		}
-		log.Debugf("in sandbox <%s>, tring to kill container %s", s.id, c.id)
+	if (signum == syscall.SIGKILL || signum == syscall.SIGTERM) && c.status == task.Status_STOPPED{
+		log.Infof("container %s already stopped", c.id)
 		return emptyResponse, nil
 	}
-	return emptyResponse, nil
+	return emptyResponse, s.sandbox.SignalTask(ctx, c.id, signum)
 }
 
 func (s *shimService) Exec(ctx context.Context, r *taskAPI.ExecProcessRequest) (*ptypes.Empty, error) {
@@ -286,12 +303,44 @@ func (s *shimService) Exec(ctx context.Context, r *taskAPI.ExecProcessRequest) (
 	return emptyResponse, nil
 }
 
+// NOTICE: always consider resizepty request is to contaienr, whatever r.ExecID is
 func (s *shimService) ResizePty(ctx context.Context, r *taskAPI.ResizePtyRequest) (*ptypes.Empty, error) {
 	log.Debugf("resize pty: (%d, %d)", r.Height, r.Width)
+	c, ok := s.containers[r.ID]
+	if !ok || c == nil{
+		return nil, er.ErrContainerNotFound
+	}
+
+	err := s.sandbox.WinResize(ctx, r.ID, r.Height, r.Width)
+	if err != nil {
+		return nil, err
+	}
 	return emptyResponse, nil
 }
 
+// closeIO closes the IO streams for a client os
 func (s *shimService) CloseIO(ctx context.Context, r *taskAPI.CloseIORequest) (*ptypes.Empty, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.containers[r.ID]
+	if c == nil || !ok {
+		return nil, er.ErrContainerNotFound
+	}
+
+
+	// TALK: if execid is not empty, should we close IO still?
+	if r.ExecID != "" {
+		return emptyResponse, nil
+	}
+
+	stdin := c.stdinPipe
+	stdinCloser := c.stdinCloser
+
+	<-stdinCloser
+	if err := stdin.Close(); err != nil {
+		log.Errorf("failed to close stdin pipe: %v", err)
+		return nil, fmt.Errorf("failed to close stdin pipe: %w", err)
+	}
 	return emptyResponse, nil
 }
 
@@ -301,10 +350,19 @@ func (s *shimService) Checkpoint(ctx context.Context, r *taskAPI.CheckpointTaskR
 
 func (s *shimService) Update(ctx context.Context, r *taskAPI.UpdateTaskRequest) (*ptypes.Empty, error) {
 	log.Debugf("update task: %v", r.Annotations)
+	log.Warnf("micran does not support updating container resources yet")
 	return emptyResponse, nil
 }
 
 func (s *shimService) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*taskAPI.WaitResponse, error) {
+	s.mu.Lock()
+	c, ok := s.containers[r.ID]
+	if c == nil || !ok {
+		return nil, er.ErrContainerNotFound		
+	}
+	s.mu.Unlock()
+
+
 	return nil, errdefs.ErrNotImplemented
 
 }
@@ -314,7 +372,7 @@ func (s *shimService) Connect(ctx context.Context, r *taskAPI.ConnectRequest) (*
 	defer s.mu.Unlock()
 	return &taskAPI.ConnectResponse{
 		ShimPid: s.shimPid,
-		TaskPid: s.micadPid,
+		TaskPid: s.shimPid,
 	}, nil
 }
 
@@ -365,7 +423,7 @@ func (s *shimService) State(ctx context.Context, r *taskAPI.StateRequest) (*task
 	return &taskAPI.StateResponse{
 		ID:         c.id,
 		Bundle:     c.bundle,
-		Pid:        s.micadPid,
+		Pid:        s.shimPid,
 		Status:     c.status,
 		Stdin:      c.stdin,
 		Stdout:     c.stdout,

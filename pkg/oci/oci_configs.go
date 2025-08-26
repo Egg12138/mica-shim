@@ -129,7 +129,7 @@ func ContainerConfig(bundle string, ocispec specs.Spec, cType cntr.ContainerType
 	return config, nil
 }
 
-func SandboxConfig(ocispec specs.Spec, runtime RuntimeConfig, bundle, cid string, detach bool) (cntr.SandboxConfig, error) {
+func SandboxConfig(ocispec *specs.Spec, runtime RuntimeConfig, bundle, cid string, detach bool) (cntr.SandboxConfig, error) {
 	return cntr.SandboxConfig{}, nil
 }
 

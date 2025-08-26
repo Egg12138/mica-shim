@@ -53,6 +53,18 @@ type Network interface {
 	NetworkCleanup() error
 }
 
+func (n *NetworkConfig) NetworkIsCreated() bool {
+	return true
+}
+
+func (n *NetworkConfig) NetID() string {
+	return n.NetworkID
+}
+
+func (n *NetworkConfig) NetworkCleanup() error {
+	return nil
+}
+
 type DummyNetwork struct{}
 
 func (dn *DummyNetwork) NetworkIsCreated() bool {

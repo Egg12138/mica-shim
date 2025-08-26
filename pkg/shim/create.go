@@ -13,6 +13,7 @@ import (
 
 	taskAPI "github.com/containerd/containerd/api/runtime/task/v2"
 	"github.com/containerd/containerd/api/types"
+	"github.com/containerd/containerd/api/types/task"
 	"github.com/containerd/containerd/mount"
 	"github.com/containerd/typeurl/v2"
 	"github.com/opencontainers/runtime-spec/specs-go"
@@ -133,7 +134,7 @@ func parseRuntimeConfigFromAnnotations(annotations map[string]string) *oci.Runti
 
 func createSandboxContainer(ctx context.Context, s *shimService, r *taskAPI.CreateTaskRequest,
 	ociSpec *specs.Spec, containerType cntr.ContainerType, runtimeConfig *oci.RuntimeConfig,
-	rootfs cntr.RootFs, rootfsPath string, disableOutput bool) (*cntr.Container, error) {
+	rootfs cntr.RootFs, rootfsPath string, disableOutput bool) (*container, error) {
 
 	// TODO: Implement sandbox creation logic
 	// This would involve:
@@ -173,9 +174,25 @@ func createSandboxContainer(ctx context.Context, s *shimService, r *taskAPI.Crea
 		log.Debugf("Failed to generate sandbox config from runtime config: %v", runtimeConfig)
 		return nil, err
 	}
-	sandbox, err := cntr.CreateSandbox(s.ctx, sandboxConfig)
+	sandbox, err := cntr.CreateSandbox(s.ctx, &sandboxConfig)
+	if err != nil {
+		log.Debugf("Failed to create sandbox: %v", err)
+		return nil, err
+	} else {
+		log.Pretty("create sandbox container: %v", sandbox)
+	}
+	// BUG: incomplete container configuration
+	c := &container{
+		s: s,
+		bundle: r.Bundle,
+		cType:  cntr.PodSandbox,
+		id:     r.ID,
+		spec:   ociSpec,
+		status: task.Status_CREATED,
 
-	return container, nil
+	}
+
+	return c, nil
 }
 
 func createPodContainer(ctx context.Context, s *shimService, r *taskAPI.CreateTaskRequest,

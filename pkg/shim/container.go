@@ -329,8 +329,8 @@ func waitContainerExit(ctx context.Context, s *shimService, c *container) (int32
 
 	ret, err := s.sandbox.WaitTaskExit(ctx, c.id, c.id)
 	if err != nil {
-		if ret == 0 {
-			ret = 255
+		if ret == okExitCode {
+			ret = Exit255
 		}
 	}
 

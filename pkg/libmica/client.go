@@ -28,6 +28,7 @@ const (
 	MStop   MicaCommand = "stop"
 	MRemove MicaCommand = "rm"
 	MPause  MicaCommand = "pause"
+	MResume MicaCommand = "resume"
 	MStatus MicaCommand = "status"
 
 	// TODO:
@@ -383,6 +384,15 @@ func CreateMicaClient(conf MicaClientConf) error {
 func MicaCtl(cmd MicaCommand, rawId string) error {
 	if !validSocketPath(defs.MicaCreatSocketPath) {
 		return fmt.Errorf("mica socket directory does not exist, please check if micad is running")
+	}
+	// workaround: pause => stop
+	switch cmd {
+	case MPause:
+		cmd = MStop
+	case MResume:
+		cmd = MStart
+	default:
+		cmd = cmd
 	}
 	shortId := utils.ShortID(rawId)
 	clientSocketPath := filepath.Join(defs.MicaStateDir, shortId+".socket")

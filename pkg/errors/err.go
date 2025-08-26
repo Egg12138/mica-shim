@@ -30,7 +30,7 @@ const (
 	AlreadyExists
 	MicadFailed
 	DuplicatedKey
-	NotRunning
+	UnexpectedStatus
 	IOClose
 	NotSuppoted
 )
@@ -45,11 +45,11 @@ var (
 	ErrAlreadyExists     = new(AlreadyExists, "already exists")
 	ErrContainerNotFound = new(NotFound, "container not found")
 	ErrSandboxNil        = new(NotFound, "sandbox is nil")
-	ErrSandboxDown       = new(NotRunning, "sandbox is not running")
+	ErrSandboxDown       = new(UnexpectedStatus, "sandbox is not running")
 	ErrIOClose           = new(IOClose, "io closed")
-	ErrNotRunning        = new(NotRunning, "container is not running")
+	ErrNotRunning        = new(UnexpectedStatus, "container is not running")
 
-	ErrMicaStopFailed = new(MicadFailed, "mica stop failed")
+	ErrMicadFailed = new(MicadFailed, "mica operation failed")
 	ErrNotSuppoted    = new(NotSuppoted, "micran or mica does not support this")
 	ErrInvalidSig     = new(Invalid, "invalid signal for client os")
 )

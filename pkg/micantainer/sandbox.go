@@ -15,9 +15,12 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/containerd/errdefs"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
+)
+
+const (
+	ok0 = 0
 )
 
 // Status is a graph of the sanbox, contains more than state
@@ -502,7 +505,7 @@ func (s *Sandbox) StatsContainer(ctx context.Context, id string) (ContainerStats
 		return ContainerStats{}, er.ErrContainerNotFound
 	}
 
-	stats, err := c.stats(ctx)
+	stats, err := c.stats()
 	if err != nil {
 		log.Errorf("failed to get stats for container %s: %v", id, err)
 		return ContainerStats{}, err
@@ -545,41 +548,41 @@ func (s *Sandbox) GetOOMEvent(ctx context.Context) (string, error) {
 // NOTICE: container == task == RTOS Client
 func (s *Sandbox) WaitTaskExit(ctx context.Context, containerID string, taskid string) (int32, error) {
 	if s.state.State != StateRunning {
-		return 0, er.ErrSandboxDown
+		return ok0, er.ErrSandboxDown
 	}
 	c, ok := s.containers[containerID]
 	if !ok {
-		return 0, er.ErrContainerNotFound
+		return int32(er.NotFound), er.ErrContainerNotFound
 	}
 
-	return c.wait4exit(ctx, taskid)
+	return c.wait4exit()
 }
 
-func (s *Sandbox) SignalTask(ctx context.Context, containerID string, signal syscall.Signal, all bool) error {
-	// if all, ignore the containerID parameter
-	if all {
-		log.Debugf("boardcast signal %s for all containers in sandbox %s", uint32(signal), s.id)
-		for _, c := range s.containers {
-			if err := c.Signal(ctx, signal); errors.Is(err, er.ErrInvalidSig) || err == nil {
-				continue
-			} else {
-				log.Errorf("failed to signal container %s: %v", c.ID(), err)
-			}
-		}
-	} else {
-		log.Debugf("sending signal %s for containers %s in sandbox %s", uint32(signal), containerID, s.id)
-		c, ok := s.containers[containerID]
-		if !ok || c == nil {
-			return er.ErrContainerNotFound
-		}
-
-		return c.Signal(ctx, signal)
+func (s *Sandbox) SignalTask(ctx context.Context, containerID string, signal syscall.Signal ) error {
+	if s.state.State != StateRunning {
+		return er.ErrSandboxDown
 	}
-	return nil
+
+	log.Debugf("sending signal %s for containers %s in sandbox %s", uint32(signal), containerID, s.id)
+	c, ok := s.containers[containerID]
+	if !ok || c == nil {
+		return er.ErrContainerNotFound
+	}
+
+	return c.Signal(ctx, signal)
 }
 
-func (s *Sandbox) WinsizeTask(ctx context.Context, containerID, processID string, height, width uint32) error {
-	return errdefs.ErrNotImplemented
+func (s *Sandbox) WinResize(ctx context.Context, containerID string, height, width uint32) error {
+	if s.state.State != StateRunning {
+		return er.ErrSandboxDown
+	}
+
+	c, ok := s.containers[containerID]
+	if c == nil || !ok {
+		return er.ErrContainerNotFound
+	}
+
+	return c.winresize(height, width)
 }
 
 func (s *Sandbox) PauseContainer(ctx context.Context, id string) error {
@@ -791,7 +794,7 @@ func newSandbox(ctx context.Context, config *SandboxConfig) (*Sandbox, error) {
 			Version: defs.SandboxVersion,
 		},
 		network: &DummyNetwork{},
-		agent:   *NewMockRealRealAgent(),
+		agent:   *NewAgent(),
 	}
 
 	// Initialize the sandbox
@@ -825,6 +828,7 @@ func LoadSandboxFromStorage(ctx context.Context, id string) (*Sandbox, error) {
 
 	// Type assert and convert the raw data to FlattenedSandboxState
 	rawMap, ok := raw.(map[string]interface{})
+	log.Pretty("%v", rawMap)
 	if !ok {
 		return nil, fmt.Errorf("failed to parse sandbox state file")
 	}
@@ -853,7 +857,10 @@ func LoadSandboxFromStorage(ctx context.Context, id string) (*Sandbox, error) {
 	}
 
 	// Create a new sandbox with the loaded configuration
-	network := &DummyNetwork{}
+	network := &NetworkConfig{
+		NetworkID:      flattened.Network.NetworkID,
+		NetworkCreated: flattened.Network.NetworkCreated,
+	}
 
 	s := &Sandbox{
 		ctx:        ctx,
@@ -865,8 +872,13 @@ func LoadSandboxFromStorage(ctx context.Context, id string) (*Sandbox, error) {
 			Version: flattened.Version,
 		},
 		network: network,
-		agent:   *NewMockRealRealAgent(),
+		agent:   *NewAgent(),
 	}
 
 	return s, nil
+}
+
+// sandbox is not ready for being operated
+func (s *Sandbox) notOperational() bool {
+	return s.state.State != StateReady && s.state.State != StateRunning
 }

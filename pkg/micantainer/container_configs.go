@@ -75,14 +75,6 @@ func (r *ContainerConfig) ParseOCIMemoryResources(spec *specs.Spec) error {
 		r.MemorySwap = *memory.Swap
 	}
 
-	// Deal with the deprecated field
-	if cgroupV1() {
-		if memory.Kernel != nil {
-			r.MemoryKernel = *memory.Kernel
-			log.Infof("Supported only in cgruopv1; parsed kernel memory limit: %d bytes", *memory.Kernel)
-		}
-	}
-
 	if memory.Swappiness != nil {
 		swappiness := uint64(*memory.Swappiness)
 		r.MemorySwappiness = &swappiness

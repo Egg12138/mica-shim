@@ -3,11 +3,14 @@ module mica-shim
 go 1.24
 
 require (
+	github.com/containerd/cgroups v1.1.0
 	github.com/containerd/containerd v1.7.27
 	github.com/containerd/containerd/api v1.8.0
 	github.com/containerd/errdefs v0.3.0
 	github.com/containerd/fifo v1.1.0
+	github.com/containerd/typeurl/v2 v2.1.1
 	github.com/containers/podman/v4 v4.9.3
+	github.com/gogo/protobuf v1.3.2
 	github.com/kata-containers/kata-containers/src/runtime v0.0.0-20250711211413-4a79c2520d05
 	github.com/kr/pretty v0.3.1
 	github.com/opencontainers/runtime-spec v1.2.0
@@ -30,7 +33,6 @@ require (
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/cilium/ebpf v0.16.0 // indirect
 	github.com/container-orchestrated-devices/container-device-interface v0.6.0 // indirect
-	github.com/containerd/cgroups v1.1.0 // indirect
 	github.com/containerd/cgroups/v3 v3.0.2 // indirect
 	github.com/containerd/console v1.0.4 // indirect
 	github.com/containerd/continuity v0.4.4 // indirect
@@ -38,7 +40,6 @@ require (
 	github.com/containerd/log v0.1.0 // indirect
 	github.com/containerd/platforms v0.2.1 // indirect
 	github.com/containerd/ttrpc v1.2.7 // indirect
-	github.com/containerd/typeurl/v2 v2.1.1 // indirect
 	github.com/containernetworking/plugins v1.4.1 // indirect
 	github.com/coreos/go-systemd/v22 v22.5.1-0.20231103132048-7d375ecc2b09 // indirect
 	github.com/cri-o/cri-o v1.30.10 // indirect
@@ -63,7 +64,6 @@ require (
 	github.com/go-openapi/swag v0.22.4 // indirect
 	github.com/go-openapi/validate v0.22.3 // indirect
 	github.com/godbus/dbus/v5 v5.1.1-0.20230522191255-76236955d466 // indirect
-	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/go-cmp v0.6.0 // indirect

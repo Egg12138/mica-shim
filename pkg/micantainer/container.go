@@ -220,9 +220,19 @@ func CleanupContainer(ctx context.Context, sandboxID string, containerID string,
 // newContainer creates a new container struct instance.
 // suppose that container config is already parsed!
 func newContainer(ctx context.Context, s *Sandbox, cc *ContainerConfig) (*Container, error) {
+
 	container := &Container{
 		id:     cc.ID,
+		sandbox: s,
+		sandboxId: s.id,
 		config: cc,
+		rootfs: cc.Rootfs,
+		containerPath: filepath.Join(s.id, cc.ID),
+		mounts: cc.Mount,
+		// leave empty
+		state: ContainerState{},
+		taskInfo: RTOSTask{},
+		ctx: s.ctx,
 	}
 
 	if !container.validMicaContainer() {
@@ -348,7 +358,7 @@ func (c *Container) pause(ctx context.Context) error {
 	}
 	err := libmica.Pause(c.id)
 	if err != nil {
-		return er.ErrMicaStopFailed
+		return er.ErrMicadFailed
 	}
 	return c.setContainerState(ctx, StatePaused)
 }
@@ -359,7 +369,7 @@ func (c *Container) resume(ctx context.Context) error {
 	}
 	err := libmica.Resume(c.id)
 	if err != nil {
-		return er.ErrMicaStopFailed
+		return er.ErrMicadFailed
 	}
 	return c.setContainerState(ctx, StateRunning)
 }
@@ -396,13 +406,15 @@ func (c *Container) State() *ContainerState {
 	return &c.state
 }
 
+// TODO: implement a POSIX signals hub
 func (c *Container) Signal(ctx context.Context, signal syscall.Signal) error {
-	if c.sandbox.state.State != StateReady && c.sandbox.state.State != StateRunning {
+	if c.sandbox.notOperational() {
 		return fmt.Errorf("sandbox is not running or ready, can not signal container")
 	}
 	if c.state.State != StateRunning && c.state.State != StateReady && c.state.State != StatePaused {
 		return fmt.Errorf("client os is not running, ready or paused, can not signal container")
 	}
+
 	log.Errorf("container signal is not implemented")
 	return errdefs.ErrNotImplemented
 }
@@ -421,8 +433,9 @@ func validFirmware(root, firmware string) bool {
 	ret := utils.FileExist(resolved)
 	return ret
 }
+
+// image.bin is For xen
 func validBinfile(root, binpath string) bool {
-	// firmware path: <bundle>/rootfs/<firmware>
 	resolved, err := utils.ResolvePath(filepath.Join(root, binpath))
 	if err != nil {
 		return false
@@ -571,37 +584,48 @@ func (c *Container) SaveState() error {
 	return nil
 }
 
-func (c *Container) stats(ctx context.Context) (*ContainerStats, error) {
+// statisitcs returns the container statistics, only network contains now.
+// TODO: extend stats range
+func (c *Container) stats() (*ContainerStats, error) {
 
 	if c.sandbox.state.State != StateRunning {
 		return nil, fmt.Errorf("sandbox is not running, cannot stats container")
 	}
-	return c.sandbox.agent.statsContainer(ctx, c.sandbox, *c)
+	st := &ContainerStats{}
+	return st, nil
 }
 
 // TODO: for now, taskId is always a dummy because one client, one task
 // BUT It is possible to apply a new task to the client os in future,
 // TALK: By Xen?
-func (c *Container) wait4exit(ctx context.Context, taskId string) (int32, error) {
-	if c.state.State != StateReady &&
-		c.state.State != StateRunning {
-		return 0, errors.New("container is not ready or running, cannot wait for exit")
+func (c *Container) wait4exit() (int32, error) {
+	if c.notOperational() {
+		return int32(er.UnexpectedStatus), errors.New("container is not ready or running, cannot wait for exit")
 	}
 	err := libmica.Stop(c.ID())
 	if err != nil {
-		return 0, err
+		return int32(er.MicadFailed), err
 	}
-	return 0, nil
+	return ok0, nil
 }
 
 func (c *Container) ioStream(taskID string) (io.WriteCloser, io.Reader, io.Reader, error) {
-	if c.state.State != StateReady && c.state.State != StateRunning {
+	if c.notOperational() {
 		return nil, nil, nil, fmt.Errorf("Container not ready or running, impossible to signal the container")
 	}
 
 	stream := newIOStream(c.sandbox, c, taskID)
 
 	return stream.stdin(), stream.stdout(), stream.stderr(), nil
+}
+
+// TODO: resize the terminal connected to /dev/ttyRPMSG*
+func (c *Container) winresize(height, width uint32) error {
+	if c.notOperational() {
+		return fmt.Errorf("Container not ready or running, impossible to resize the container pty")
+	}
+	log.Debugf("resize pty -> %dx%d", width, height)
+	return errdefs.ErrNotImplemented
 }
 
 func (c *Container) GetFirmwarePath() string {
@@ -631,3 +655,4 @@ func (c *Container) GetPedGuestBootBin() string {
 func (c *Container) GetPedestalType() ped.PedType {
 	return c.config.PedestalType
 }
+

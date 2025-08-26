@@ -38,9 +38,10 @@
 > 1. 整个bundle都转到 micran state dir
 - [x] 从struct manager 迁移到struct shim
 - [x] 重构项目，提高维护性
-- [ ] SCHED_CORE 支持
-- [ ] 对Xen做适配，去掉jailhouse, baremetal这两个占位底座；
-- [ ] task events all completed
+- [x] SCHED_CORE 支持
+- [ ] 分析对1:1:1模型中 r.ExecID的处理：确认会传什么，确认是否要转化为对容器的操作
+- [ ] 对Xen做适配
+- [x] task events all completed
 - [x] io mock test
 - [ ] pty
 - [x] k8s Pod, Sandbox support
@@ -57,14 +58,15 @@
 - [x] 提供一个mica-from-scrach基础镜像,根据这个镜像来搭建混部容器镜像,并且可以根据这些镜像拉起服务
 - [x] Client OS 和 Shim Task process 的明确分离管理
 - [x] IO 接管
-- [ ] sandbox管理containers
+- [x] sandbox管理containers
+- [ ] RTOS生命周期的监控：task exited 如何让micran或者mica感知
 - [ ] k8s打通
 - [ ] 持久化
 - [ ] 网络
 - [ ] 保证mica daemon 和 micran 生命周期不一致时容器状态的一致性
 - [ ] k8s deployment demo
 - [ ] kubeedge deployment demo
-- [ ] libmica 不恰当地参与了service等packages,需要再做解耦
+- [x] libmica 不恰当地参与了service等packages,需要再做解耦
 
 ## 近期Issues
 
