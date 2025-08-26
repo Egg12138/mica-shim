@@ -6,17 +6,30 @@ This directory contains comprehensive tests for PTY (pseudo-terminal) resize fun
 
 The test suite includes:
 
-1. **Basic PTY Resize Tests** (`pty_resize_test.go`)
+1. **PTY Experiment** (`pty_experiment/`)
+   - Tests virtual PTY and FIFO communication
+   - Demonstrates bidirectional communication patterns
+   - Includes dummy shell simulation
+
+2. **PTY Test** (`pty_test/`)
+   - Tests PTY functionality with FIFO and stdio
+   - Simple dummy shell implementation
+
+3. **PTY Resize Demo** (`pty_resize_demo/`)
    - Tests basic ioctl-based PTY resize operations
    - Verifies window size changes
    - Includes shell integration tests
 
-2. **Micran-Specific Tests** (`micran_pty_resize.go`)
+4. **Micran PTY Resize** (`micran_pty_resize/`)
    - Implements the actual PTY resize logic for Micran
    - Tests integration with the micran architecture
    - Demonstrates ioctl usage on `/dev/ttyRPMSG*` devices
 
-3. **Interactive PTY Simulator** (`interactive_pty.go`)
+5. **Dummy Shell** (`dummy_shell/`)
+   - Simple shell implementation for testing
+   - Demonstrates basic command processing
+
+6. **Interactive PTY** (`interactive_pty/`)
    - Simulates `/dev/ttyRPMSG*` devices for testing
    - Provides interactive shell for manual testing
    - Supports device mode and server mode
@@ -57,13 +70,19 @@ Comprehensive PTY resize testing including:
 Usage:
 ```bash
 # Basic resize test
-go run pty_resize_demo.go basic
+make pty-resize-basic
+# or
+cd pty_resize_demo && go run pty_resize_demo.go basic
 
 # Resize with shell test
-go run pty_resize_demo.go shell
+make pty-resize-shell
+# or
+cd pty_resize_demo && go run pty_resize_demo.go shell
 
 # Interactive demo
-go run pty_resize_demo.go demo
+make pty-resize-demo
+# or
+cd pty_resize_demo && go run pty_resize_demo.go demo
 ```
 
 ### micran_pty_resize.go
@@ -142,21 +161,26 @@ make clean
 ### 1. Basic PTY Resize Test
 
 ```bash
-# Terminal 1: Run basic test
-cd tests/pty
-go run pty_resize_test.go basic
+# Using make
+make pty-resize-basic
+
+# Or directly
+cd tests/pty/pty_resize_demo
+go run pty_resize_demo.go basic
 ```
 
 ### 2. Interactive Testing
 
 ```bash
 # Terminal 1: Start dummy device
-cd tests/pty
-go run interactive_pty.go device 0
+make interactive-pty-device
+# or
+cd tests/pty/interactive_pty && go run interactive_pty.go device 0
 
 # Terminal 2: Connect to device
-cd tests/pty
-go run interactive_pty.go server 0
+make interactive-pty-server
+# or
+cd tests/pty/interactive_pty && go run interactive_pty.go server 0
 
 # In the interactive shell:
 > /help              # Show help
@@ -169,8 +193,11 @@ go run interactive_pty.go server 0
 ### 3. Micran Integration Test
 
 ```bash
-# Test the actual micran implementation
-cd tests/pty
+# Using make
+make micran-resize-test
+
+# Or directly
+cd tests/pty/micran_pty_resize
 go run micran_pty_resize.go test
 ```
 

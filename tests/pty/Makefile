@@ -7,43 +7,43 @@ all: pty-test fifo-test stdio-test dummy-shell pty-resize-basic micran-resize-te
 
 # Original tests
 pty-test:
-	go run pty_experiment.go pty
+	cd pty_experiment && go run pty_experiment.go pty
 
 fifo-test:
-	go run pty_experiment.go fifo
+	cd pty_experiment && go run pty_experiment.go fifo
 
 stdio-test:
-	go run pty_experiment.go stdio
+	cd pty_test && go run main.go test
 
 dummy-shell:
-	go run dummy_shell.go
+	cd dummy_shell && go run main.go
 
 # PTY resize tests
 pty-resize-basic:
-	go run pty_resize_demo.go basic
+	cd pty_resize_demo && go run pty_resize_demo.go basic
 
 pty-resize-shell:
-	go run pty_resize_demo.go shell
+	cd pty_resize_demo && go run pty_resize_demo.go shell
 
 pty-resize-demo:
-	go run pty_resize_demo.go demo
+	cd pty_resize_demo && go run pty_resize_demo.go demo
 
 # Micran-specific PTY resize tests
 micran-resize-test:
-	go run micran_pty_resize.go test
+	cd micran_pty_resize && go run micran_pty_resize.go test
 
 micran-resize-demo:
-	go run micran_pty_resize.go demo
+	cd micran_pty_resize && go run micran_pty_resize.go demo
 
 micran-resize-sizes:
-	go run micran_pty_resize.go sizes
+	cd micran_pty_resize && go run micran_pty_resize.go sizes
 
 # Interactive PTY tests
 interactive-pty-device:
-	go run interactive_pty.go device
+	cd interactive_pty && go run interactive_pty.go device
 
 interactive-pty-server:
-	go run interactive_pty.go server
+	cd interactive_pty && go run interactive_pty.go server
 
 # Test all resize functionality
 test-all-resize: pty-resize-basic pty-resize-shell micran-resize-test micran-resize-demo
