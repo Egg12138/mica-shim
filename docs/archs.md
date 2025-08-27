@@ -1,5 +1,91 @@
 # Architecture 
 
+### Design
+
+#### configs
+
+k8s侧: pod annotations
+  ↓
+控制层: container spec
+  ↓
+应用层: RuntimeConfig 
+  ↓
+配置层: SandboxConfig/ContainerConfig (期望状态)
+  ↓
+运行层: SandboxState/ContainerState (实际状态)
+  ↓
+持久层: 直接JSON序列化存储 (Direct JSON serialization)
+
+1. 容器注解 (Annotations) - 最高优先级
+    ↓
+2. Drop-in 配置文件 (未来计划，和mica同步扩展)
+    ↓
+3. 主配置文件 (/etc/micran/config.toml + /etc/micran/config.d/*.toml)
+    ↓
+4. 环境变量 (MICRAN_CONF_FILE SCHED_CORE)
+    ↓
+5. 默认配置路径 (client.conf inside bundle) - 最低优先级
+
+
+```
+  OCI Spec (config.json)
+      ↓
+  RuntimeConfig (from files/annotations/env)
+      ↓
+  ┌─────────────────┐
+  │  SandboxConfig  │ ←── ContainerConfig
+  └─────────────────┘
+      ↓
+  Sandbox & Containers
+```
+
+#### 详细解析流程
+
+`shimService.create()`
+1. oci.Spec loadOCISpec()
+1. ctype, annotations <- oci.Spec
+1. oci.RuntimeConfig <- loadRuntimeConfig(id string, annotations map[string]string)
+
+```
+runtimeConfig := loadRuntimeConfig(ctx, id, annotations, opts)
+      ├── oci.GetSandboxConfigPath(annotations)  // Pod annotation
+      ├── typeurl.UnmarshalAny(opts.Options)    // Containerd options
+      ├── os.Getenv("KATA_CONF_FILE")           // Environment
+      └── LoadConfiguration(path)     // Config file
+```
+
+根据ctype分类处理
+
+##### Regular container
+
+```
+sandboxConfig <- oci.SandboxConfig(oci.Spec, runtimeConfig, ...)
+sandbox <- createSandbox(oci.Spec, runtimeConfig, ...) 需要简化，尽量减少有先后关系的解析函数的参数正交
+      ├── cntr.CreateSandbox(sandboxConfig)        // micantainer package sandbox creationg entry
+      │   ├── createSandboxFromConfig()
+      │   │   ├── micadCheckAndStart()                  // micad setup
+      │   │   └── createContainers()            // Create containers
+      │   └── Return sandbox
+      └── cntr.newContainer()                        // Container
+```
+
+##### Sandbox container
+
+```
+resources := oci.CalculateSandboxSizing(annotations)
+    ├── annotations["io.kubernetes.cri.sandbox-cpu-period"]
+    ├── annotations["io.kubernetes.cri.sandbox-cpu-quota"]
+    └── annotations["io.kubernetes.cri.sandbox-memory"]
+
+sandboxConfig <- oci.SandboxConfig(oci.Spec, runtimeConfig, ...)
+```
+
+
+##### Pod Container creation
+
+
+
+
 ### Latest
 
 overview

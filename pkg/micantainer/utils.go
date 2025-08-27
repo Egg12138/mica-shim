@@ -84,8 +84,3 @@ func getSystemMemoryBytes() int64 {
 	return 2 * 1024 * 1024 * 1024 // Default to 2GB
 }
 
-
-// container is not ready for being operated
-func (c *Container) notOperational() bool {
-	return c.state.State != StateReady && c.state.State != StateRunning
-}

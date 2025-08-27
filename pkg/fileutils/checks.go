@@ -5,6 +5,7 @@ import (
 	"fmt"
 	log "mica-shim/logger"
 	"os"
+	"path/filepath"
 	"regexp"
 )
 
@@ -50,6 +51,30 @@ func FileExist(path string) bool {
 	_, err := os.Stat(path)
 	return !errors.Is(err, os.ErrNotExist)
 }
+
+
+// EnsureDir check if a directory exist, if not then create it
+func EnsureDir(path string, mode os.FileMode) error {
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("not an absolute path: %s", path)
+	}
+
+	if fi, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			if err = os.MkdirAll(path, mode); err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+	} else if !fi.IsDir() {
+		return fmt.Errorf("not a directory: %s", path)
+	}
+
+	return nil
+}
+
+
 
 func InList(list []string, item string) bool {
 	for _, v := range list {

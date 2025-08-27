@@ -2,6 +2,7 @@ package micantainer
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	defs "mica-shim/definitions"
@@ -187,7 +188,7 @@ func CleanupContainer(ctx context.Context, sandboxID string, containerID string,
 	//  1. multithread unsafe
 	//  2. missing fields
 	//  3. lacks verfications
-	sandbox, err := LoadSandboxFromStorage(ctx, sandboxID)
+	sandbox, err := RestoreSandbox(ctx, sandboxID)
 	if err != nil {
 		return err
 	}
@@ -221,7 +222,15 @@ func CleanupContainer(ctx context.Context, sandboxID string, containerID string,
 // suppose that container config is already parsed!
 func newContainer(ctx context.Context, s *Sandbox, cc *ContainerConfig) (*Container, error) {
 
-	container := &Container{
+	if cc == nil {
+		return &Container{}, fmt.Errorf("container config is none")
+	}
+
+	if cc.ID == "" {
+		return &Container{}, er.ErrEmptyContainerID
+	}
+
+	c := &Container{
 		id:     cc.ID,
 		sandbox: s,
 		sandboxId: s.id,
@@ -235,11 +244,15 @@ func newContainer(ctx context.Context, s *Sandbox, cc *ContainerConfig) (*Contai
 		ctx: s.ctx,
 	}
 
-	if !container.validMicaContainer() {
-		return nil, fmt.Errorf("invalid mica container: %v", container)
+	if !c.validMicaContainer() {
+		return nil, fmt.Errorf("invalid mica container: %v", c)
 	}
 
-	return container, nil
+	if err := c.RestoreState(); err != nil {
+		log.Warnf("failed to restore container state: %v", err)
+	}
+
+	return c, nil
 }
 
 func (c *Container) start(ctx context.Context) error {
@@ -560,20 +573,50 @@ func (c *Container) GetClientCPU() (int, error) {
 	return c.config.cpu, nil
 }
 
+
 func (c *Container) SaveState() error {
+	// Create serializable representation of container
+	serializable := struct {
+		ID            string           `json:"id"`
+		SandboxID     string           `json:"sandbox_id"`
+		State         ContainerState   `json:"state"`
+		Config        ContainerConfig  `json:"config"`
+		TaskInfo      RTOSTask         `json:"task_info"`
+		Mounts        []Mount          `json:"mounts"`
+		ContainerPath string           `json:"container_path"`
+	}{
+		ID:            c.id,
+		SandboxID:     c.sandboxId,
+		State:         c.state,
+		Config:        *c.config, // Dereference the pointer to save complete config
+		TaskInfo:      c.taskInfo,
+		Mounts:        c.mounts,
+		ContainerPath: c.containerPath,
+	}
+	
 	failed, failed1 := false, false
 	var err error
 	var err1 error
-	st := c.State()
+	
 	stateInBundle := filepath.Join(c.containerPath, defs.MicantainerStateFile)
 	stateInMicranDir := filepath.Join(defs.MicranStateDir, c.id, defs.MicantainerStateFile)
 
-	if err = utils.SaveStructToJSON(stateInBundle, st); err != nil {
+	// Ensure directories exist
+	if err := utils.EnsureDir(filepath.Dir(stateInBundle), defs.DirMode); err != nil {
+		log.Warnf("failed to ensure bundle directory: %v", err)
+	}
+	if err := utils.EnsureDir(filepath.Dir(stateInMicranDir), defs.DirMode); err != nil {
+		log.Warnf("failed to ensure micran state directory: %v", err)
+	}
+
+	// Save to bundle directory
+	if err = utils.SaveStructToJSON(stateInBundle, serializable); err != nil {
 		failed = true
 		err = fmt.Errorf("failed to save state to <%s>: %w", stateInBundle, err)
 	}
 
-	if err1 = utils.SaveStructToJSON(stateInMicranDir, st); err1 != nil {
+	// Save to micran state directory
+	if err1 = utils.SaveStructToJSON(stateInMicranDir, serializable); err1 != nil {
 		failed1 = true
 		err1 = fmt.Errorf("failed to save state to <%s>: %w", stateInMicranDir, err1)
 	}
@@ -581,6 +624,55 @@ func (c *Container) SaveState() error {
 	if failed1 && failed {
 		return fmt.Errorf("failed to save container state to both locations: %w, %w", err, err1)
 	}
+	return nil
+}
+
+func (c *Container) RestoreState() error {
+	// Define the structure that matches what we store
+	type ContainerStorage struct {
+		ID            string           `json:"id"`
+		SandboxID     string           `json:"sandbox_id"`
+		State         ContainerState   `json:"state"`
+		Config        ContainerConfig  `json:"config"`
+		TaskInfo      RTOSTask         `json:"task_info"`
+		Mounts        []Mount          `json:"mounts"`
+		ContainerPath string           `json:"container_path"`
+	}
+	
+	var storage ContainerStorage
+	
+	// Try to restore from micran state directory first
+	stateInMicranDir := filepath.Join(defs.MicranStateDir, c.id, defs.MicantainerStateFile)
+	raw, err := utils.RestoreStructFromJSON(stateInMicranDir)
+	
+	// If that fails, try bundle directory
+	if err != nil {
+		stateInBundle := filepath.Join(c.containerPath, defs.MicantainerStateFile)
+		raw, err = utils.RestoreStructFromJSON(stateInBundle)
+		if err != nil {
+			return fmt.Errorf("failed to restore container state from both locations: %w", err)
+		}
+	}
+	
+	// Convert to JSON and then unmarshal into our struct
+	jsonBytes, err := json.Marshal(raw)
+	if err != nil {
+		return fmt.Errorf("failed to marshal raw data: %w", err)
+	}
+	
+	if err := json.Unmarshal(jsonBytes, &storage); err != nil {
+		return fmt.Errorf("failed to unmarshal container storage: %w", err)
+	}
+
+	// Restore the container state
+	c.state = storage.State
+	c.taskInfo = storage.TaskInfo
+	c.mounts = storage.Mounts
+	c.containerPath = storage.ContainerPath
+	
+	// Note: Config should already be set from sandbox restore
+	// This method focuses on restoring runtime state
+	
 	return nil
 }
 
@@ -656,3 +748,8 @@ func (c *Container) GetPedestalType() ped.PedType {
 	return c.config.PedestalType
 }
 
+
+// container is not ready for being operated
+func (c *Container) notOperational() bool {
+	return c.state.State != StateReady && c.state.State != StateRunning
+}

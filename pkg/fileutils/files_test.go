@@ -53,12 +53,12 @@ type MockNetworkConfig struct {
 	NetworkCreated bool   `json:"network_created"`
 }
 
-// MockFlattenedSandboxState represents the flattened sandbox state structure from micantainer package
-type MockFlattenedSandboxState struct {
-	SandboxContainerID string            `json:"sandbox_container_id"`
-	State              string            `json:"state"`
-	Network            MockNetworkConfig `json:"network"`
-	Version            uint              `json:"version"`
+// MockSandboxStorage represents the sandbox storage structure from micantainer package
+type MockSandboxStorage struct {
+	ID      string            `json:"id"`
+	State   string            `json:"state"`
+	Network MockNetworkConfig `json:"network"`
+	Version uint              `json:"version"`
 }
 
 func TestRestoreStructFromFile(t *testing.T) {
@@ -265,15 +265,15 @@ func TestStoreAndRestoreMockContainerState(t *testing.T) {
 	assert.Equal(t, testContainer.State, restoredMap["state"])
 }
 
-func TestStoreAndRestoreMockFlattenedSandboxState(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "micran_mock_flattened_sandbox_test")
+func TestStoreAndRestoreMockSandboxStorage(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "micran_mock_sandbox_storage_test")
 	require.NoError(t, err)
 	defer os.RemoveAll(tempDir)
 
-	// Create test mock flattened sandbox state
-	testFlattenedSandbox := MockFlattenedSandboxState{
-		SandboxContainerID: "test-sandbox-123",
-		State:              "running",
+	// Create test mock sandbox storage
+	testSandboxStorage := MockSandboxStorage{
+		ID:      "test-sandbox-123",
+		State:   "running",
 		Network: MockNetworkConfig{
 			NetworkID:      "net-456",
 			NetworkCreated: true,
@@ -282,8 +282,8 @@ func TestStoreAndRestoreMockFlattenedSandboxState(t *testing.T) {
 	}
 
 	// Save to file
-	sandboxFile := filepath.Join(tempDir, "mock_flattened_sandbox_state.json")
-	err = SaveStructToJSON(sandboxFile, testFlattenedSandbox)
+	sandboxFile := filepath.Join(tempDir, "mock_sandbox_storage.json")
+	err = SaveStructToJSON(sandboxFile, testSandboxStorage)
 	require.NoError(t, err)
 
 	// Restore from file
@@ -294,13 +294,13 @@ func TestStoreAndRestoreMockFlattenedSandboxState(t *testing.T) {
 	restoredMap, ok := restored.(map[string]interface{})
 	require.True(t, ok, "Restored value should be a map")
 
-	assert.Equal(t, testFlattenedSandbox.SandboxContainerID, restoredMap["sandbox_container_id"])
-	assert.Equal(t, testFlattenedSandbox.State, restoredMap["state"])
-	assert.Equal(t, float64(testFlattenedSandbox.Version), restoredMap["version"])
+	assert.Equal(t, testSandboxStorage.ID, restoredMap["id"])
+	assert.Equal(t, testSandboxStorage.State, restoredMap["state"])
+	assert.Equal(t, float64(testSandboxStorage.Version), restoredMap["version"])
 
 	// Verify network config
 	network, ok := restoredMap["network"].(map[string]interface{})
 	require.True(t, ok, "Network should be a map")
-	assert.Equal(t, testFlattenedSandbox.Network.NetworkID, network["network_id"])
-	assert.Equal(t, testFlattenedSandbox.Network.NetworkCreated, network["network_created"])
+	assert.Equal(t, testSandboxStorage.Network.NetworkID, network["network_id"])
+	assert.Equal(t, testSandboxStorage.Network.NetworkCreated, network["network_created"])
 }
