@@ -254,3 +254,13 @@ func formatBytes(bytes int64) string {
 	}
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
+
+func GetContainerSpec(annotations map[string]string) (specs.Spec, error) {
+	if bundlePath, ok := annotations[defs.BundlePathKey]; ok {
+		return parseConfigJSON(bundlePath)
+	}
+
+	log.Debugf("Annotations[%s] not found, cannot find container spec",
+		defs.BundlePathKey)
+	return specs.Spec{}, fmt.Errorf("Could not find container spec")
+}

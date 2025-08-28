@@ -310,8 +310,6 @@ func (s *Sandbox) Delete(ctx context.Context) error {
 		}
 	}
 
-	s.agent.Cleanup(ctx)
-
 	return s.cleanSandboxStorage()
 }
 
@@ -760,7 +758,7 @@ func CreateSandbox(ctx context.Context, cfg *SandboxConfig) (*Sandbox, error) {
 	return s, nil
 }
 
-func initSandbox(ctx context.Context, config *SandboxConfig) (*Sandbox, error) {
+func createSandbox(ctx context.Context, config *SandboxConfig) (*Sandbox, error) {
 	if !config.valid() {
 		return nil, fmt.Errorf("invalid sandbox configuration")
 	}
@@ -785,15 +783,7 @@ func initSandbox(ctx context.Context, config *SandboxConfig) (*Sandbox, error) {
 	if err := s.Restore(); err != nil {
 		log.Debugf("failed to restore sandbox %s: %v", s.id, err)
 	}
-	return s, nil
-}
 
-// createSandboxFromConfig creates a new sandbox instance from sandbox config
-// 1. createSandboxFromConfig instance, and setup
-// 2. cleanup if error happens
-// 3.
-func createSandboxFromConfig(ctx context.Context, config *SandboxConfig) (*Sandbox, error) {
-	s, err := initSandbox(ctx, config)
 
 	hostname := s.config.Hostname
 	if len(hostname) > maxHostnameLength {
@@ -804,6 +794,16 @@ func createSandboxFromConfig(ctx context.Context, config *SandboxConfig) (*Sandb
 	if err := s.setSandboxState(StateReady); err != nil {
 		return nil, err
 	}
+
+	return s, nil
+}
+
+// createSandboxFromConfig creates a new sandbox instance from sandbox config
+// 1. createSandboxFromConfig instance, and setup
+// 2. cleanup if error happens
+// 3.
+func createSandboxFromConfig(ctx context.Context, config *SandboxConfig) (*Sandbox, error) {
+	s, err := createSandbox(ctx, config)
 
 	defer func() {
 		if err != nil {
@@ -1012,4 +1012,25 @@ func (s *Sandbox) checkVCPUsPinning(ctx context.Context) error {
 
 func (s *Sandbox) updateResources(ctx context.Context) error {
 	return nil
+}
+
+// creates new container instances in sandbox
+func (s *Sandbox) loadContainersToSandbox(ctx context.Context) error {
+	if s == nil {
+		return fmt.Errorf("loadContainersToSandbox: is only called an existing sandbox")
+	}
+
+	for _, cc := range s.config.ContainerConfigs {
+		c, err := newContainer(ctx, s, cc)
+		if err != nil {
+			return err
+		}
+
+		if err := s.addContainer(c); err != nil {
+			return err
+		}
+	}
+
+	return nil
+
 }

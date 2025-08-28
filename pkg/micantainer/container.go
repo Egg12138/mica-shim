@@ -69,6 +69,7 @@ type ContainerConfig struct {
 	// Pid is typically the shim pid.
 	Pid         int
 	Annotations map[string]string
+	OciSpec        *specs.Spec
 
 	// relative path of <os>.elf in bundle
 	ElfPath      string      `json:"relative_path"`
@@ -174,6 +175,30 @@ func From(ct vc.ContainerType) ContainerType {
 	return into
 }
 
+func loadSandbox(ctx context.Context, id string) (sandbox *Sandbox, err error) {
+	if id == "" {
+		return nil, er.ErrEmptySandboxID
+	}
+
+	ss, err := RestoreSandbox(ctx, id)
+	if err != nil {
+		log.Errorf("failed to restore sandbox from disk: %v", err)
+		return nil, err
+	}
+	c := ss.Config
+
+	sandbox, err = createSandbox(ctx, &c)	
+	if err != nil {
+		log.Errorf("failed to create sandbox: %v", err)
+		return nil, err
+	}
+
+	if err := sandbox.loadContainersToSandbox(ctx); err != nil {
+		return nil, err
+	}
+	return sandbox, nil
+}
+
 // NOTICE: cleanup exclusively
 func CleanupContainer(ctx context.Context, sandboxID string, containerID string, force bool) error {
 	if sandboxID == "" {
@@ -188,7 +213,8 @@ func CleanupContainer(ctx context.Context, sandboxID string, containerID string,
 	//  1. multithread unsafe
 	//  2. missing fields
 	//  3. lacks verfications
-	sandbox, err := RestoreSandbox(ctx, sandboxID)
+	// sandbox, err := RestoreSandbox(ctx, sandboxID)
+	sandbox, err := loadSandbox(ctx, sandboxID)
 	if err != nil {
 		return err
 	}
