@@ -2,12 +2,9 @@ package micantainer
 
 import (
 	"context"
-	"fmt"
 	"mica-shim/pkg/fileutils"
 	"mica-shim/pkg/libmica"
 	"time"
-
-	"github.com/kata-containers/kata-containers/src/runtime/virtcontainers/types"
 )
 
 const (
@@ -31,19 +28,9 @@ func (n *RealAgent) longLiveConn() bool {
 	return false
 }
 
-// capabilities returns empty capabilities, i.e no capabilties are supported.
-func (n *RealAgent) capabilities() types.Capabilities {
-	return types.Capabilities{}
-}
-
 // disconnect is the Noop agent connection closer. It does nothing.
 func (n *RealAgent) disconnect(ctx context.Context) error {
 	return nil
-}
-
-// exec is the Noop agent command execution implementation. It does nothing.
-func (n *RealAgent) exec(ctx context.Context, sandbox *Sandbox, c Container, cmd types.Cmd) (*RTOSTask, error) {
-	return nil, nil
 }
 
 // stopSandbox is the Noop agent Sandbox stopping implementation. It does nothing.
@@ -57,19 +44,6 @@ func (n *RealAgent) stopSandbox(ctx context.Context, sandbox *Sandbox) error {
 // createSandbox creates a new sandbox by initializing MICA daemon
 // TODO: crutial network setup
 func (n *RealAgent) createSandbox(ctx context.Context, sandbox *Sandbox) error {
-	hostname := sandbox.config.Hostname
-	if len(hostname) > maxHostnameLength {
-		hostname = hostname[:maxHostnameLength]
-	}
-
-	_, err := n.getDNS(sandbox)
-	if err != nil {
-		return err
-	}
-
-	if !sandbox.CheckDaemon().Active() {
-		return fmt.Errorf("mica daemon is not listening or not started")
-	}
 	return nil
 }
 

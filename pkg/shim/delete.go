@@ -26,7 +26,7 @@ func deleteContainer(ctx context.Context, s *shimService, c *container) error {
 		}
 		if c, err := s.sandbox.DeleteContainer(ctx, c.id); err != nil && errors.Is(err, er.ErrContainerNotFound) {
 			log.Infof("container %s not found in real sandbox, already deleted", c.ID())
-			return err	
+			return err
 		}
 
 	}
@@ -37,7 +37,7 @@ func deleteContainer(ctx context.Context, s *shimService, c *container) error {
 			return err
 		}
 	}
-	
+
 	// s.containers[c.id] will not be removed until reference count is zero
 	delete(s.containers, c.id)
 

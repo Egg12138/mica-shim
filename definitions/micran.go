@@ -17,8 +17,7 @@ const (
 
 // OCI and runtime annotations.
 const (
-	MicraAnnotationPrefix = "io.micran." // For runtime-level configuration
-	MicraLabelPrefix      = "io.micran."
+	MicraAnnotationPrefix = "io.openeuler.micran." // For runtime-level configuration
 	PedConfPrefix         = MicraAnnotationPrefix + "ped."
 	RuntimePrefix         = MicraAnnotationPrefix + "runtime."
 	ContainerPrefix       = MicraAnnotationPrefix + "container."
@@ -64,6 +63,7 @@ const (
 	DisableNewNetNs = RuntimePrefix + "disable_new_netns"
 	Experiemental   = RuntimePrefix + "experimental"
 	PipeSize        = RuntimePrefix + "pipe_size"
+	RuntimeDebug    = RuntimePrefix + "debug"
 )
 
 const (

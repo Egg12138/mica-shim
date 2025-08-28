@@ -38,7 +38,7 @@ type SandboxTraits interface {
 	Annotation(key string) (string, error)
 	SetAnnotations(annotations map[string]string)
 	AllAnnotations() map[string]string
-	CheckDaemon() *libmica.MicaDaemonState
+	DaemonState() *libmica.MicaDaemonState
 	Status() SandboxStatus
 	GetAllContainers() []ContainerTraits
 	GetContainer(id string) ContainerTraits

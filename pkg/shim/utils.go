@@ -145,21 +145,21 @@ func handleSchedCore() {
 	However, in the future, we may provide a more unique way to combine the advantages of SCHED_CORE with the isolation strategy of Pedestal.`)
 }
 
-func getMicadPid() uint32 {
+func getMicadPid() (uint32, error) {
 	// Get MICA daemon state which includes PID
 	daemonState, err := libmica.DaemonState()
 	if err != nil {
 		log.Warnf("Failed to get micad daemon state: %v", err)
-		return 0
+		return 0, err
 	}
 
 	// Check if daemon is actually running before returning PID
 	if daemonState.State != libmica.DaemonRunning {
 		log.Warnf("Micad daemon is not running (state: %s)", daemonState.State)
-		return 0
+		return 0, err
 	}
 
-	return uint32(daemonState.Pid)
+	return uint32(daemonState.Pid), nil
 }
 
 func marshalStats(ctx, stat *cntr.ContainerStats) (*protobuf_types.Any, error) {
@@ -221,4 +221,18 @@ func (s *shimService) getContainerStatus(id string) (task.Status, error) {
 	}
 
 	return st, nil
+}
+
+func loadSpec(id, bundle string) (*specs.Spec, string, error) {
+	bundle, err := validBundle(id, bundle)
+	if err != nil {
+		return nil, "", err
+	}
+	spec, err := oci.LoadSpec(bundle)
+	if err != nil {
+		return nil, "", err
+	}
+
+	return &spec, bundle, nil
+
 }

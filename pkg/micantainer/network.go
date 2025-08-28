@@ -65,6 +65,11 @@ func (n *NetworkConfig) NetworkCleanup() error {
 	return nil
 }
 
+// operations after created,
+func (n *NetworkConfig) postCreated() error {
+	return nil
+}
+
 type DummyNetwork struct{}
 
 func (dn *DummyNetwork) NetworkIsCreated() bool {

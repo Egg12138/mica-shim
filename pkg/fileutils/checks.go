@@ -52,7 +52,6 @@ func FileExist(path string) bool {
 	return !errors.Is(err, os.ErrNotExist)
 }
 
-
 // EnsureDir check if a directory exist, if not then create it
 func EnsureDir(path string, mode os.FileMode) error {
 	if !filepath.IsAbs(path) {
@@ -73,8 +72,6 @@ func EnsureDir(path string, mode os.FileMode) error {
 
 	return nil
 }
-
-
 
 func InList(list []string, item string) bool {
 	for _, v := range list {

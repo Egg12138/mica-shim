@@ -272,8 +272,8 @@ func TestStoreAndRestoreMockSandboxStorage(t *testing.T) {
 
 	// Create test mock sandbox storage
 	testSandboxStorage := MockSandboxStorage{
-		ID:      "test-sandbox-123",
-		State:   "running",
+		ID:    "test-sandbox-123",
+		State: "running",
 		Network: MockNetworkConfig{
 			NetworkID:      "net-456",
 			NetworkCreated: true,

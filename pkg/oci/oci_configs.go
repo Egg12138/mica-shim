@@ -74,8 +74,12 @@ func GetSandboxConfigPath(annotations map[string]string) string {
 	return annotations[defs.SandboxConfigPathKey]
 }
 
-func ContainerConfig(bundle string, ocispec specs.Spec, cType cntr.ContainerType, detach bool) (*cntr.ContainerConfig, error) {
-	configPath := filepath.Join(bundle, "rootfs", defs.DefaultClientConf)
+func bundleRootfs(bundle string) string {
+	return filepath.Join(bundle, "rootfs")
+}
+
+func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerType, detach bool) (*cntr.ContainerConfig, error) {
+	configPath := filepath.Join(bundleRootfs(bundle), defs.DefaultClientConf)
 	micaConf, err := fileutils.ParseConfigINI(configPath)
 	if err != nil {
 		return nil, err
@@ -129,8 +133,41 @@ func ContainerConfig(bundle string, ocispec specs.Spec, cType cntr.ContainerType
 	return config, nil
 }
 
-func SandboxConfig(ocispec *specs.Spec, runtime RuntimeConfig, bundle, cid string, detach bool) (cntr.SandboxConfig, error) {
-	return cntr.SandboxConfig{}, nil
+func SandboxConfig(ocispec *specs.Spec, rc RuntimeConfig, bundle, sbContainerID string, detach bool) (cntr.SandboxConfig, error) {
+	// generate sandbox container config
+	containerConfig, err := ContainerConfig(sbContainerID, bundle, *ocispec, cntr.PodSandbox, detach)
+	if err != nil {
+		return cntr.SandboxConfig{}, err
+	}
+	// TODO: allocated shared resources
+
+	networkConfig := cntr.NetworkConfig{}
+	ped := cntr.HostPedType
+	if ped == pedestal.Xen {
+		pedcfg := filepath.Join(bundleRootfs(bundle), defs.DefaultXenBin)
+		log.Debugf("pedestal config for xen is the location of <image>.bin: %s", pedcfg)
+	}
+
+	sandboxConfig := cntr.SandboxConfig{
+		ID:       sbContainerID,
+		Hostname: ocispec.Hostname,
+		PedType:  cntr.HostPedType,
+		ContainerConfigs: map[string]*cntr.ContainerConfig{
+			sbContainerID: containerConfig,
+		},
+		NetworkConfig: networkConfig,
+		Annotations: map[string]string{
+			defs.BundlePathKey: bundle,
+		},
+		SandboxResources: cntr.SandboxResourceSizing{
+			WorkloadCPUs:  rc.SandboxCPUs,
+			WorkloadMemMB: rc.SandboxMemMB,
+		},
+
+		EnableVCPUsPining: false,
+	}
+
+	return sandboxConfig, nil
 }
 
 // formatCPULimit formats CPU limit information into human readable string

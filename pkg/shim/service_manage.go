@@ -56,7 +56,7 @@ type shimService struct {
 	config    *oci.RuntimeConfig
 	namespace string
 	// sandbox container id
-	id        string
+	id string
 	// sync:
 	mu          sync.Mutex
 	eventSendMu sync.Mutex
@@ -82,9 +82,16 @@ func New(ctx context.Context, id string, publisher shimv2.Publisher, shutdown fu
 	if !found {
 		return nil, fmt.Errorf("namespace is required")
 	}
+
+	micadPid, err := getMicadPid()
+	if err != nil {
+		log.Warnf("failed to get micad PID, setting to 0: %v", err)
+		return nil, err
+	}
+
 	s := &shimService{
 		id:         id,
-		micadPid:   getMicadPid(),
+		micadPid:   micadPid,
 		shimPid:    uint32(os.Getpid()),
 		namespace:  ns,
 		ctx:        ctx,

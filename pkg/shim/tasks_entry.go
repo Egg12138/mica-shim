@@ -22,6 +22,7 @@ const (
 	okExitCode = 0
 	Exit255    = 255
 )
+
 var emptyResponse = &ptypes.Empty{}
 
 // Create creates a new containerd task and **setup rtos Client**
@@ -74,7 +75,7 @@ func (s *shimService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) 
 			},
 			Checkpoint: r.Checkpoint,
 			// Pid is ExecID in comming task requests
-			Pid:        s.shimPid,
+			Pid: s.shimPid,
 		})
 
 		return &taskAPI.CreateTaskResponse{
@@ -286,7 +287,7 @@ func (s *shimService) KillBySignal(ctx context.Context, r *taskAPI.KillRequest) 
 	}
 
 	// Only supported
-	if (signum == syscall.SIGKILL || signum == syscall.SIGTERM) && c.status == task.Status_STOPPED{
+	if (signum == syscall.SIGKILL || signum == syscall.SIGTERM) && c.status == task.Status_STOPPED {
 		log.Infof("container %s already stopped", c.id)
 		return emptyResponse, nil
 	}
@@ -307,7 +308,7 @@ func (s *shimService) Exec(ctx context.Context, r *taskAPI.ExecProcessRequest) (
 func (s *shimService) ResizePty(ctx context.Context, r *taskAPI.ResizePtyRequest) (*ptypes.Empty, error) {
 	log.Debugf("resize pty: (%d, %d)", r.Height, r.Width)
 	c, ok := s.containers[r.ID]
-	if !ok || c == nil{
+	if !ok || c == nil {
 		return nil, er.ErrContainerNotFound
 	}
 
@@ -326,7 +327,6 @@ func (s *shimService) CloseIO(ctx context.Context, r *taskAPI.CloseIORequest) (*
 	if c == nil || !ok {
 		return nil, er.ErrContainerNotFound
 	}
-
 
 	// TALK: if execid is not empty, should we close IO still?
 	if r.ExecID != "" {
@@ -358,10 +358,9 @@ func (s *shimService) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*taskAP
 	s.mu.Lock()
 	c, ok := s.containers[r.ID]
 	if c == nil || !ok {
-		return nil, er.ErrContainerNotFound		
+		return nil, er.ErrContainerNotFound
 	}
 	s.mu.Unlock()
-
 
 	return nil, errdefs.ErrNotImplemented
 

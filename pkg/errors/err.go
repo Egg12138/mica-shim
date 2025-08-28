@@ -33,6 +33,7 @@ const (
 	UnexpectedStatus
 	IOClose
 	NotSuppoted
+	MicadDown
 )
 
 // Pre-defined errors.
@@ -49,9 +50,10 @@ var (
 	ErrIOClose           = new(IOClose, "io closed")
 	ErrNotRunning        = new(UnexpectedStatus, "container is not running")
 
-	ErrMicadFailed = new(MicadFailed, "mica operation failed")
-	ErrNotSuppoted    = new(NotSuppoted, "micran or mica does not support this")
-	ErrInvalidSig     = new(Invalid, "invalid signal for client os")
+	ErrMicadFailed     = new(MicadFailed, "mica operation failed")
+	ErrMicadNotRunning = new(MicadDown, "mica daemon is not running")
+	ErrNotSuppoted     = new(NotSuppoted, "micran or mica does not support this")
+	ErrInvalidSig      = new(Invalid, "invalid signal for client os")
 )
 
 // Type errors

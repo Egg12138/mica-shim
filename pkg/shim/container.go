@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	taskAPI "github.com/containerd/containerd/api/runtime/task/v2"
 	"github.com/containerd/containerd/api/types/task"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/fifo"
@@ -41,6 +42,35 @@ type container struct {
 	status   task.Status
 	terminal bool
 	mounted  bool
+}
+
+func newContainer(s *shimService, r *taskAPI.CreateTaskRequest, cType cntr.ContainerType, ocispec *specs.Spec, mounted bool) (*container, error) {
+	if r == nil {
+		return nil, errdefs.ToGRPCf(errdefs.ErrInvalidArgument, " CreateTaskRequest points to nil")
+	}
+
+	if ocispec == nil {
+		ocispec = &specs.Spec{}
+	}
+
+	c := &container{
+		s:           s,
+		spec:        ocispec,
+		exitIOch:    make(chan struct{}),
+		exitCh:      make(chan uint32, 1),
+		stdinCloser: make(chan struct{}),
+		id:          r.ID,
+		stdin:       r.Stdin,
+		stdout:      r.Stdout,
+		stderr:      r.Stderr,
+		bundle:      r.Bundle,
+		cType:       cType,
+		status:      task.Status_CREATED,
+		terminal:    r.Terminal,
+		mounted:     mounted,
+	}
+
+	return c, nil
 }
 
 type stdio struct {

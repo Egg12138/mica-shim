@@ -37,15 +37,31 @@ type SandboxStats struct {
 }
 
 type SandboxConfig struct {
-	ID               string
-	Hostname         string
-	NetworkConfig    NetworkConfig
-	PedType          ped.PedType
-	PedConfig        ped.PedConfig
-	ContainerConfigs map[string]*ContainerConfig
-	Annotations      map[string]string
-	SharedMemorySize uint64
-	SandboxResources SandboxResourceSizing
+	ID                string
+	Hostname          string
+	NetworkConfig     NetworkConfig
+	PedType           ped.PedType
+	PedConfig         ped.PedConfig
+	ContainerConfigs  map[string]*ContainerConfig
+	Annotations       map[string]string
+	SharedMemorySize  uint64
+	SandboxResources  SandboxResourceSizing
+	EnableVCPUsPining bool
+	// TALK: consider static management
+}
+
+func (sc *SandboxConfig) valid() bool {
+	if sc.ID == "" {
+		log.Warn("sandbox ID is empty")
+		return false
+	}
+
+	if sc.PedType == ped.Unsupported {
+		log.Warn("pedestal type is unsupported")
+		return false
+	}
+
+	return true
 }
 
 type SandboxResourceSizing struct {
@@ -71,11 +87,10 @@ const (
 )
 
 type SandboxState struct {
-	State StateString
+	State   StateString
 	Ped     string
 	Version uint
 }
-
 
 // SandboxState public methods
 
@@ -135,7 +150,8 @@ func (s *StateString) validTransition(old StateString, new StateString) error {
 // expand fields of sandboxconfigs as sandbox memebers
 type Sandbox struct {
 	ctx context.Context
-	mu  sync.Mutex
+	// use annoymous field to avoid unused fields wanring
+	sync.Mutex
 	// fs, storage, devices, volumes...
 	// monitor
 	agent      RealAgent
@@ -145,8 +161,8 @@ type Sandbox struct {
 	network    Network
 	state      SandboxState
 
-	annotaLock sync.RWMutex
-	wg         sync.WaitGroup
+	annotaLock *sync.RWMutex
+	wg         *sync.WaitGroup
 }
 
 // impl SandboxTraits for Sandbox
@@ -187,9 +203,9 @@ func (s *Sandbox) AllAnnotations() map[string]string {
 	return s.config.Annotations
 }
 
-func (s *Sandbox) CheckDaemon() *libmica.MicaDaemonState {
+func (s *Sandbox) DaemonState() *libmica.MicaDaemonState {
 	state, err := libmica.DaemonState()
-	if err != nil {
+	if err != nil && !errors.Is(err, er.ErrMicadNotRunning) {
 		log.Warnf("failed to fetch daemon state: %v", err)
 		return nil
 	}
@@ -198,7 +214,7 @@ func (s *Sandbox) CheckDaemon() *libmica.MicaDaemonState {
 }
 
 func (s *Sandbox) Monitor() {
-
+	return
 }
 
 func (s *Sandbox) GetNetNamespace() string {
@@ -556,7 +572,7 @@ func (s *Sandbox) WaitTaskExit(ctx context.Context, containerID string, taskid s
 	return c.wait4exit()
 }
 
-func (s *Sandbox) SignalTask(ctx context.Context, containerID string, signal syscall.Signal ) error {
+func (s *Sandbox) SignalTask(ctx context.Context, containerID string, signal syscall.Signal) error {
 	if s.state.State != StateRunning {
 		return er.ErrSandboxDown
 	}
@@ -633,28 +649,20 @@ func (s *Sandbox) setSandboxState(state StateString) error {
 	return nil
 }
 
-
-
+// store sandbox information to disk
 func (s *Sandbox) StoreSandbox(ctx context.Context) error {
 	target, err := s.newSandboxStoragePath()
 	if err != nil {
 		return err
 	}
-	
+
 	// Create serializable representation of sandbox
-	serializable := struct {
-		ID               string                     `json:"id"`
-		State            SandboxState               `json:"state"`
-		Config           SandboxConfig              `json:"config"`
-		Network          NetworkConfig              `json:"network"`
-		Containers       map[string]*Container       `json:"containers"`
-	}{
-		ID:         s.id,
-		State:      s.state,
-		Config:     s.config,
-		Containers: s.containers,
+	serializable := SandboxStorage{
+		ID:     s.id,
+		State:  s.state,
+		Config: s.config,
 	}
-	
+
 	// Get network config if needed
 	if dummyNetwork, ok := s.network.(*DummyNetwork); ok {
 		serializable.Network = NetworkConfig{
@@ -662,7 +670,7 @@ func (s *Sandbox) StoreSandbox(ctx context.Context) error {
 			NetworkCreated: dummyNetwork.NetworkIsCreated(),
 		}
 	}
-	
+
 	if err := fileutils.SaveStructToJSON(target, serializable); err != nil {
 		return err
 	}
@@ -718,11 +726,6 @@ func (s *Sandbox) stopClient(ctx context.Context) error {
 	return nil
 }
 
-// considering pinning vCPUs on different pedestal
-func (s *Sandbox) checkVCPUsPinning(ctx context.Context) error {
-	return nil
-}
-
 // DummySandboxConfig creates a minimal sandbox config for quick development
 func DummySandboxConfig(cid string, spec *specs.Spec) (*SandboxConfig, error) {
 	return &SandboxConfig{
@@ -744,7 +747,8 @@ func DummySandboxConfig(cid string, spec *specs.Spec) (*SandboxConfig, error) {
 
 // setup sandbox
 func CreateSandbox(ctx context.Context, cfg *SandboxConfig) (*Sandbox, error) {
-	s, err := newSandbox(ctx, cfg)
+	s, err := createSandboxFromConfig(ctx, cfg)
+	log.Pretty("sandbox created %v", s)
 	if err != nil {
 		return nil, err
 	}
@@ -753,15 +757,15 @@ func CreateSandbox(ctx context.Context, cfg *SandboxConfig) (*Sandbox, error) {
 		return s, nil
 	}
 
-	if err = s.setSandboxState(StateReady); err != nil {
-		return nil, err
-	}
-
 	return s, nil
 }
 
-// newSandbox creates a new sandbox instance
-func newSandbox(ctx context.Context, config *SandboxConfig) (*Sandbox, error) {
+func initSandbox(ctx context.Context, config *SandboxConfig) (*Sandbox, error) {
+	if !config.valid() {
+		return nil, fmt.Errorf("invalid sandbox configuration")
+	}
+
+	// TODO: setup network namespace
 	s := &Sandbox{
 		ctx:        ctx,
 		config:     *config,
@@ -772,97 +776,154 @@ func newSandbox(ctx context.Context, config *SandboxConfig) (*Sandbox, error) {
 			Ped:     HostPedType.String(),
 			Version: defs.SandboxVersion,
 		},
-		network: &DummyNetwork{},
-		agent:   *NewAgent(),
+		network:    &DummyNetwork{},
+		agent:      *NewAgent(),
+		wg:         &sync.WaitGroup{},
+		annotaLock: &sync.RWMutex{},
 	}
 
-	// Initialize the sandbox
-	if _, err := s.agent.init(ctx, s); err != nil {
-		return nil, err
+	if err := s.Restore(); err != nil {
+		log.Debugf("failed to restore sandbox %s: %v", s.id, err)
 	}
+	return s, nil
+}
 
-	// Create the sandbox through the agent
-	if err := s.agent.createSandbox(ctx, s); err != nil {
-		return nil, err
+// createSandboxFromConfig creates a new sandbox instance from sandbox config
+// 1. createSandboxFromConfig instance, and setup
+// 2. cleanup if error happens
+// 3.
+func createSandboxFromConfig(ctx context.Context, config *SandboxConfig) (*Sandbox, error) {
+	s, err := initSandbox(ctx, config)
+
+	hostname := s.config.Hostname
+	if len(hostname) > maxHostnameLength {
+		hostname = hostname[:maxHostnameLength]
 	}
+	s.config.Hostname = hostname
 
-	// Set initial state
 	if err := s.setSandboxState(StateReady); err != nil {
+		return nil, err
+	}
+
+	defer func() {
+		if err != nil {
+			s.Delete(ctx)
+		}
+	}()
+
+	if err = s.createNetwork(ctx); err != nil {
+		return nil, err
+	}
+
+	defer func() {
+		if err != nil {
+			s.removeNetwork(ctx)
+		}
+	}()
+
+	s.postNetworkCreated()
+
+	if err = s.initContainers(ctx); err != nil {
 		return nil, err
 	}
 
 	return s, nil
 }
 
-// RestoreSandboxState loads an existing sandbox from storage, by sandbox id
-func RestoreSandboxState(ctx context.Context, id string) (*SandboxState, error) {
-	// Load sandbox configuration from storage
-	sandboxDir := filepath.Join(defs.SandboxDataDir, id)
-	configPath := filepath.Join(sandboxDir, defs.SandboxStateFile)
-	
-	// Define the structure that matches what we store
-	type SandboxStorage struct {
-		ID         string            `json:"id"`
-		State      SandboxState      `json:"state"`
-		Config     SandboxConfig     `json:"config"`
-		Network    NetworkConfig     `json:"network"`
-		Containers map[string]*Container `json:"containers"`
+func (s *Sandbox) Restore() error {
+	ss, err := RestoreSandbox(s.ctx, s.id)
+	if ss != nil {
+		log.Pretty("%v", ss)
 	}
-	
-	raw, err := fileutils.RestoreStructFromJSON(configPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load sandbox state from %s: %w", configPath, err)
+		log.Debugf("failed to restore sandbox state: %v", err)
 	}
-	
-	// Convert to JSON and then unmarshal into our struct
-	jsonBytes, err := json.Marshal(raw)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal raw data: %w", err)
+
+	if ss.ID != s.id {
+		log.Debugf("sandbox ID mismatch: %v != %v", ss.ID, s.id)
+		log.Pretty("%v", ss)
+		return fmt.Errorf("sandbox ID mismatch: %v != %v", ss.ID, s.id)
 	}
-	
-	var storage SandboxStorage
-	if err := json.Unmarshal(jsonBytes, &storage); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal sandbox storage: %w", err)
-	}
-	
-	// Return just the state part as requested by the function signature
-	return &storage.State, nil
+
+	s.state.Ped = ss.State.Ped
+	s.state.Version = ss.State.Version
+	s.state.State = ss.State.State
+	s.config = ss.Config
+	s.network = &ss.Network
+
+	return nil
+
+}
+
+// Define the structure that matches what we store
+type SandboxStorage struct {
+	ID      string        `json:"id"`
+	State   SandboxState  `json:"state"`
+	Config  SandboxConfig `json:"config"`
+	Network NetworkConfig `json:"network"`
+	// Containers map[string]*Container `json:"containers"`
 }
 
 // RestoreSandbox loads an existing sandbox from storage, by sandbox id
-func RestoreSandbox(ctx context.Context, id string) (*Sandbox, error) {
+func RestoreSandbox(ctx context.Context, id string) (*SandboxStorage, error) {
 	// Load sandbox configuration from storage
 	sandboxDir := filepath.Join(defs.SandboxDataDir, id)
 	configPath := filepath.Join(sandboxDir, defs.SandboxStateFile)
-	
-	// Define the structure that matches what we store
-	type SandboxStorage struct {
-		ID         string            `json:"id"`
-		State      SandboxState      `json:"state"`
-		Config     SandboxConfig     `json:"config"`
-		Network    NetworkConfig     `json:"network"`
-		Containers map[string]*Container `json:"containers"`
-	}
-	
+
 	raw, err := fileutils.RestoreStructFromJSON(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load sandbox state from %s: %w", configPath, err)
 	}
-	
+
 	// Convert to JSON and then unmarshal into our struct
 	jsonBytes, err := json.Marshal(raw)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal raw data: %w", err)
 	}
-	
+
 	var storage SandboxStorage
 	if err := json.Unmarshal(jsonBytes, &storage); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal sandbox storage: %w", err)
 	}
-	
+
+	// Return just the state part as requested by the function signature
+	return &storage, nil
+}
+
+// __RestoreSandbox loads an existing sandbox from storage, by sandbox id
+func __RestoreSandbox(ctx context.Context, id string) (*Sandbox, error) {
+	// Load sandbox configuration from storage
+	sandboxDir := filepath.Join(defs.SandboxDataDir, id)
+	configPath := filepath.Join(sandboxDir, defs.SandboxStateFile)
+
+	// Define the structure that matches what we store
+	type SandboxStorage struct {
+		ID         string                `json:"id"`
+		State      SandboxState          `json:"state"`
+		Config     SandboxConfig         `json:"config"`
+		Network    NetworkConfig         `json:"network"`
+		Containers map[string]*Container `json:"containers"`
+	}
+
+	raw, err := fileutils.RestoreStructFromJSON(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load sandbox state from %s: %w", configPath, err)
+	}
+
+	// Convert to JSON and then unmarshal into our struct
+	jsonBytes, err := json.Marshal(raw)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal raw data: %w", err)
+	}
+
+	var storage SandboxStorage
+	if err := json.Unmarshal(jsonBytes, &storage); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal sandbox storage: %w", err)
+	}
+
 	// Create network from saved config - DummyNetwork doesn't store state
 	var network Network = &DummyNetwork{}
-	
+
 	// Create the sandbox
 	s := &Sandbox{
 		ctx:        ctx,
@@ -873,30 +934,30 @@ func RestoreSandbox(ctx context.Context, id string) (*Sandbox, error) {
 		network:    network,
 		agent:      *NewAgent(),
 	}
-	
+
 	// Restore containers
 	for containerID, container := range storage.Containers {
 		// Set the sandbox reference for each container
 		container.ctx = ctx
 		container.sandbox = s
 		container.sandboxId = s.id
-		
+
 		s.containers[containerID] = container
-		
+
 		// Also ensure the container config is in sandbox config
 		if s.config.ContainerConfigs == nil {
 			s.config.ContainerConfigs = make(map[string]*ContainerConfig)
 		}
 		s.config.ContainerConfigs[containerID] = container.config
 	}
-	
+
 	// Initialize agent if needed
 	if s.state.State == StateRunning {
 		if _, err := s.agent.init(ctx, s); err != nil {
 			log.Warnf("failed to initialize agent during restore: %v", err)
 		}
 	}
-	
+
 	log.Infof("Successfully restored sandbox %s with %d containers", id, len(s.containers))
 	return s, nil
 }
@@ -904,4 +965,51 @@ func RestoreSandbox(ctx context.Context, id string) (*Sandbox, error) {
 // sandbox is not ready for being operated
 func (s *Sandbox) notOperational() bool {
 	return s.state.State != StateReady && s.state.State != StateRunning
+}
+
+func (s *Sandbox) createNetwork(ctx context.Context) error {
+	log.Debugf("createNetwork.")
+	return nil
+}
+
+func (s *Sandbox) postNetworkCreated() error {
+	return s.network.(*NetworkConfig).postCreated()
+}
+
+func (s *Sandbox) initContainers(ctx context.Context) error {
+	for _, cc := range s.config.ContainerConfigs {
+		c, err := newContainer(ctx, s, cc)
+		if err != nil {
+			return err
+		}
+		if err := c.create(ctx); err != nil {
+			return err
+		}
+		if err := s.addContainer(c); err != nil {
+			return err
+		}
+	}
+
+	if err := s.updateResources(ctx); err != nil {
+		return err
+	}
+
+	if err := s.checkVCPUsPinning(ctx); err != nil {
+		return err
+	}
+
+	if err := s.StoreSandbox(ctx); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// TODO: considering pinning vCPUs on different pedestal
+func (s *Sandbox) checkVCPUsPinning(ctx context.Context) error {
+	return nil
+}
+
+func (s *Sandbox) updateResources(ctx context.Context) error {
+	return nil
 }

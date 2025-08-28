@@ -2,8 +2,11 @@ package defs
 
 // Client default values.
 const (
-	DefaultNcpu       = 1
+	DefaultNcpu = 1
+	// fallback default mica configuration file
 	DefaultClientConf = "client.conf"
+	// pass "<bundle>/rootfs/<DefaultXenBin>" to pedestalCfg for xen-mica case
+	DefaultXenBin = "image.bin"
 )
 
 // client conf keys

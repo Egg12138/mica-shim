@@ -21,4 +21,14 @@ const (
 	SandboxStateFile     = "state.json"
 	// directory for sandbox data storage
 	SandboxDataDir = "/run/micran/sandbox"
+
+	// override priority:
+	// file(os.env("MicranConfDir")) > dir(os.env("MicranConfEnv"))/*.toml > dir(MicranConfDir)/conf.toml
+	DropinDirEnv = "MICRAN_CONF_DIR"
+	// default value of micran conf root directories, if MICRAN_CONF_DIR is not set
+	MicranConfDir    = "/etc/micran"
+	MicranConfDropin = MicaConfDir + "/conf.d"
+
+	// if file exists, it will override
+	MicranConfEnv = "MICRAN_CONF_FILE"
 )

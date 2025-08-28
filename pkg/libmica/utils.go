@@ -9,11 +9,11 @@ import (
 
 // Helper functions
 func startWithMicaPrefix(fieldName string) bool {
-	return strings.HasPrefix(fieldName, defs.MicraLabelPrefix)
+	return strings.HasPrefix(fieldName, defs.MicraAnnotationPrefix)
 }
 
 func isMicaAnnotation(fieldName string) string {
-	return strings.TrimPrefix(fieldName, defs.MicraLabelPrefix)
+	return strings.TrimPrefix(fieldName, defs.MicraAnnotationPrefix)
 }
 
 func MaxCPUNum() int {
