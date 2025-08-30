@@ -87,9 +87,8 @@ build-containerd-client:
 	cd tests/containerd_client && go build -ldflags "-X 'main.customRuntimeName=${SHIM_NAME}'" -o containerd_client containerd_client.go
 
 mock-micad:
-	@echo "🎭 Building and running mock_micad..."
-	cd tests/mock_micad && make
-	${BUILD_DIRS}/mock_micad
+	@echo "🎭 Building and running mock_micad... at ${BUILD_DIRS}mock_micad"
+	cd tests/mock_micad && make run
 
 fmt:
 	go fmt ./...
