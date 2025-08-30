@@ -1,9 +1,14 @@
-package core
+package oci
 
 import (
+	"encoding/json"
 	defs "mica-shim/definitions"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
 type RuntimeConfig struct {
@@ -18,24 +23,16 @@ type RuntimeConfig struct {
 	MemoryOvercommit   bool   // Allow memory overcommit
 
 	// MICA-specific configurations
-	DefaultPedestal     string // Default pedestal type if not specified
+	Pedestal            string // Default pedestal type if not specified
 	EnableResourceLimit bool   // Whether to enforce resource limits
+	PauseImage          string
 }
 
-func NewRuntimeSpec() *RuntimeConfig {
+// return a initialized RuntimeConfig
+func NewRuntimeConfig() *RuntimeConfig {
 	spec := RuntimeConfig{
-		Debug:        false,
-		SandboxCPUs:  0,
-		SandboxMemMB: 0,
-
-		// Defaults for global settings
-		MaxContainerCPUs:   0, // 0 means use system default
-		MaxContainerMemMB:  0, // 0 means use system default
-		CPUSchedulerPolicy: "round-robin",
-		MemoryOvercommit:   true,
-
 		// MICA defaults
-		DefaultPedestal:     "baremetal",
+		Pedestal:            "baremetal",
 		EnableResourceLimit: true,
 	}
 	return &spec
@@ -77,7 +74,7 @@ func (r *RuntimeConfig) SetMemoryOvercommit(allow bool) *RuntimeConfig {
 }
 
 func (r *RuntimeConfig) SetDefaultPedestal(pedestal string) *RuntimeConfig {
-	r.DefaultPedestal = pedestal
+	r.Pedestal = pedestal
 	return r
 }
 
@@ -87,53 +84,74 @@ func (r *RuntimeConfig) SetEnableResourceLimit(enable bool) *RuntimeConfig {
 }
 
 // ParseRuntimeConfig parses runtime configuration from annotations
-func ParseRuntimeConfig(annotations map[string]string) *RuntimeConfig {
-	spec := NewRuntimeSpec()
-
+// TODO: match these dummy config items with actual implementation, define prefix in package definitions
+func (cfg *RuntimeConfig) ParseRuntimeConfig(annotations map[string]string) *RuntimeConfig {
+	cfg.PauseImage = defs.PauseImage
 	// Parse runtime-level annotations with mica annotation prefix
 	for key, value := range annotations {
-		if !strings.HasPrefix(key, defs.MicaAnnotationPrefix) {
+		if !strings.HasPrefix(key, defs.MicraAnnotationPrefix) || value == "" {
 			continue
 		}
 
 		// Remove prefix to get the config key
-		configKey := strings.TrimPrefix(key, defs.MicaAnnotationPrefix+".")
 
-		switch configKey {
-		case "runtime.debug":
+		switch key {
+		case defs.RuntimeDebug:
 			if debug, err := strconv.ParseBool(value); err == nil {
-				spec.SetDebug(debug)
+				cfg.SetDebug(debug)
 			}
 		case "runtime.sandbox.cpus":
 			if cpus, err := strconv.ParseUint(value, 10, 32); err == nil {
-				spec.SetSandboxCPUs(uint32(cpus))
+				cfg.SetSandboxCPUs(uint32(cpus))
 			}
 		case "runtime.sandbox.memory":
 			if mem, err := strconv.ParseUint(value, 10, 32); err == nil {
-				spec.SetSandboxMemMB(uint32(mem))
+				cfg.SetSandboxMemMB(uint32(mem))
 			}
 		case "runtime.max_container_cpus":
 			if cpus, err := strconv.ParseUint(value, 10, 32); err == nil {
-				spec.SetMaxContainerCPUs(uint32(cpus))
+				cfg.SetMaxContainerCPUs(uint32(cpus))
 			}
 		case "runtime.max_container_memory":
 			if mem, err := strconv.ParseUint(value, 10, 32); err == nil {
-				spec.SetMaxContainerMemMB(uint32(mem))
+				cfg.SetMaxContainerMemMB(uint32(mem))
 			}
 		case "runtime.cpu_scheduler_policy":
-			spec.SetCPUSchedulerPolicy(value)
+			cfg.SetCPUSchedulerPolicy(value)
 		case "runtime.memory_overcommit":
 			if overcommit, err := strconv.ParseBool(value); err == nil {
-				spec.SetMemoryOvercommit(overcommit)
+				cfg.SetMemoryOvercommit(overcommit)
 			}
-		case "runtime.default_pedestal":
-			spec.SetDefaultPedestal(value)
+		case defs.Pedtype:
+			cfg.SetDefaultPedestal(value)
 		case "runtime.enable_resource_limit":
 			if enable, err := strconv.ParseBool(value); err == nil {
-				spec.SetEnableResourceLimit(enable)
+				cfg.SetEnableResourceLimit(enable)
 			}
+		case "runtime.pause":
+			cfg.PauseImage = value
 		}
 	}
 
-	return spec
+	return cfg
+}
+
+func parseConfigJSON(file string) (specs.Spec, error) {
+	configBytes, err := os.ReadFile(file)
+	if err != nil {
+		return specs.Spec{}, err
+	}
+
+	var config specs.Spec
+	if err := json.Unmarshal(configBytes, &config); err != nil {
+		return specs.Spec{}, err
+	}
+
+	return config, nil
+}
+
+func LoadSpec(bundle string) (specs.Spec, error) {
+	// For docker , config.v2.json, this line is useless;
+	configPath := filepath.Join(bundle, "config.json")
+	return parseConfigJSON(configPath)
 }

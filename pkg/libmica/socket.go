@@ -6,7 +6,6 @@ import (
 	"fmt"
 	defs "mica-shim/definitions"
 	log "mica-shim/logger"
-	"mica-shim/pkg/fileutils"
 	"net"
 	"os"
 	"strings"
@@ -15,20 +14,28 @@ import (
 
 // TODO: seperate into mick_socket.go
 
+// Types
 // micaSocket handles Unix domain socket communication with mica daemon
 type micaSocket struct {
 	socketPath string
 	conn       net.Conn
 }
 
-func validSocket(socketPath string) bool {
-	return fileutils.TypedFileExist(socketPath, os.ModeSocket)
-}
-
+// Constructors
 func newMicaSocket(socketPath string) *micaSocket {
 	return &micaSocket{socketPath: socketPath}
 }
 
+// Helper functions
+func validSocketPath(socketPath string) bool {
+	if st, err := os.Stat(socketPath); err != nil {
+		return false
+	} else {
+		return st.Mode()&os.ModeSocket != 0
+	}
+}
+
+// micaSocket methods
 func (ms *micaSocket) connect() error {
 	conn, err := net.Dial("unix", ms.socketPath)
 	if err != nil {
@@ -102,31 +109,30 @@ func (ms *micaSocket) rx() (string, error) {
 // TODO: We need to manually fetch information from managed clients
 // Because mica daemon print clients information by its own format, which is not
 // compatible with containerd
-func (ms *micaSocket) handleMicaMsg(msg []byte) (string, error) {
+func (ms *micaSocket) handleMsg(msg []byte) error {
 
-	log.Debugf("handleMicaMsg %s", string(msg))
 	if err := ms.connect(); err != nil {
-		return "", fmt.Errorf("failed to connect to socket: %v", err)
+		return fmt.Errorf("failed to connect to socket: %w", err)
 	}
 	defer func() {
 		ms.close()
 	}()
 
 	if err := ms.tx(msg); err != nil {
-		return "", fmt.Errorf("failed to send command: %v", err)
+		return fmt.Errorf("failed to send command: %w", err)
 	}
 
 	response, err := ms.rx()
 	if err != nil {
-		return "", fmt.Errorf("failed to receive response: %v", err)
+		return fmt.Errorf("failed to receive response: %w", err)
 	}
 
 	switch response {
 	case defs.MicaSuccess:
-		return response, nil
+		return nil
 	case defs.MicaFailed:
-		return response, fmt.Errorf("mica daemon reported failure")
+		return fmt.Errorf("mica daemon reported failure")
 	default:
-		return response, fmt.Errorf("unexpected response format: %s", response)
+		return fmt.Errorf("unexpected response format from mica daemon: %s, communication might broken?", response)
 	}
 }

@@ -2,13 +2,38 @@ package libmica
 
 import (
 	defs "mica-shim/definitions"
+	ped "mica-shim/pkg/pedestal"
+	"runtime"
 	"strings"
 )
 
+// Helper functions
 func startWithMicaPrefix(fieldName string) bool {
-	return strings.HasPrefix(fieldName, defs.MicaLabelPrefix)
+	return strings.HasPrefix(fieldName, defs.MicraAnnotationPrefix)
 }
 
 func isMicaAnnotation(fieldName string) string {
-	return strings.TrimPrefix(fieldName, defs.MicaLabelPrefix)
+	return strings.TrimPrefix(fieldName, defs.MicraAnnotationPrefix)
+}
+
+func MaxCPUNum() int {
+	pedtype := ped.HostPed()
+	if defs.IsMock {
+		return dummyCPUNum()
+	}
+	if pedtype == ped.Xen {
+		return int(ped.MaxCPUNum())
+	}
+	return dummyCPUNum()
+}
+
+func MaxClientCPUNum() int {
+	if defs.IsMock {
+		return 1
+	}
+	return MaxCPUNum() - runtime.NumCPU()
+}
+
+func dummyCPUNum() int {
+	return runtime.NumCPU()
 }

@@ -29,17 +29,25 @@
 - [x] libmica 的 通信和通信抽象
 - [x] libmica: containerd rpc--> mica config, 任务配置对接整理
 - [x] 确定Linux:RTOS clientos 1:1模型的必要性
-- [ ] mica支持长容器ID
-- [ ] basic micran state storage
-- [ ] 完善micran state存储
+- [x] mica支持长容器ID
+- [x] basic micran state storage
+- [x] 完善micran state存储
 > 由于我们在create中不再创建mica client而是放到 start()中，所以我们创建容器后需要存放状态信息，目前有几个考虑，分三步：
 > 1. 双state.json副本, 一个位于bundle, 一个位于micran state dir
 > 1. 在micran state dir中维护一个db,存储state信息，提高性能
 > 1. 整个bundle都转到 micran state dir
+- [x] 从struct manager 迁移到struct shim
+- [x] 重构项目，提高维护性
+- [x] SCHED_CORE 支持
+- [ ] 分析对1:1:1模型中 r.ExecID的处理：确认会传什么，确认是否要转化为对容器的操作
+- [ ] 对Xen做适配
+- [x] task events all completed
+- [x] io mock test
 - [ ] pty
-- [ ] k8s Pod, Sandbox support
+- [x] k8s Pod, Sandbox support
 - [x] 镜像规制考虑
-- [ ] 精准的板级镜像发布校验
+- [x] Xen basic interface
+- [ ] use vendor
 
 ## ️ Roadmap
 
@@ -49,10 +57,16 @@
 - [x] 自如管理 基本镜像的： OS register, OS boot, Task start
 - [x] 提供一个mica-from-scrach基础镜像,根据这个镜像来搭建混部容器镜像,并且可以根据这些镜像拉起服务
 - [x] Client OS 和 Shim Task process 的明确分离管理
-- [ ] IO 接管
+- [x] IO 接管
+- [x] sandbox管理containers
+- [ ] RTOS生命周期的监控：task exited 如何让micran或者mica感知
+- [ ] k8s打通
 - [ ] 持久化
 - [ ] 网络
 - [ ] 保证mica daemon 和 micran 生命周期不一致时容器状态的一致性
+- [ ] k8s deployment demo
+- [ ] kubeedge deployment demo
+- [x] libmica 不恰当地参与了service等packages,需要再做解耦
 
 ## 近期Issues
 
@@ -179,6 +193,79 @@ Linux Host Core (ARM Core 0)         RTOS Remote Core (ARM Core 1)
          │  └─ Control Structures (Status, locks)         │
          └────────────────────────────────────────────────┘
 ```
+
+## Agent Architecture Considerations
+
+### Current Status: No Agent Needed
+
+Micran currently uses a **direct communication model** without an Agent abstraction layer:
+```
+Containerd → Micran (Sandbox) → libmica → Unix Socket → micad → RTOS
+```
+
+This simple model is sufficient for micran's current requirements:
+- Single RTOS type (Zephyr) support
+- 1:1:1 mapping (Container:RTOS Client:Task)
+- Static task deployment (tasks auto-start with RTOS boot)
+- Basic resource management (CPU core assignment)
+- Simple PTY-based I/O
+
+### Evolution Thresholds Requiring Agent
+
+An Agent pattern would become necessary when micran evolves to support more complex scenarios:
+
+#### High Priority Thresholds
+1. **Multiple RTOS Types** (≥3 distinct RTOS)
+   - Current: Zephyr only
+   - Future: Zephyr + FreeRTOS + RT-Thread + custom RTOS
+   - Agent needed: Protocol translation and RTOS abstraction
+
+2. **Dynamic Task Management**
+   - Current: Tasks auto-start with RTOS boot
+   - Future: Start/stop tasks dynamically after RTOS is running
+   - Agent needed: In-RTOS task manager and service registry
+
+#### Medium Priority Thresholds
+3. **Advanced Resource Management**
+   - Memory hotplug, CPU sharing, QoS guarantees
+   - Agent needed: Resource negotiation and enforcement
+
+4. **Network Service Mesh**
+   - Inter-RTOS communication, service discovery
+   - Agent needed: Network proxy and service registry
+
+5. **Security Isolation Levels**
+   - Trusted execution, encrypted communication
+   - Agent needed: Security policy enforcement
+
+#### Low Priority Thresholds
+6. **Deep Monitoring & Observability**
+   - Performance profiling, distributed tracing
+   - Agent needed: Metrics collection and aggregation
+
+7. **Stateful Service Support**
+   - Database services, message queues
+   - Agent needed: State synchronization and recovery
+
+### Strategic Approach
+
+**Phase 1 (Current)**: Remove existing Agent pattern and use direct libmica calls from Sandbox
+
+**Phase 2 (Preparation)**: When approaching thresholds:
+- Standardize RTOS communication protocols
+- Implement service discovery in micad
+- Create resource allocation APIs
+- Build async event notification system
+
+**Phase 3 (Implementation)**: Introduce Agent when crossing ≥2 high-priority thresholds or ≥4 total thresholds
+
+The Agent would act as an RTOS-side service manager, handling:
+- Protocol translation for multiple RTOS types
+- In-RTOS service lifecycle management
+- Resource abstraction and enforcement
+- Security policy enforcement
+
+**Key Insight**: Agent should be introduced when transitioning from simple containerization to distributed RTOS orchestration.
 
 ## Future Plans
 
