@@ -141,6 +141,7 @@
 1. image build tool 
     - [x] 独立可用；一键构建
     - [ ] 继承到yocto 
+    - [ ] yocto对于xen-mica的情况需要编image.bin
 1. 核分配完善:
     1. create时的freeCPU/create分配但是没有启动过的enqHead/使用过的CPU enqTail
     2. stop时 CPU enqTail

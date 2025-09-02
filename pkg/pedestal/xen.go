@@ -187,3 +187,7 @@ func resumeById(id string) error {
 	log.Debugf("resume %s successfully", id)
 	return nil
 }
+
+func XenDefaultPedConf() string {
+	return "image.bin"
+}

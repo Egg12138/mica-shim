@@ -126,11 +126,17 @@ func (s *shimService) Start(ctx context.Context, r *taskAPI.StartRequest) (*task
 func (s *shimService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*taskAPI.DeleteResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	log.Debugf("deleting container %s", r.ID)
 
 	c, ok := s.containers[r.ID]
 	if c == nil || !ok {
-		log.Debugf("container %s not found in shimservice storage")
-		return nil, errdefs.ToGRPCf(errdefs.ErrNotFound, "container %s not found", r.ID)
+		log.Debugf("container %s not found in shimservice storage", r.ID)
+		return &taskAPI.DeleteResponse{
+			ExitStatus: okExitCode,
+			ExitedAt:   timestamppb.Now(),
+			Pid:        s.shimPid,
+		}, nil
+		// return nil, errdefs.ToGRPCf(errdefs.ErrNotFound, "container %s not found", r.ID)
 	}
 
 	if r.ExecID != "" {

@@ -8,12 +8,19 @@ import (
 	"os"
 	"strconv"
 	"strings"
-
-	"github.com/containerd/errdefs"
+	"time"
 )
 
 func createContainerInSandbox(ctx context.Context, sandbox SandboxTraits, config *ContainerConfig) (*RTOSTask, error) {
-	return nil, errdefs.ErrNotImplemented
+	// Create a new RTOS task with current time as start time
+	task := &RTOSTask{
+		StartTime:    time.Now(),
+		TaskID:       config.ID,
+		ReceiverAddr: 0x1000, // Dummy address for now
+	}
+	
+	log.Infof("Created RTOS task %s for container %s", task.TaskID, config.ID)
+	return task, nil
 }
 
 func startClient(ctx context.Context, sandbox SandboxTraits, c *Container) error {

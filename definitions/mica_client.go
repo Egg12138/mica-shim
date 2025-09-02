@@ -11,7 +11,7 @@ const (
 
 // client conf keys
 const (
-	ElfPath = "path"
+	ElfPath = "clientpath"
 	Name    = "name"
 	Ped     = "ped"
 	PedCfg  = "pedcfg"

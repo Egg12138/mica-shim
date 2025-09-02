@@ -2,6 +2,7 @@ package oci
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -80,17 +81,56 @@ func bundleRootfs(bundle string) string {
 
 func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerType, detach bool) (*cntr.ContainerConfig, error) {
 	configPath := filepath.Join(bundleRootfs(bundle), defs.DefaultClientConf)
+	log.Debugf("config path = %s", configPath)
 	micaConf, err := fileutils.ParseConfigINI(configPath)
+	log.Pretty("mica config: %v", micaConf)
+	
+	// Debug: Check if file exists and list all parsed keys
+	if _, err := os.Stat(configPath); err == nil {
+		log.Debugf("client.conf file exists at: %s", configPath)
+		log.Debugf("Parsed %d keys from client.conf:", len(micaConf))
+		for k, v := range micaConf {
+			log.Debugf("  '%s' = '%s'", k, v)
+		}
+	} else {
+		log.Debugf("client.conf file does not exist at: %s", configPath)
+	}
 	if err != nil {
 		return nil, err
 	}
 
+	pedtype := cntr.HostPedType
+	var pedconf string
+	if pedtype == pedestal.Xen {
+		if cfg, ok := micaConf[defs.PedCfg]; ok && cfg != "" {
+			pedconf = cfg
+			log.Debugf("pedestal config for xen is the location of <image>.bin: %s", pedconf)
+		} else {
+			log.Debugf("default pedestal config for xen is the location of <image>.bin: %s", pedconf)
+			pedconf = pedestal.XenDefaultPedConf()
+		}
+	}
+
+	// Read OS from annotation
+	os := "zephyr" // default
+	if osAnnotation, ok := ocispec.Annotations[defs.MicraAnnotationPrefix]; ok {
+		os = osAnnotation
+		log.Debugf("Found OS annotation: %s", os)
+	}
+
+	// Debug: Log the parsed mica configuration
+	log.Debugf("Parsed micaConf: %+v", micaConf)
+	log.Debugf("Looking for ElfPath key '%s', found value: '%s'", defs.ElfPath, micaConf[defs.ElfPath])
+
+	// init
 	config := &cntr.ContainerConfig{
+		// Container ID
+		ID:           id,
 		// OCI and bundle info
 		ElfPath:      micaConf[defs.ElfPath],
-		PedestalType: pedestal.Unsupported,
-		PedestalConf: "",
-		OS:           "",
+		PedestalType: pedtype,
+		PedestalConf: pedconf,
+		OS:           os,
 		NCpu:         1,
 		CpuLimit:     0,
 		CpusetCpus:   "",
@@ -122,11 +162,8 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 		// but log them for visibility
 	}
 
-	// Set default OS if not specified
-	if config.OS == "" {
-		log.Warn("os is not set, default to zephyr")
-		config.OS = "zephyr"
-	}
+	// OS is already set from annotation or default above
+	log.Infof("Container OS: %s", config.OS)
 
 	log.Infof("Container resource limits - CPU: %s, Memory: %s",
 		formatCPULimit(config), formatMemoryLimit(config))

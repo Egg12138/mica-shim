@@ -11,6 +11,7 @@ import (
 	utils "mica-shim/pkg/fileutils"
 	"mica-shim/pkg/libmica"
 	ped "mica-shim/pkg/pedestal"
+	"os"
 	"path/filepath"
 	"syscall"
 	"time"
@@ -138,8 +139,7 @@ type Container struct {
 
 	mounts []Mount
 	rootfs RootFs
-	// containerPath is the path to the container's directory: <sandboxID>/<containerID>.
-	// must be resolved, and stored as a absolute path!
+	// containerPath is the path relative to the root bundle: <sandboxID>/<containerID>.
 	containerPath string
 
 	state    ContainerState
@@ -180,9 +180,10 @@ func loadSandbox(ctx context.Context, id string) (sandbox *Sandbox, err error) {
 		return nil, er.ErrEmptySandboxID
 	}
 
+	log.Debugf("trying to restore sandbox from disk")
 	ss, err := RestoreSandbox(ctx, id)
 	if err != nil {
-		log.Errorf("failed to restore sandbox from disk: %v", err)
+		log.Debugf("failed to restore sandbox from disk: %v", err)
 		return nil, err
 	}
 	c := ss.Config
@@ -201,6 +202,7 @@ func loadSandbox(ctx context.Context, id string) (sandbox *Sandbox, err error) {
 
 // NOTICE: cleanup exclusively
 func CleanupContainer(ctx context.Context, sandboxID string, containerID string, force bool) error {
+	log.Debugf("cleaningup sandbox %s, container %s", sandboxID, containerID)
 	if sandboxID == "" {
 		return er.ErrEmptySandboxID
 	}
@@ -252,6 +254,7 @@ func newContainer(ctx context.Context, s *Sandbox, cc *ContainerConfig) (*Contai
 	}
 
 	if cc.ID == "" {
+		log.Debugf("empty container id")
 		return &Container{}, er.ErrEmptyContainerID
 	}
 
@@ -268,6 +271,7 @@ func newContainer(ctx context.Context, s *Sandbox, cc *ContainerConfig) (*Contai
 		taskInfo: RTOSTask{},
 		ctx:      s.ctx,
 	}
+
 
 	if !c.validMicaContainer() {
 		return nil, fmt.Errorf("invalid mica container: %v", c)
@@ -462,24 +466,35 @@ func validOS(os string) bool {
 	return ret
 }
 
-func validFirmware(root, firmware string) bool {
-	// firmware path: <bundle>/rootfs/<firmware>
-	resolved, err := utils.ResolvePath(filepath.Join(root, firmware))
-	if err != nil {
-		return false
+func validComponent(root,  component string) bool {
+	file := filepath.Join(root, component)
+	if utils.FileExist(file) {
+		log.Debugf("%s exist", file)
 	}
-	ret := utils.FileExist(resolved)
-	return ret
+	return utils.IsRegular(file)
+
+}
+
+func validFirmware(bundle, firmware string) bool {
+	// firmware path: <bundle>/rootfs/<firmware>
+	log.Debugf("fimware path: %s->%s", bundle, firmware)
+	if validComponent(filepath.Join(bundle, "rootfs"), firmware) {
+		log.Debug("firmware found")
+		return true
+	}
+	return false
 }
 
 // image.bin is For xen
-func validBinfile(root, binpath string) bool {
-	resolved, err := utils.ResolvePath(filepath.Join(root, binpath))
-	if err != nil {
-		return false
+// binpath: <bundle>/rootfs/<firmware>
+func validBinfile(bundle, binpath string) bool {
+	log.Debugf("xen bin path: %s->%s", bundle, binpath)
+
+	if validComponent(filepath.Join(bundle, "rootfs"), binpath) {
+		log.Debug("bin image found")
+		return true
 	}
-	ret := utils.FileExist(resolved)
-	return ret
+	return false
 }
 
 func validCompatibility(_ *ContainerConfig) bool {
@@ -490,11 +505,22 @@ func validCompatibility(_ *ContainerConfig) bool {
 // NOTICE: Xen is the only supported ped for now
 func (c *Container) validMicaContainer() bool {
 
+	cwd, _ := os.Getwd()
+	
+	// Debug: Log the actual values being retrieved
+	log.Debugf("validMicaContainer - Configuration dump:")
+	log.Debugf("  GetOS(): %s", c.GetOS())
+	log.Debugf("  GetFirmwarePath(): '%s'", c.GetFirmwarePath())
+	log.Debugf("  GetPedestalConf(): '%s'", c.GetPedestalConf())
+	log.Debugf("  Container config.ElfPath: '%s'", c.config.ElfPath)
+	log.Debugf("  Container config.PedestalConf: '%s'", c.config.PedestalConf)
+	log.Debugf("  Current working directory: %s", cwd)
+	
 	osValid := validOS(c.GetOS())
-	fwValid := validFirmware(c.containerPath, c.GetFirmwarePath())
+	fwValid := validFirmware(cwd, c.GetFirmwarePath())
 	if HostPedType == ped.Xen {
 		log.Infof("xen pedestal requires a image *.bin file for boot")
-		binFile := validBinfile(c.containerPath, c.GetPedestalConf())
+		binFile := validBinfile(cwd, c.GetPedestalConf())
 		fwValid = binFile && fwValid
 	}
 	compatValid := validCompatibility(c.config)

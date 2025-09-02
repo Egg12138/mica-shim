@@ -75,12 +75,13 @@ func create(ctx context.Context, s *shimService, r *taskAPI.CreateTaskRequest) (
 			return nil, err
 		}
 
+		_ = fileutils.Backup(r.Bundle)
 		rootfs.Mounted = true
 
 		defer func() {
 			if err != nil && rootfs.Mounted {
 				if errUmnt := mount.UnmountAll(rootfsPath, 0); errUmnt != nil {
-					log.Warnf("failed to cleanup rootfs mount: %w", errUmnt)
+					log.Warnf("failed to cleanup rootfs mount: %v", errUmnt)
 				}
 			}
 		}()
@@ -106,7 +107,7 @@ func create(ctx context.Context, s *shimService, r *taskAPI.CreateTaskRequest) (
 		defer func() {
 			if err != nil && rootfs.Mounted {
 				if errUmnt := mount.UnmountAll(rootfsPath, 0); errUmnt != nil {
-					log.Warnf("failed to cleanup rootfs mount: %w", errUmnt)
+					log.Warnf("failed to cleanup rootfs mount: %v", errUmnt)
 				}
 			}
 		}()
@@ -118,6 +119,7 @@ func create(ctx context.Context, s *shimService, r *taskAPI.CreateTaskRequest) (
 	default:
 		return nil, fmt.Errorf("unsupported container type: %v", containerType)
 	}
+
 
 	container, err := newContainer(s, r, containerType, ociSpec, rootfs.Mounted)
 	if err != nil {
@@ -214,13 +216,12 @@ func saveContainerState(c *cntr.Container) error {
 	return c.SaveState()
 }
 
-func mountRootfs(bundle string, rootfs []*types.Mount) error {
+func mountRootfs(rootfsPath string, rootfs []*types.Mount) error {
 	// NOTICE: only support one rootfs!
 	if len(rootfs) != 1 {
 		log.Warnf("only support one rootfs in bundle")
 	}
 
-	rootfsPath := filepath.Join(bundle, "rootfs")
 	if err := fileutils.MountDirs(rootfs, rootfsPath); err != nil {
 		return err
 	}
@@ -274,11 +275,14 @@ func createSandbox(ctx context.Context, ocispec *specs.Spec,
 		return nil, err
 	}
 
-	log.Debugf("sandbox <%s> created", sandbox.SandboxID)
+	log.Debugf("sandbox <%s> created", sandbox.SandboxID())
 	containers := sandbox.GetAllContainers()
 	log.Debugf("containers inside sandbox: %v", containers)
+	for _, c := range containers {
+		log.Debugf("container <%s> inside sandbox <%s>", c.ID(), sandbox.SandboxID())
+	}
 	if len(containers) != 1 {
-		return nil, fmt.Errorf("Container list from sandbox is wrong, expecting only one container, got %d", len(containers))
+		return nil, fmt.Errorf("container list from sandbox is wrong, expecting only one container, got %d", len(containers))
 	}
 
 	return sandbox, nil
@@ -288,6 +292,18 @@ func createSandbox(ctx context.Context, ocispec *specs.Spec,
 func createContainer(ctx context.Context, sandbox cntr.SandboxTraits,
 	ocispec specs.Spec, rootfs cntr.RootFs,
 	containerID, bundlePath string, disableOutput bool) error {
+
+	containerConfig, err := oci.ContainerConfig(containerID, bundlePath, ocispec, cntr.PodContainer, disableOutput)
+	if err != nil {
+		return fmt.Errorf("failed to create container config: %w", err)
+	}
+
+	containerConfig.Rootfs = rootfs
+
+	_, err = sandbox.CreateContainer(ctx, *containerConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create container in sandbox: %w", err)
+	}
 
 	return nil
 }

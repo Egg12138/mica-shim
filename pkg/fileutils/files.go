@@ -3,6 +3,7 @@ package fileutils
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	defs "mica-shim/definitions"
 	"os"
 	"path/filepath"
@@ -14,14 +15,32 @@ import (
 	log "mica-shim/logger"
 )
 
-func IsSymlink(path string) bool {
+
+func IsRegular(path string) bool {
 	stat, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return stat.Mode().IsRegular()
+}
+
+func IsFifo(path string) bool {
+	stat, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return stat.Mode()&os.ModeNamedPipe != 0
+}
+
+func IsSymlink(path string) bool {
+	stat, err := os.Lstat(path)
 	if err != nil {
 		return false
 	}
 	return stat.Mode()&os.ModeSymlink != 0
 }
 
+// return absolute and non-link path
 func ResolvePath(path string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("path must be specified")
@@ -105,6 +124,9 @@ func MkdirAllWithInheritedOwner(path string, perm os.FileMode) error {
 func RestoreStructFromJSON(file string) (any, error) {
 	content, err := os.ReadFile(file)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("failed to read file: %w", err)
 	}
 	var value any
@@ -116,6 +138,7 @@ func RestoreStructFromJSON(file string) (any, error) {
 }
 
 func SaveStructToJSON(file string, state any) error {
+	log.Debugf("***SAVING %T TO %s", state, file)
 	structBytes, err := json.Marshal(state)
 	if err != nil {
 		log.Pretty("err: %v, state: %v", err, state)
@@ -157,7 +180,7 @@ func MountDirs(mounts []*cdtypes.Mount, dest string) error {
 	if len(mounts) == 0 {
 		return nil
 	}
-
+	log.Debugf("mount to %s", dest)
 	if _, err := os.Stat(dest); os.IsNotExist(err) {
 		if err := os.Mkdir(dest, 0711); err != nil {
 			return err
@@ -174,6 +197,74 @@ func MountDirs(mounts []*cdtypes.Mount, dest string) error {
 			return fmt.Errorf("failed to mount: %v", m)
 		}
 	}
+
+	
 	return nil
 
+}
+func Backup(srcDir string) error {
+	backupDir := "/tmp/backupbundle"
+	
+	if err := os.MkdirAll(backupDir, 0755); err != nil {
+		return fmt.Errorf("failed to create backup directory: %w", err)
+	}
+	
+	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			log.Debugf("Warning: skipping %s due to error: %v\n", path, err)
+			return nil // Continue with other files
+		}
+		
+		if !IsRegular(path) && !info.IsDir(){
+			log.Debugf("Skipping %s\n", path)
+			return nil
+		}
+		
+		relPath, err := filepath.Rel(srcDir, path)
+		if err != nil {
+			return fmt.Errorf("failed to get relative path: %w", err)
+		}
+		
+		destPath := filepath.Join(backupDir, relPath)
+		
+		if info.IsDir() {
+			return os.MkdirAll(destPath, info.Mode())
+		}
+		
+		return copyFile(path, destPath, info.Mode())
+	})
+}
+
+// copyFile copies a single file from src to dst with the given permissions
+func copyFile(src, dst string, mode os.FileMode) error {
+	// Create destination directory if needed
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return fmt.Errorf("failed to create destination directory: %w", err)
+	}
+	
+	// Open source file
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("failed to open source file %s: %w", src, err)
+	}
+	defer srcFile.Close()
+	
+	// Create destination file
+	dstFile, err := os.Create(dst)
+	if err != nil {
+		return fmt.Errorf("failed to create destination file %s: %w", dst, err)
+	}
+	defer dstFile.Close()
+	
+	// Copy file contents
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		return fmt.Errorf("failed to copy file contents: %w", err)
+	}
+	
+	// Set file permissions
+	if err := os.Chmod(dst, mode); err != nil {
+		return fmt.Errorf("failed to set file permissions: %w", err)
+	}
+	
+	return nil
 }

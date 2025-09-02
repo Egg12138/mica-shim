@@ -179,6 +179,7 @@ func (s *shimService) Cleanup(ctx context.Context) (*taskAPI.DeleteResponse, err
 		return nil, err
 	}
 
+	log.Debugf("container type: %s, trying to cleanup it", ctype)
 	switch ctype {
 	case cntr.PodSandbox, cntr.SingleContainer:
 		err = cleanupContainer(ctx, s.id, s.id, cwd)
@@ -207,8 +208,9 @@ func (s *shimService) Cleanup(ctx context.Context) (*taskAPI.DeleteResponse, err
 
 // Cleanup a Container instance from a pod
 func cleanupContainer(ctx context.Context, sandboxID, containerID, bundle string) error {
+	log.Debugf("cleanup container from sandbox %s, and remove rootfs of container %s", sandboxID, containerID)
 	if err := cntr.CleanupContainer(ctx, sandboxID, containerID, false); err != nil {
-		return fmt.Errorf("failed to cleanup container %s: %w")
+		return fmt.Errorf("failed to cleanup container %s: %w", containerID, err)
 	}
 
 	rootfs := filepath.Join(bundle, "rootfs")
@@ -376,12 +378,6 @@ func (s *shimService) newEventsForwarder(ctx context.Context, publisher shimv2.P
 // forward listens for events and publishes them to containerd/isulad
 func (ef *eventsForwarder) forward() {
 	for e := range ef.service.events {
-		ctx, cancel := context.WithTimeout(ef.context, timeOut)
-		err := ef.publisher.Publish(ctx, getTopic(e), e)
-		cancel()
-		if err != nil {
-			log.Errorf("failed to post event, %w", err)
-		}
 		topic := getTopic(e)
 		if topic == cdruntime.TaskUnknownTopic {
 			log.Warnf("unknown event type, skipping: %v", e)
@@ -389,10 +385,12 @@ func (ef *eventsForwarder) forward() {
 		}
 
 		// Publish the event to containerd
-		if err := ef.publisher.Publish(ef.context, topic, e); err != nil {
+		ctx, cancel := context.WithTimeout(ef.context, timeOut)
+		if err := ef.publisher.Publish(ctx, topic, e); err != nil {
 			log.Errorf("failed to publish event topic=%s: %v", topic, err)
 		} else {
 			log.Debugf("Successfully forwarded event topic=%s", topic)
 		}
+		cancel()
 	}
 }

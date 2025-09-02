@@ -41,6 +41,7 @@ const (
 const (
 
 	// ini config keys in [Mica] section of client.conf
+	OSAnnotation = ContainerPrefix + "os"
 	FirmwarePath = PedConfPrefix + "firmware_path"
 	Pedtype      = PedConfPrefix + "pedestal"
 	Compat       = PedConfPrefix + "compatibility"
