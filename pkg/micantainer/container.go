@@ -312,7 +312,7 @@ func (c *Container) start(ctx context.Context) error {
 func (c *Container) create(ctx context.Context) error {
 
 	// TODO:  TOO many works
-	rtosTask, err := createContainerInSandbox(ctx, c.sandbox, c.config)
+	rtosTask, err := createContainerInSandbox(c.sandbox, c.config)
 	if err != nil {
 		return err
 	}
@@ -361,7 +361,10 @@ func (c *Container) kill() error {
 	if c.sandbox.state.State != StateReady && c.sandbox.state.State != StateRunning {
 		return fmt.Errorf("sandbox is not running or ready, can not signal container")
 	}
-	if c.state.State != StateRunning && c.state.State != StateReady && c.state.State != StatePaused {
+	log.Debugf("container state is %s", c.state.State)
+	if c.state.State != StateRunning &&
+		c.state.State != StateReady &&
+		c.state.State != StatePaused {
 		return fmt.Errorf("container is not running, ready or paused, can not be killed")
 	}
 
@@ -390,7 +393,6 @@ func (c *Container) delete(ctx context.Context) error {
 	if err := c.sandbox.removeContainer(c.id); err != nil {
 		return err
 	}
-
 	return c.sandbox.StoreSandbox(ctx)
 }
 
@@ -406,10 +408,11 @@ func (c *Container) pause(ctx context.Context) error {
 }
 
 func (c *Container) resume(ctx context.Context) error {
-	if c.state.State != StatePaused {
+	if c.state.State != StatePaused && c.sandbox.state.State != StateStopped {
 		return fmt.Errorf("container is not paused, cannot resume container")
 	}
-	err := libmica.Resume(c.id)
+	log.Infof("micran restart a client os, acting as `resume`")
+	err := libmica.Start(c.id)
 	if err != nil {
 		return er.ErrMicadFailed
 	}
@@ -468,33 +471,18 @@ func validOS(os string) bool {
 
 func validComponent(root,  component string) bool {
 	file := filepath.Join(root, component)
-	if utils.FileExist(file) {
-		log.Debugf("%s exist", file)
-	}
 	return utils.IsRegular(file)
 
 }
 
 func validFirmware(bundle, firmware string) bool {
-	// firmware path: <bundle>/rootfs/<firmware>
-	log.Debugf("fimware path: %s->%s", bundle, firmware)
-	if validComponent(filepath.Join(bundle, "rootfs"), firmware) {
-		log.Debug("firmware found")
-		return true
-	}
-	return false
+	return validComponent(filepath.Join(bundle, "rootfs"), firmware)
 }
 
 // image.bin is For xen
 // binpath: <bundle>/rootfs/<firmware>
 func validBinfile(bundle, binpath string) bool {
-	log.Debugf("xen bin path: %s->%s", bundle, binpath)
-
-	if validComponent(filepath.Join(bundle, "rootfs"), binpath) {
-		log.Debug("bin image found")
-		return true
-	}
-	return false
+	return validComponent(filepath.Join(bundle, "rootfs"), binpath)
 }
 
 func validCompatibility(_ *ContainerConfig) bool {
@@ -508,13 +496,13 @@ func (c *Container) validMicaContainer() bool {
 	cwd, _ := os.Getwd()
 	
 	// Debug: Log the actual values being retrieved
-	log.Debugf("validMicaContainer - Configuration dump:")
-	log.Debugf("  GetOS(): %s", c.GetOS())
-	log.Debugf("  GetFirmwarePath(): '%s'", c.GetFirmwarePath())
-	log.Debugf("  GetPedestalConf(): '%s'", c.GetPedestalConf())
-	log.Debugf("  Container config.ElfPath: '%s'", c.config.ElfPath)
-	log.Debugf("  Container config.PedestalConf: '%s'", c.config.PedestalConf)
-	log.Debugf("  Current working directory: %s", cwd)
+	// log.Debugf("validMicaContainer - Configuration dump:")
+	// log.Debugf("  GetOS(): %s", c.GetOS())
+	// log.Debugf("  GetFirmwarePath(): '%s'", c.GetFirmwarePath())
+	// log.Debugf("  GetPedestalConf(): '%s'", c.GetPedestalConf())
+	// log.Debugf("  Container config.ElfPath: '%s'", c.config.ElfPath)
+	// log.Debugf("  Container config.PedestalConf: '%s'", c.config.PedestalConf)
+	// log.Debugf("  Current working directory: %s", cwd)
 	
 	osValid := validOS(c.GetOS())
 	fwValid := validFirmware(cwd, c.GetFirmwarePath())

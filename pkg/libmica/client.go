@@ -6,6 +6,7 @@ import (
 	"fmt"
 	defs "mica-shim/definitions"
 	log "mica-shim/logger"
+	er "mica-shim/pkg/errors"
 	utils "mica-shim/pkg/fileutils"
 	"mica-shim/pkg/pedestal"
 	"path/filepath"
@@ -383,7 +384,7 @@ func CreateMicaClient(conf MicaClientConf) error {
 
 func MicaCtl(cmd MicaCommand, rawId string) error {
 	if !validSocketPath(defs.MicaCreatSocketPath) {
-		return fmt.Errorf("mica socket directory does not exist, please check if micad is running")
+		return er.ErrMicadNotRunning
 	}
 	// workaround: pause => stop
 	switch cmd {
@@ -396,7 +397,12 @@ func MicaCtl(cmd MicaCommand, rawId string) error {
 	}
 	shortId := utils.ShortID(rawId)
 	clientSocketPath := filepath.Join(defs.MicaStateDir, shortId+".socket")
-	s := newMicaSocket(clientSocketPath)
+	var s *micaSocket
+	if defs.IsMock {
+		s = newMicaSocket(defs.MicaCreatSocketPath)
+	} else {
+		s = newMicaSocket(clientSocketPath)
+	}
 	msg := string(cmd)
 	return s.handleMsg([]byte(msg))
 }
@@ -409,8 +415,12 @@ func Start(id string) error {
 }
 
 // TODO: Extend mica response data, loading more information
-// BUG: mica daemon stop command does not handle error, always return success
+// TODO: if client.socket does not exist, return nil; the logic is in dangerous, 
+// we have to make sure that client os is down really
 func Stop(id string) error {
+	if completelyDown(id) {
+		log.Infof("%s is already down, not need to stop it", id)
+	}
 	if err := MicaCtl(MStop, id); err != nil {
 		return fmt.Errorf("failed to stop mica client %s %w", id, err)
 	}
@@ -712,4 +722,17 @@ func ParseCPUString(cpuStr string) ([]int, error) {
 
 func success(res string) bool {
 	return res != "" && !strings.Contains(res, defs.MicaFailed) && !strings.Contains(res, "Error")
+}
+
+func completelyDown(id string) bool {
+	clientId := utils.ShortID(id)
+	socketPath := filepath.Join(defs.MicaStateDir, clientId+".socket")
+	valid := validSocketPath(socketPath)
+	log.Infof("check socket path: %s is valid=%s", socketPath, valid)
+	return !valid && isDown(id)
+}
+
+// TODO: check the client is really shutdown
+func isDown(_ string) bool {
+	return true
 }

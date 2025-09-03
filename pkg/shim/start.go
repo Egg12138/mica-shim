@@ -27,6 +27,7 @@ func startContainer(ctx context.Context, s *shimService, c *container) (retErr e
 	}
 
 	if c.cType.CanBeSandbox() {
+		log.Debugf("container %s can be sandbox, trying to start it now", c.id)
 		err := s.sandbox.Start(ctx)
 		if err != nil {
 			return err

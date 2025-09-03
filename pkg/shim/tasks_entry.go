@@ -107,6 +107,7 @@ func (s *shimService) Start(ctx context.Context, r *taskAPI.StartRequest) (*task
 			Pid:         s.shimPid,
 		})
 	} else {
+		log.Info("starting container ")
 		err := startContainer(ctx, s, c)
 		if err != nil {
 			return nil, errdefs.ToGRPC(err)
@@ -195,9 +196,12 @@ func (s *shimService) Pause(ctx context.Context, r *taskAPI.PauseRequest) (*ptyp
 		return emptyResponse, nil
 	}
 
-	if status, err := s.getContainerStatus(c.id); err != nil {
+	status, err := s.getContainerStatus(c.id)
+	if err != nil {
+		log.Debugf("failed to getcontaienr status, now status is %s, due to %v", status, err)
 		c.status = task.Status_UNKNOWN
 	} else {
+		log.Debugf("succeffully getcontaienr status, now status is %s", status)
 		c.status = status
 	}
 
@@ -205,6 +209,11 @@ func (s *shimService) Pause(ctx context.Context, r *taskAPI.PauseRequest) (*ptyp
 
 }
 
+// NOTICE:mica differs from other isolation strategies (like namespace, cgroup, VM, etc.) - mica launches a client OS via pedestal
+// to execute a highly secure application; this application's lifecycle is completely aligned with the client OS
+// This OS is typically a realtime OS, where pause/resume operations are generally not desired, so we implement pause as stop
+// and resume as client OS boot.
+// Additionally, current mica client registration has some overhead, so we recommend users restart client OS via `ctr task resume`.
 func (s *shimService) Resume(ctx context.Context, r *taskAPI.ResumeRequest) (*ptypes.Empty, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -241,37 +250,53 @@ func (s *shimService) Kill(ctx context.Context, r *taskAPI.KillRequest) (*ptypes
 	signum := syscall.Signal(r.Signal)
 
 	c, ok := s.containers[r.ID]
-	if c == nil || !ok {
+	if !ok {
 		return nil, er.ErrContainerNotFound
 	}
 
 	// reject kill request for some exec process in a container due to micran 1:1:1 model
 	// if r.All = true, we can pass the signal to the container
-	if r.ExecID != "" && r.All == false {
-		log.Warnf("container %s has no exec process %s", r.ID, r.ExecID)
+	if r.ExecID != "" && !r.All {
+		log.Infof("container %s has no exec process %s", r.ID, r.ExecID)
 		return emptyResponse, nil
 	}
 
 	switch signum {
-	case syscall.SIGKILL | syscall.SIGTERM:
+	case syscall.SIGKILL, syscall.SIGTERM:
 		if c.status == task.Status_STOPPED {
 			log.Infof("container %s already stopped", c.id)
 			return emptyResponse, nil
 		}
 		log.Debugf("in sandbox <%s>, tring to kill container %s", s.id, c.id)
-		container, err := s.sandbox.KillContainer(ctx, c.id)
+		killed, err := s.sandbox.KillContainer(ctx, c.id)
 		if err != nil {
-			log.Pretty("kill container failed %v", container.State())
+			log.Pretty("kill container failed %v", err)
+			st, err1 := s.getContainerStatus(c.id)
+			if err1 != nil {
+				log.Debugf("failed to get Container status: %v, mark status to UNKNOWN", err1)
+				c.status = task.Status_UNKNOWN
+			} else {
+				c.status = st
+			}
 			return nil, err
 		}
+		c.status = task.Status_STOPPED
+		log.Pretty("killed contaienr %v", killed.Status())
 		return emptyResponse, nil
-	case syscall.SIGSTOP | syscall.SIGCONT:
-		if c.status == task.Status_PAUSING {
-			log.Infof("container %s pausing, wait for pausing done")
+	case syscall.SIGSTOP, syscall.SIGCONT:
+		if c.status == task.Status_PAUSING || c.status == task.Status_STOPPED {
+			log.Infof("container %s pausing or stopped, can not task action", c.id)
 			return emptyResponse, nil
 		}
 		if err := s.sandbox.PauseContainer(ctx, c.id); err != nil {
 			log.Debugf("sandbox pause container %s failed %v", c.id, err)
+			st, err1 := s.getContainerStatus(c.id)
+			if err1 != nil {
+				c.status = task.Status_UNKNOWN
+			} else {
+				c.status = st
+			}
+			return nil, err
 		}
 	default:
 		return emptyResponse, nil

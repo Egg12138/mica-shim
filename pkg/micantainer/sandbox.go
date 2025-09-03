@@ -99,7 +99,7 @@ func (s *SandboxState) Valid() bool {
 }
 
 func (s *SandboxState) Transition(old StateString, new StateString) error {
-	if s.Valid() {
+	if !s.Valid() {
 		return fmt.Errorf("invalid state: %v", s)
 	}
 
@@ -119,7 +119,7 @@ func (s *StateString) valid() bool {
 
 func (s *StateString) validTransition(old StateString, new StateString) error {
 	if *s != old {
-		return fmt.Errorf("invalid state: %v (expected: %v)", s, old)
+		return fmt.Errorf("invalid state: %s (expected: %v)", *s, old)
 	}
 
 	switch *s {
@@ -926,7 +926,6 @@ func (s *Sandbox) postNetworkCreated() error {
 
 // add containers to sandbox
 func (s *Sandbox) initContainers(ctx context.Context) error {
-	log.Pretty("initContainers: %v", s.config.ContainerConfigs)
 	for _, cc := range s.config.ContainerConfigs {
 		c, err := newContainer(ctx, s, cc)
 		if err != nil {

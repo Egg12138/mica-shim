@@ -183,11 +183,11 @@ func watchSandbox(ctx context.Context, s *shimService) {
 	log.Debugf("trying to clean up containers resource inside sandbox %s", s.sandbox.SandboxID())
 	err = s.sandbox.Stop(ctx, true)
 	if err != nil {
-		log.Warnf("stop sandbox failed: %w", err)
+		log.Warnf("stop sandbox failed: %v", err)
 	}
 	err = s.sandbox.Delete(ctx)
 	if err != nil {
-		log.Warnf("delete sandbox failed: %w", err)
+		log.Warnf("delete sandbox failed: %v", err)
 	}
 
 	for _, c := range s.containers {

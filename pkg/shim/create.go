@@ -75,7 +75,8 @@ func create(ctx context.Context, s *shimService, r *taskAPI.CreateTaskRequest) (
 			return nil, err
 		}
 
-		_ = fileutils.Backup(r.Bundle)
+		fileutils.TravelDir(r.Bundle)
+
 		rootfs.Mounted = true
 
 		defer func() {
@@ -277,9 +278,8 @@ func createSandbox(ctx context.Context, ocispec *specs.Spec,
 
 	log.Debugf("sandbox <%s> created", sandbox.SandboxID())
 	containers := sandbox.GetAllContainers()
-	log.Debugf("containers inside sandbox: %v", containers)
 	for _, c := range containers {
-		log.Debugf("container <%s> inside sandbox <%s>", c.ID(), sandbox.SandboxID())
+		log.Infof("detect inside sandbox <%s>: container %s", c.ID(), sandbox.SandboxID())
 	}
 	if len(containers) != 1 {
 		return nil, fmt.Errorf("container list from sandbox is wrong, expecting only one container, got %d", len(containers))

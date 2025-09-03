@@ -7,6 +7,7 @@ import (
 	defs "mica-shim/definitions"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	cdtypes "github.com/containerd/containerd/api/types"
@@ -219,6 +220,7 @@ func Backup(srcDir string) error {
 			log.Debugf("Skipping %s\n", path)
 			return nil
 		}
+
 		
 		relPath, err := filepath.Rel(srcDir, path)
 		if err != nil {
@@ -227,6 +229,7 @@ func Backup(srcDir string) error {
 		
 		destPath := filepath.Join(backupDir, relPath)
 		
+		log.Debugf("copy %s to %s", relPath, destPath)
 		if info.IsDir() {
 			return os.MkdirAll(destPath, info.Mode())
 		}
@@ -267,4 +270,27 @@ func copyFile(src, dst string, mode os.FileMode) error {
 	}
 	
 	return nil
+}
+
+func TravelDir(root string) error {
+	return filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		relPath, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+
+		depth := 0
+		if relPath != "." {
+			depth = len(strings.Split(relPath, string(os.PathSeparator)))
+		}
+
+		indent := strings.Repeat("  ", depth)
+		log.Debugf("%s%s", indent, info.Name())
+
+		return nil
+	})
 }

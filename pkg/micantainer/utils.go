@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func createContainerInSandbox(ctx context.Context, sandbox SandboxTraits, config *ContainerConfig) (*RTOSTask, error) {
+func createContainerInSandbox(sandbox SandboxTraits, config *ContainerConfig) (*RTOSTask, error) {
 	// Create a new RTOS task with current time as start time
 	task := &RTOSTask{
 		StartTime:    time.Now(),
@@ -33,6 +33,12 @@ func startClient(ctx context.Context, sandbox SandboxTraits, c *Container) error
 	if err = libmica.Create(conf); err != nil {
 		return err
 	}
+	
+	// Start the RTOS client
+	if err = libmica.Start(c.ID()); err != nil {
+		return err
+	}
+	
 	return nil
 }
 

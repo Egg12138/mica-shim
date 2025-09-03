@@ -18,6 +18,7 @@ const (
 	Xen PedType = iota
 	FusionDock
 	ACRN
+	Baremetal
 	Unsupported
 )
 
@@ -116,4 +117,10 @@ func checkXLCommand() error {
 
 func detectACRN() bool {
 	return false
+}
+
+// TODO: use interface to handle so many different pedestal
+type PedTraits interface {
+	ToString() string
+	GeneratePedConf() (PedConfig, error)
 }

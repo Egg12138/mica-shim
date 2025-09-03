@@ -80,6 +80,7 @@ func bundleRootfs(bundle string) string {
 }
 
 func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerType, detach bool) (*cntr.ContainerConfig, error) {
+	fileutils.TravelDir(bundle)
 	configPath := filepath.Join(bundleRootfs(bundle), defs.DefaultClientConf)
 	log.Debugf("config path = %s", configPath)
 	micaConf, err := fileutils.ParseConfigINI(configPath)
@@ -87,13 +88,12 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 	
 	// Debug: Check if file exists and list all parsed keys
 	if _, err := os.Stat(configPath); err == nil {
-		log.Debugf("client.conf file exists at: %s", configPath)
 		log.Debugf("Parsed %d keys from client.conf:", len(micaConf))
 		for k, v := range micaConf {
 			log.Debugf("  '%s' = '%s'", k, v)
 		}
 	} else {
-		log.Debugf("client.conf file does not exist at: %s", configPath)
+		log.Debugf("%s file does not exist at: %s", defs.DefaultClientConf, configPath)
 	}
 	if err != nil {
 		return nil, err
@@ -104,9 +104,9 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 	if pedtype == pedestal.Xen {
 		if cfg, ok := micaConf[defs.PedCfg]; ok && cfg != "" {
 			pedconf = cfg
-			log.Debugf("pedestal config for xen is the location of <image>.bin: %s", pedconf)
+			log.Debugf("pedestal config for xen is the location of <image.bin>: %s", pedconf)
 		} else {
-			log.Debugf("default pedestal config for xen is the location of <image>.bin: %s", pedconf)
+			log.Debugf("use default pedestal config for xen <image.bin>: %s", pedconf)
 			pedconf = pedestal.XenDefaultPedConf()
 		}
 	}
@@ -182,7 +182,7 @@ func SandboxConfig(ocispec *specs.Spec, rc RuntimeConfig, bundle, sbContainerID 
 	ped := cntr.HostPedType
 	if ped == pedestal.Xen {
 		pedcfg := filepath.Join(bundleRootfs(bundle), defs.DefaultXenBin)
-		log.Debugf("pedestal config for xen is the location of <image>.bin: %s", pedcfg)
+		log.Debugf("pedestal config for xen is the location of <image.bin>: %s", pedcfg)
 	}
 
 	sandboxConfig := cntr.SandboxConfig{
@@ -203,6 +203,7 @@ func SandboxConfig(ocispec *specs.Spec, rc RuntimeConfig, bundle, sbContainerID 
 
 		EnableVCPUsPining: false,
 	}
+	log.Pretty("sandbox config => %v", sandboxConfig)	
 
 	return sandboxConfig, nil
 }

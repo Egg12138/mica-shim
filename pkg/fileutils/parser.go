@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	defs "mica-shim/definitions"
+	log "mica-shim/logger"
 	"os"
 	"strings"
 )
@@ -76,6 +77,8 @@ func ParseConfigINI(configPath string) (map[string]string, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("error reading mica config file: %v", err)
 	}
+
+	log.Pretty("parsed ini conf: %v", parsedFields)
 
 	return parsedFields, nil
 }

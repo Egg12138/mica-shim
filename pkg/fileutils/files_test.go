@@ -138,7 +138,7 @@ func TestRestoreStructFromFile(t *testing.T) {
 		nonExistentFile := filepath.Join(tempDir, "non_existent.json")
 		_, err := RestoreStructFromJSON(nonExistentFile)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to read file")
+		assert.True(t, os.IsNotExist(err), "error should be a not exist error")
 	})
 
 	t.Run("should handle invalid JSON file", func(t *testing.T) {
@@ -303,4 +303,42 @@ func TestStoreAndRestoreMockSandboxStorage(t *testing.T) {
 	require.True(t, ok, "Network should be a map")
 	assert.Equal(t, testSandboxStorage.Network.NetworkID, network["network_id"])
 	assert.Equal(t, testSandboxStorage.Network.NetworkCreated, network["network_created"])
+}
+
+func TestTravelDir(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "traveldir_test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
+
+	// Create a nested directory structure
+	dir1 := filepath.Join(tempDir, "dir1")
+	dir2 := filepath.Join(dir1, "dir2")
+	err = os.MkdirAll(dir2, 0755)
+	require.NoError(t, err)
+
+	// Create some files
+	_, err = os.Create(filepath.Join(dir1, "file1.txt"))
+	require.NoError(t, err)
+	_, err = os.Create(filepath.Join(dir2, "file2.txt"))
+	require.NoError(t, err)
+	_, err = os.Create(filepath.Join(tempDir, "file3.txt"))
+	require.NoError(t, err)
+
+	// The TravelDir function logs to debug, so we can't easily capture output.
+	// We'll just test that it runs without error on a valid directory.
+	err = TravelDir(tempDir)
+	assert.NoError(t, err)
+
+	// Test with a non-existent directory
+	err = TravelDir(filepath.Join(tempDir, "non_existent_dir"))
+	assert.Error(t, err)
+
+	// Test with a symbolic link to the current directory to check for infinite loops
+	symlinkPath := filepath.Join(dir2, "loop_link")
+	err = os.Symlink(".", symlinkPath)
+	require.NoError(t, err)
+
+	// TravelDir should not follow the symlink and should complete without error.
+	err = TravelDir(tempDir)
+	assert.NoError(t, err, "TravelDir should not get stuck in a symlink loop")
 }
