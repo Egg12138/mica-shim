@@ -80,7 +80,6 @@ func bundleRootfs(bundle string) string {
 }
 
 func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerType, detach bool) (*cntr.ContainerConfig, error) {
-	fileutils.TravelDir(bundle)
 	configPath := filepath.Join(bundleRootfs(bundle), defs.DefaultClientConf)
 	log.Debugf("config path = %s", configPath)
 	micaConf, err := fileutils.ParseConfigINI(configPath)
@@ -203,7 +202,6 @@ func SandboxConfig(ocispec *specs.Spec, rc RuntimeConfig, bundle, sbContainerID 
 
 		EnableVCPUsPining: false,
 	}
-	log.Pretty("sandbox config => %v", sandboxConfig)	
 
 	return sandboxConfig, nil
 }

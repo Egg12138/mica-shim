@@ -353,9 +353,14 @@ func ioCopy(exitch, stdinCloser chan struct{}, tty *ttyIO, stdinPipe io.WriteClo
 }
 
 func waitContainerExit(ctx context.Context, s *shimService, c *container) (int32, error) {
-	// Wait for IO streams to close
-	<-c.exitIOch
-	log.WithField("container", c.id).Debug("The container IO streams closed")
+	// Wait for IO streams to close, or mock an exit after timeout since micad can't detect client OS exit yet
+	const mockExitTimeout = 5 * time.Second
+	select {
+	case <-c.exitIOch:
+		log.WithField("container", c.id).Debug("The container IO streams closed")
+	case <-time.After(mockExitTimeout):
+		log.WithField("container", c.id).Infof("No IO activity; mock exit after %s", mockExitTimeout)
+	}
 
 	ret, err := s.sandbox.WaitTaskExit(ctx, c.id, c.id)
 	if err != nil {

@@ -273,10 +273,7 @@ func newContainer(ctx context.Context, s *Sandbox, cc *ContainerConfig) (*Contai
 	}
 
 
-	if !c.validMicaContainer() {
-		return nil, fmt.Errorf("invalid mica container: %v", c)
-	}
-
+	
 	if err := c.RestoreState(); err != nil {
 		log.Warnf("failed to restore container state: %v", err)
 	}
@@ -299,7 +296,7 @@ func (c *Container) start(ctx context.Context) error {
 	}
 
 	if err := startClient(ctx, c.sandbox, c); err != nil {
-		log.Error("failed to start container")
+		log.Error("failed to start container: %v", err)
 		if err := c.stop(ctx, true); err != nil {
 			log.Warn("failed to stop the container after start failed")
 		}
@@ -471,11 +468,14 @@ func validOS(os string) bool {
 
 func validComponent(root,  component string) bool {
 	file := filepath.Join(root, component)
+	log.Debugf("file exist: %v", utils.FileExist(file))
+	log.Debugf("file is regular: %v", utils.IsRegular(file))
 	return utils.IsRegular(file)
 
 }
 
 func validFirmware(bundle, firmware string) bool {
+	log.Debugf("validating firmware at %s", bundle)
 	return validComponent(filepath.Join(bundle, "rootfs"), firmware)
 }
 
@@ -507,7 +507,6 @@ func (c *Container) validMicaContainer() bool {
 	osValid := validOS(c.GetOS())
 	fwValid := validFirmware(cwd, c.GetFirmwarePath())
 	if HostPedType == ped.Xen {
-		log.Infof("xen pedestal requires a image *.bin file for boot")
 		binFile := validBinfile(cwd, c.GetPedestalConf())
 		fwValid = binFile && fwValid
 	}

@@ -728,7 +728,7 @@ func completelyDown(id string) bool {
 	clientId := utils.ShortID(id)
 	socketPath := filepath.Join(defs.MicaStateDir, clientId+".socket")
 	valid := validSocketPath(socketPath)
-	log.Infof("check socket path: %s is valid=%s", socketPath, valid)
+	log.Infof("check socket path: %s is valid=%t", socketPath, valid)
 	return !valid && isDown(id)
 }
 

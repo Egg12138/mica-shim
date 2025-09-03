@@ -16,6 +16,7 @@ func deleteContainer(ctx context.Context, s *shimService, c *container) error {
 		return nil
 	}
 
+	// forcely delete pod containers
 	if !c.cType.CanBeSandbox() {
 		if c.status != task.Status_STOPPED {
 			if _, err := s.sandbox.StopContainer(ctx, c.id, false); err != nil && errors.Is(err, er.ErrContainerNotFound) {

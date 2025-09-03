@@ -26,6 +26,7 @@ func startContainer(ctx context.Context, s *shimService, c *container) (retErr e
 		return err
 	}
 
+	log.Debug("sandbox is about to start container")
 	if c.cType.CanBeSandbox() {
 		log.Debugf("container %s can be sandbox, trying to start it now", c.id)
 		err := s.sandbox.Start(ctx)
@@ -41,7 +42,9 @@ func startContainer(ctx context.Context, s *shimService, c *container) (retErr e
 		}
 	}
 
+	oldst := c.status
 	c.status = task.Status_RUNNING
+	log.Debugf("container status from %s => %s ", oldst, c.status)
 	stdin, stdout, stderr, err := s.sandbox.IOStream(c.id, c.id)
 	if err != nil {
 		return err

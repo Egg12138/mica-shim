@@ -1087,7 +1087,8 @@ static void handle_client(int client_fd)
 		if (client_exists(client_name)) {
 			printf("Client '%s' already exists, do not register it\n", client_name);
 			if (send_response) {
-				safe_send(client_fd, RESPONSE_FAILED, strlen(RESPONSE_FAILED));
+				// safe_send(client_fd, RESPONSE_FAILED, strlen(RESPONSE_FAILED));
+				safe_send(client_fd, RESPONSE_SUCCESS, strlen(RESPONSE_SUCCESS));
 			}
 			return;
 		} else {

@@ -3,6 +3,7 @@ package micantainer
 import (
 	"context"
 	"fmt"
+	defs "mica-shim/definitions"
 	log "mica-shim/logger"
 	"mica-shim/pkg/libmica"
 	"os"
@@ -24,21 +25,27 @@ func createContainerInSandbox(sandbox SandboxTraits, config *ContainerConfig) (*
 }
 
 func startClient(ctx context.Context, sandbox SandboxTraits, c *Container) error {
-	// TODO"
 	conf, err := createMicaConf(c)
 	if err != nil {
 		return err
 	}
 
+	log.Infof("startClient: container=%s socket=%s mock=%t", c.ID(), defs.MicaCreatSocketPath, defs.IsMock)
+
+	start := time.Now()
 	if err = libmica.Create(conf); err != nil {
+		log.Errorf("startClient: Create failed: %v", err)
 		return err
 	}
-	
-	// Start the RTOS client
+	log.Infof("startClient: Create OK in %s", time.Since(start))
+
+	start = time.Now()
 	if err = libmica.Start(c.ID()); err != nil {
+		log.Errorf("startClient: Start failed: %v", err)
 		return err
 	}
-	
+	log.Infof("startClient: Start OK in %s", time.Since(start))
+
 	return nil
 }
 

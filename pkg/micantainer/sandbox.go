@@ -123,6 +123,10 @@ func (s *StateString) validTransition(old StateString, new StateString) error {
 	}
 
 	switch *s {
+	case StateCreating:
+		if new == StateStopped {
+			return nil
+		}
 	case StateReady:
 		if new == StateRunning || new == StateStopped {
 			return nil
@@ -227,14 +231,45 @@ func (s *Sandbox) GetContainer(id string) ContainerTraits {
 
 // status of containers and sandbox itself;
 func (s *Sandbox) Start(ctx context.Context) error {
-	if err := s.state.Transition(StateReady, StateRunning); err != nil {
+	cur := s.state.State
+	log.Infof("Start(): current sandbox state=%s", cur)
+
+	// If restored as 'creating', normalize to 'ready' before starting
+	if cur == StateCreating {
+		if err := s.setSandboxState(StateReady); err != nil {
+			return err
+		}
+		cur = s.state.State
+	}
+
+	// If already running, ensure all containers are running
+	if cur == StateRunning {
+		log.Infof("sandbox %s is already running; ensuring containers are running", s.id)
+		for _, c := range s.containers {
+			if c.state.State != StateRunning {
+				if err := c.start(ctx); err != nil {
+					return err
+				}
+			}
+		}
+		if err := s.StoreSandbox(ctx); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	// Perform state transition based on actual current state
+	if err := s.state.Transition(cur, StateRunning); err != nil {
+		log.Infof("transition error: from=%s to=%s", cur, StateRunning)
 		return err
 	}
 
-	oldState := s.state.State
+	oldState := cur
 	if err := s.setSandboxState(StateRunning); err != nil {
+		log.Info("setstate error")
 		return err
 	}
+	log.Infof("1, state from %s => %s", oldState, s.state.State)
 
 	var startErr error
 	defer func() {
@@ -248,6 +283,7 @@ func (s *Sandbox) Start(ctx context.Context) error {
 		}
 	}
 
+	log.Info("2.")
 	if err := s.StoreSandbox(ctx); err != nil {
 		return err
 	}
@@ -335,6 +371,15 @@ func (s *Sandbox) CreateContainer(ctx context.Context, config ContainerConfig) (
 	}()
 
 	c, err := newContainer(ctx, s, newc)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Validate the container after creation but before starting
+	if !c.validMicaContainer() {
+		return nil, fmt.Errorf("invalid mica container: %v", c)
+	}
+	
 	if err = c.create(ctx); err != nil {
 		return nil, err
 	}
@@ -408,7 +453,6 @@ func (s *Sandbox) removeContainer(containerID string) error {
 	}
 
 	delete(s.containers, containerID)
-	delete(s.config.ContainerConfigs, containerID)
 	return nil
 }
 
@@ -425,9 +469,12 @@ func (s *Sandbox) DeleteContainer(ctx context.Context, id string) (ContainerTrai
 	if !ok {
 		return nil, er.ErrContainerNotFound
 	}
+
 	if err := c.delete(ctx); err != nil {
 		return nil, err
 	}
+
+	delete(s.config.ContainerConfigs, id)
 
 	if err := s.checkVCPUsPinning(ctx); err != nil {
 		return nil, err
@@ -562,6 +609,13 @@ func (s *Sandbox) GetOOMEvent(ctx context.Context) (string, error) {
 // TODO: aftet unified micran and micad, we can achive sending signals to RTOS clients
 // NOTICE: container == task == RTOS Client
 func (s *Sandbox) WaitTaskExit(ctx context.Context, containerID string, taskid string) (int32, error) {
+	// In mock mode, don't block or attempt to stop the client here.
+	// Let the shim's waitContainerExit drive lifecycle and timing.
+	if defs.IsMock {
+		log.Infof("WaitTaskExit(mock): container=%s task=%s", containerID, taskid)
+		return ok0, nil
+	}
+
 	if s.state.State != StateRunning {
 		return ok0, er.ErrSandboxDown
 	}
@@ -931,6 +985,12 @@ func (s *Sandbox) initContainers(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		
+		// Validate the container after creation but before starting
+		if !c.validMicaContainer() {
+			return fmt.Errorf("invalid mica container: %v", c)
+		}
+		
 		if err := c.create(ctx); err != nil {
 			return err
 		}

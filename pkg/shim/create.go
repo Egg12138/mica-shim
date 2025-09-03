@@ -75,7 +75,6 @@ func create(ctx context.Context, s *shimService, r *taskAPI.CreateTaskRequest) (
 			return nil, err
 		}
 
-		fileutils.TravelDir(r.Bundle)
 
 		rootfs.Mounted = true
 

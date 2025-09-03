@@ -15,21 +15,24 @@
 - [x] libmica.stop 在socket不存在时，不应该错误(workaround)
 - [x] 状态一致性问题严重
 - [x] stop没有发送libmica.stop
-- [ ] `ctr task start demo` 没有自动执行完
-- [ ] kill如果正常执行，可以保证幂等，然而如果kill的是UNKNOWN状态的容器，会[3] container not found, mark status to UNKNOWN
+- [x] libmica.start 没有发送出去
+- [x] `ctr task start demo` 卡住
+- [ ] ==我们需要MICA monitor==
+- [ ] kill如果正常执行，可以保证**幂等**，然而如果kill的是UNKNOWN状态的容器，会[3] container not found, mark status to UNKNOWN
+- [ ] pod container corner cases
+- [ ] kubectl pods status inconsistency
+
 
 
 
 # flaws
 
+- [x] delete 时bundle位置不当，validMicantainer失败
+- [x] pause -> stop ; resume -> start 的转发
 - [x]. sandbox.Restore() 空指针解引用
 - [x] ctr t task demo: [2] empty container id: unknown
-
-```go
-newContainer recover container from containerconfig, the id is empty
-```
-
-- [ ] `ctr t start demo` invalid state: runnign (expected: ready)
+- [ ] sandbox state.json is not cleared
+- [x] `ctr t start demo` invalid state: runnign (expected: ready)
 - [x] bundle rootfs 全空
 - [x] clientpath这一项解析为空
 - [x] clientpath firmwarepath的值如果是绝对路径开头的，要处理掉

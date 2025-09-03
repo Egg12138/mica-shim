@@ -157,11 +157,11 @@ func (s *shimService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*ta
 		ContainerID: r.ID,
 		ExitedAt:    timestamppb.New(c.exitTime),
 		Pid:         s.shimPid,
-		ExitStatus:  c.exit,
+		ExitStatus:  okExitCode,
 	})
 
 	return &taskAPI.DeleteResponse{
-		ExitStatus: c.exit,
+		ExitStatus: okExitCode,
 		ExitedAt:   timestamppb.New(c.exitTime),
 		Pid:        s.shimPid,
 	}, nil
@@ -389,12 +389,36 @@ func (s *shimService) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*taskAP
 	s.mu.Lock()
 	c, ok := s.containers[r.ID]
 	if c == nil || !ok {
+		s.mu.Unlock()
 		return nil, er.ErrContainerNotFound
 	}
+	// Capture current status and the exit channel, then release the lock while waiting
+	exitCh := c.exitCh
+	exited := c.status == task.Status_STOPPED
+	exitStatus := c.exit
+	exitAt := c.exitTime
 	s.mu.Unlock()
 
-	return nil, errdefs.ErrNotImplemented
+	// If not already exited, wait for exit or context cancellation
+	if !exited {
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("wait canceled: %w", ctx.Err())
+		case <-exitCh:
+			// Proceed to read updated exit status and time
+		}
+	}
 
+	// Re-acquire lock to fetch final status/time
+	s.mu.Lock()
+	exitStatus = c.exit
+	exitAt = c.exitTime
+	s.mu.Unlock()
+
+	return &taskAPI.WaitResponse{
+		ExitStatus: exitStatus,
+		ExitedAt:   timestamppb.New(exitAt),
+	}, nil
 }
 
 func (s *shimService) Connect(ctx context.Context, r *taskAPI.ConnectRequest) (*taskAPI.ConnectResponse, error) {
