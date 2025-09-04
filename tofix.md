@@ -58,4 +58,18 @@ case "types.containerd.io/LinuxResources":
 case "vendor.example.com/GPUResources":
     // 自定义 GPU 资源
   }
+
+// k8s proto:
+message UpdateContainerResourcesRequest {
+    // ID of the container to update.
+    string container_id = 1;
+    // Resource configuration specific to Linux containers.
+    LinuxContainerResources linux = 2;
+    // Resource configuration specific to Windows containers.
+    WindowsContainerResources windows = 3;
+    // Unstructured key-value map holding arbitrary additional information for
+    // container resources updating. This can be used for specifying experimental
+    // resources to update or other options to use when updating the container.
+    map<string, string> annotations = 4;
+}
 ```
