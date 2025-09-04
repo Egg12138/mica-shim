@@ -691,6 +691,20 @@ func (s *Sandbox) ResumeContainer(ctx context.Context, id string) error {
 
 func (s *Sandbox) UpdateContainer(ctx context.Context, id string, resources specs.LinuxResources) error {
 	log.Debugf("Updated container %v resources", resources)
+	c, ok := s.containers[id]
+	if !ok {
+		return er.ErrContainerNotFound
+	}
+
+	if err := c.update(ctx, resources); err != nil {
+		log.Errorf("failed to update container resources: %v", resources)
+		return err
+	}
+
+	if err := s.StoreSandbox(ctx); err != nil {
+		log.Error("failed to store sandbox after update container resource")
+		return err
+	}
 	return nil
 }
 

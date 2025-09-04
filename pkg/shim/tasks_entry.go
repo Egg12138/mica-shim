@@ -10,6 +10,8 @@ import (
 	"syscall"
 
 	"github.com/containerd/containerd/api/events"
+	"github.com/containerd/typeurl/v2"
+	"github.com/opencontainers/runtime-spec/specs-go"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	taskAPI "github.com/containerd/containerd/api/runtime/task/v2"
@@ -379,9 +381,31 @@ func (s *shimService) Checkpoint(ctx context.Context, r *taskAPI.CheckpointTaskR
 	return nil, errdefs.ToGRPCf(errdefs.ErrNotImplemented, "service Checkpoint")
 }
 
+// URGE: implement update task
 func (s *shimService) Update(ctx context.Context, r *taskAPI.UpdateTaskRequest) (*ptypes.Empty, error) {
-	log.Debugf("update task: %v", r.Annotations)
-	log.Warnf("micran does not support updating container resources yet")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.containers[r.ID]
+	if c == nil || !ok {
+		return nil, er.ErrContainerNotFound
+	}
+
+	var res *specs.LinuxResources
+	raw, err := typeurl.UnmarshalAny(r.Resources)
+	if err != nil {
+		return nil, err
+	}
+
+	res, ok = raw.(*specs.LinuxResources)
+	if !ok {
+		return nil, errdefs.ToGRPCf(errdefs.ErrInvalidArgument, "Invalid resources type for %s", s.id)
+	}
+	log.Infof("update task annotations: %v", r.Annotations)
+	log.Infof("update task resource: %v", res)
+	err = s.sandbox.UpdateContainer(ctx, r.ID, *res)
+	if err != nil {
+		return nil, errdefs.ToGRPC(err)
+	}
 	return emptyResponse, nil
 }
 

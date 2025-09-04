@@ -416,6 +416,12 @@ func (c *Container) resume(ctx context.Context) error {
 	return c.setContainerState(ctx, StateRunning)
 }
 
+// TODO: container update resource
+func (c *Container) update(ctx context.Context, resources specs.LinuxResources) error {
+	log.Info("container dummy resource updated")
+	return nil
+}
+
 func (c *Container) ID() string {
 	return c.id
 }
