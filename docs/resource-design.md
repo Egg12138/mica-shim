@@ -1,10 +1,199 @@
 # Resource Design
 
-## k8s Limit Ranges
+## containerd 资源管理
+
+我们来看这样一个例子：
+
+```shell
+# --cpu-quota=50000  -> 允许在 100000 微秒 (period) 内使用 50000 微秒，即 0.5 CPU
+# --cpu-period=100000
+# --memory-limit=134217728 -> 128 * 1024 * 1024 = 134217728 字节
+ctr run \
+  --rm \
+  --with-ns "pid:" \
+  --with-ns "cgroup:" \
+  --cpu-quota 50000 \
+  --cpu-period 100000 \
+  --memory-limit 134217728 \
+  docker.io/polinux/stress:latest \
+  stress-test-container \
+  stress --cpu 2 --vm 1 --vm-bytes 256M
+```
+
+### ctr/crictl的控制 选项 / 容器 cgroup 资源绑定 的预期
+
+
+`--cpu-shares` cgroup cpu.shares; 
+对应物： `xen cpu.weight`
+
+micran的cpu亲和性以及算力限制的控制能力的预期，是略逊于 runc 所能做到的程度。我们先评估：
+1. runc, cpuset 对性能和核可见性的影响
+1. xen, cpu affinity 对性能和核可见性影响 (cpus绑核)
+1. runc, cpu-qupta 对性能的影响
+1. xen, cpu-qupta 对性能的影响
+
+
+Linux容器中，我们用Stress-ng来测试:
+nerdctl run `--cpus` 是 cpu 数量(quota/period), --cpuset-cpus 是可执行的cpu数，
+
+```console
+nerdctl run --rm \
+    cpu-workload --cpu 8 --cpu-method matrixprod -t 30s
+stress-ng: info:  [1] setting to a 30 second run per stressor
+stress-ng: info:  [1] dispatching hogs: 8 cpu
+stress-ng: info:  [1] successful run completed in 30.01s
+
+    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+2082167 root      20   0   76532   2388   1024 R 100.0   0.0   0:05.78 stress-ng
+2082170 root      20   0   76532   2388   1024 R 100.0   0.0   0:05.78 stress-ng
+2082171 root      20   0   76532   2388   1024 R 100.0   0.0   0:05.78 stress-ng
+2082172 root      20   0   76532   2388   1024 R 100.0   0.0   0:05.78 stress-ng
+2082173 root      20   0   76532   2388   1024 R 100.0   0.0   0:05.78 stress-ng
+2082174 root      20   0   76532   2388   1024 R 100.0   0.0   0:05.78 stress-ng
+2082168 root      20   0   76532   2388   1024 R  99.7   0.0   0:05.78 stress-ng
+2082169 root      20   0   76532   2388   1024 R  99.7   0.0   0:05.77 stress-ng
+
+nerdctl run --rm --cpuset-cpus="0-3" \
+    cpu-workload --cpu 8 --cpu-method matrixprod -t 30s
+stress-ng: info:  [1] setting to a 30 second run per stressor
+stress-ng: info:  [1] dispatching hogs: 8 cpu
+stress-ng: info:  [1] successful run completed in 30.01s
+
+2097277 root      20   0   76532   2388   1024 R  69.1   0.0   0:10.60 stress-ng
+2097278 root      20   0   76532   2388   1024 R  68.1   0.0   0:10.26 stress-ng
+2097284 root      20   0   76532   2388   1024 R  62.5   0.0   0:10.32 stress-ng
+2097283 root      20   0   76532   2388   1024 R  40.5   0.0   0:06.25 stress-ng
+2097280 root      20   0   76532   2388   1024 R  40.2   0.0   0:06.26 stress-ng
+2097282 root      20   0   76532   2388   1024 R  39.9   0.0   0:06.23 stress-ng
+2097281 root      20   0   76532   2388   1024 R  39.5   0.0   0:06.28 stress-ng
+2097279 root      20   0   76532   2388   1024 R  39.2   0.0   0:06.14 stress-ng
+
+nerdctl run --rm --cpus="4.0"  \
+    cpu-workload --cpu 8 --cpu-method matrixprod -t 30s
+stress-ng: info:  [1] setting to a 30 second run per stressor
+stress-ng: info:  [1] dispatching hogs: 8 cpu
+stress-ng: info:  [1] successful run completed in 30.02s
+
+PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+2085414 root      20   0   76532   2388   1024 R  50.5   0.0   0:02.23 stress-ng
+2085420 root      20   0   76532   2388   1024 R  50.5   0.0   0:02.22 stress-ng
+2085415 root      20   0   76532   2388   1024 R  50.2   0.0   0:02.22 stress-ng
+2085418 root      20   0   76532   2388   1024 R  50.2   0.0   0:02.23 stress-ng
+2085419 root      20   0   76532   2388   1024 R  49.8   0.0   0:02.20 stress-ng
+2085416 root      20   0   76532   2388   1024 R  49.5   0.0   0:02.21 stress-ng
+2085417 root      20   0   76532   2388   1024 R  49.5   0.0   0:02.21 stress-ng
+2085421 root      20   0   76532   2388   1024 R  49.2   0.0   0:02.19 stress-ng
+
+```
+
+```
+      --cpus float                                     Number of CPUs
+      --cpuset-cpus string                             CPUs in which to allow execution (0-3, 0,1)
+```
+
+在平均执行用量上，我们发现第二组和第三组等效。但是每一个核的用量并不同； cpus, cpu_quota, cpu_period是CFS的, nproc=host, 
+cpuset-cpus
+
+```console
+nerdctl run -d --cpus="4.0" --cpuset-cpus="2,4-10" cpu-workload --cpu 6 --cpu-method matrixprod -t 30s
+
+# nproc=8 (2,[4-10])
+2113832 root      20   0   76528   2644   1280 R  67.3   0.0   0:05.89 stress-ng
+2113834 root      20   0   76528   2388   1024 R  67.3   0.0   0:05.87 stress-ng
+2113837 root      20   0   76528   2644   1280 R  67.3   0.0   0:05.84 stress-ng
+2113835 root      20   0   76528   2388   1024 R  66.7   0.0   0:05.87 stress-ng
+2113833 root      20   0   76528   2388   1024 R  66.3   0.0   0:05.84 stress-ng
+2113836 root      20   0   76528   2644   1280 R  66.3   0.0   0:05.82 stress-ng
+```
+
+这个场景中，cpus限制了4.0的CFS配额，虽然容器可以在八个核心上面跑，但是只能获得4个核的算力。
+
+反之同理，cpuset也是算力限制：
+
+```console
+ nerdctl run -d --cpus="4.0" --cpuset-cpus="2" cpu-workload --cpu 6 --cpu-method matrixprod -t 30s
+ 2118095 root      20   0   76528   2644   1280 R  16.6   0.0   0:02.24 stress-ng
+2118096 root      20   0   76528   2644   1280 R  16.6   0.0   0:02.24 stress-ng
+2118097 root      20   0   76528   2644   1280 R  16.6   0.0   0:02.24 stress-ng
+2118098 root      20   0   76528   2644   1280 R  16.6   0.0   0:02.24 stress-ng
+2118099 root      20   0   76528   2644   1280 R  16.6   0.0   0:02.23 stress-ng
+2118100 root      20   0   76528   2644   1280 R  16.6   0.0   0:02.23 stress-ng
+
+```
+
+这六个stress-ng进程都在 cpuid=2 上运行。$400\%$ 的 `--cpus` 是上限，在这里只能用到 $100\%$
+
+
+
+`--cpu-quota` / `--cpu-period(default: 100000us)` 和 `--cpus`不能混用,因为cpusbb本身就是 `quota/period`
+
+```go
+if cpus := context.Float64("cpus"); cpus > 0.0 {
+			var (
+				period = uint64(100000)
+				quota  = int64(cpus * 100000.0)
+			)
+			opts = append(opts, oci.WithCPUCFS(quota, period))
+		}
+
+		if shares := context.Int("cpu-shares"); shares > 0 {
+			opts = append(opts, oci.WithCPUShares(uint64(shares)))
+		}
+
+		quota := context.Int64("cpu-quota")
+		period := context.Uint64("cpu-period")
+		if quota != -1 || period != 0 {
+			if cpus := context.Float64("cpus"); cpus > 0.0 {
+				return nil, errors.New("cpus and quota/period should be used separately")
+			}
+			opts = append(opts, oci.WithCPUCFS(quota, period))
+		}
+```
+
+这都符合我们的知识，现在我们需要考虑如何将这些资源配额传播给xen
+
+### weight (share)
+
+### 热更新
+
+通过 CRI 和 containerd 通信时（k8s集群等）,容器资源可以热更新.
+
+## k8s 资源管理
 
 以下不再重述:k8s的资源管控并不直接影响micran,但是它们的定义和containerd有相当的重合；而我们总要承接containerd的资源管控，并且，对可伸缩的“容器资源”而言，更多的伸缩和限制需求来自k8s,因此我们从k8s开始分析
 
 我们基于 [resource management for pods and containers](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/), [Resource Quota](https://kubernetes.io/docs/concepts/policy/resource-quotas/) 和 [Limit Ranges](https://kubernetes.io/docs/concepts/policy/limit-range/) 来展开讨论
+
+
+### 基本
+
+k8s 垂直扩缩
+
+```yaml
+# VPA (Vertical Pod Autoscaler)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hot-update-example
+spec:
+  containers:
+  - name: app
+    image: nginx
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "512Mi"
+      limits:
+        cpu: "1000m"     # 可通过 kubectl patch 热更新
+        memory: "1Gi"    # 可通过 kubectl patch 热更新
+```
+
+
+
+### limit ranges
+
+limit ranges 是k8s的一个机制而非话题。
+
 
 * ResourceQuota：可以限制命名空间内的总资源消耗，但它不防止单个对象独占资源。
 * LimitRange：命名空间级的策略，用来约束单个对象（Pod、Container、PVC）的资源分配。
@@ -86,7 +275,26 @@ ResourceQuota 确保总量公平。LimitRange 防止单个对象“吃独食”�
 | `unified` | `s.Linux.Resources.Unified` | Direct copy of map (`resources.GetUnified()`) |
 | `oom_score_adj` | `s.Process.OOMScoreAdj` | Handled separately via `WithOOMScoreAdj` |
 
-  ### Kubernetes Linux Resources Proto Definition
+### Kubernetes Resources Proto Definition
+
+Windows的比较简单:
+
+```proto
+// WindowsContainerResources specifies Windows specific configuration for
+// resources.
+message WindowsContainerResources {
+    // CPU shares (relative weight vs. other containers). Default: 0 (not specified).
+    int64 cpu_shares = 1;
+    // Number of CPUs available to the container. Default: 0 (not specified).
+    int64 cpu_count = 2;
+    // Specifies the portion of processor cycles that this container can use as a percentage times 100.
+    int64 cpu_maximum = 3;
+    // Memory limit in bytes. Default: 0 (not specified).
+    int64 memory_limit_in_bytes = 4;
+}
+```
+
+
 
 ```proto
 // LinuxContainerResources specifies Linux specific configuration for
