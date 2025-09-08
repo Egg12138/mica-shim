@@ -10,7 +10,13 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+
+	"github.com/opencontainers/runtime-spec/specs-go"
 )
+
+const DefaultCgroupShare = 1024
+const DefaultXenWeight = 256
+const ShareWeightRatio = DefaultCgroupShare / DefaultXenWeight
 
 // xl info:
 //             host                   : scarlett
@@ -190,4 +196,58 @@ func resumeById(id string) error {
 
 func XenDefaultPedConf() string {
 	return "image.bin"
+}
+
+func LinuxResource2Essential(spec *specs.Spec) *EssentialResource {
+	r := &EssentialResource{}	
+	cpu := spec.Linux.Resources.CPU
+	if cpu.Quota != nil && cpu.Period != nil && *cpu.Period > 0 {
+		r.CpuPeriod = *cpu.Period
+		r.CpuQuota = *cpu.Quota
+		cpuLimit := *cpu.Quota / int64(*cpu.Period)
+		if cpuLimit > 0 {
+			r.CpuCpacity = uint32(100 * cpuLimit)
+		} else {
+			r.CpuCpacity = 0
+		}
+	} else {
+		log.Debugf("cpu quota/period pair = < %s:%s > is incomplete,Xen scheduler will allow all possible cpu to container", cpu.Quota, cpu.Period)
+		r.CpuCpacity = 0
+	}
+
+
+	if cpu.Shares != nil {
+		r.CPUWeight = uint32(*cpu.Shares / ShareWeightRatio)
+	} else {
+		log.Debugf("cpu shares is nil, use default weight %d", DefaultXenWeight)
+		r.CPUWeight = DefaultXenWeight
+	}
+
+	var cpuarr []int
+	if cpu.Cpus != "" {
+		cpuarr = ParseOCICPUString(cpu.Cpus)
+		r.ClientCpuSet = validCpuset(cpu.Cpus)
+	}
+
+	log.Debugf("pinning cpu array = %v", cpuarr)
+	vcpu := calculateVCPU(cpuarr,int(r.CpuCpacity))
+	r.Vcpu = uint32(vcpu)
+
+	return r
+}
+
+// the format of two cpuset are the same, but micran needs to calculate host cpu resource and so on
+// TODO: 	valid Cpu set
+func validCpuset(cpusets string) string {
+	return cpusets
+}
+
+// if cpuarr is empty, container will see cpu the same as maxcpu??
+// TODO: not sure the default value
+func calculateVCPU(cpuarr []int, maxcpu int) int {
+	if cpuarr == nil {
+		return maxcpu // or 1? 
+		// return 1 
+	}
+	return len(cpuarr)
 }

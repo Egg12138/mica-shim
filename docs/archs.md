@@ -4,39 +4,66 @@
 
 #### configs
 
-k8s侧: pod annotations
-  ↓
-控制层: container spec
-  ↓
-应用层: RuntimeConfig 
-  ↓
-配置层: SandboxConfig/ContainerConfig (期望状态)
-  ↓
-运行层: SandboxState/ContainerState (实际状态)
-  ↓
-持久层: 直接JSON序列化存储 (Direct JSON serialization)
+![config flow](./images/micranConfigFlow.png)
 
-1. 容器注解 (Annotations) - 最高优先级
-    ↓
-2. Drop-in 配置文件 (未来计划，和mica同步扩展)
-    ↓
-3. 主配置文件 (/etc/micran/config.toml + /etc/micran/config.d/*.toml)
-    ↓
-4. 环境变量 (MICRAN_CONF_FILE SCHED_CORE)
-    ↓
-5. 默认配置路径 (client.conf inside bundle) - 最低优先级
-
-
+```mermaid
+graph TD
+    A[Kubernetes Pod YAML] -->|annotations| B[CRI Interface]
+    B --> C[containerd CRI Plugin]
+    C --> D[OCI Spec config.json]
+    D -->|Annotations| E[MicRan]
+    E --> F[oci: addAnnotations]
+    F --> H[Runtime Config]
+    F --> I[Client Config]
+    I --> L[cntr.Container]
+    L --> mica[libmica.MicaConf]
+    H --> mica[libmica.MicaConf]
+    M[OCI Image] -->|Built-in annotations| D
+    N[containerd config] -->|pod_annotations| C
 ```
-  OCI Spec (config.json)
-      ↓
-  RuntimeConfig (from files/annotations/env)
-      ↓
-  ┌─────────────────┐
-  │  SandboxConfig  │ ←── ContainerConfig
-  └─────────────────┘
-      ↓
-  Sandbox & Containers
+
+![detailed (unstable)](./images/micranConfigFlowDetailed.png)
+
+```mermaid
+flowchart TD
+ subgraph subGraph0["Kubernetes Control Plane"]
+        A["Kubernetes Pod YAML"]
+        S["Pod Annotations"]
+  end
+ subgraph subGraph1["Containerd/Other container endpoint"]
+        B["CRI Interface"]
+        C["containerd CRI Plugin"]
+        D["Pod Sandbox Container"]
+  end
+ subgraph subGraph2["OCI Bundle"]
+        E["OCI Spec config.json"]
+        BC["client.conf"]
+        PC["pedestal conf"]
+        N["OCI image"]
+  end
+ subgraph MicRan["MicRan"]
+        F["MicRan shim"]
+        I["Runtime Config"]
+        J["Client Config"]
+  end
+
+    A -- annotations --> B
+    B --> C
+    C --> D
+    D --> E
+    BC & PC --> F
+    E -- Annotations --> F
+    F --"dispatch annotations"--> I & J
+    LM["libmica"]
+    J --> LM
+    EC[MICRAN_CONF_DIR] --"micran configurations"--> F
+    N -- "Built-in annotations" --> E
+    O["containerd config"] -- pod_annotations --> C
+    S -- "io.kubernetes.cri.*" --> D
+    T["Container Annotations"] -- "defs.MicranAnnotationPrefix.*" --> E
+    U["Sandbox Config"]
+    U --> F
+    EC & E --> U
 ```
 
 #### 详细解析流程

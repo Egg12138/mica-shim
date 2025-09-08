@@ -79,11 +79,18 @@ type ContainerConfig struct {
 	OS           string      `json:"os"`
 	NCpu         int         `json:"ncpu"` // Default = 1
 
+	// cpuqupta / cpuperiod = cpus: f64 => CPUCapacity = cpus * 100, 
 	CpuLimit   int    `json:"cpu_limit"`
-	CpusetCpus string `json:"cpuset_cpus"`
-	CpuShares  uint64 `json:"cpu_shares"`
 	CpuQuota   int64  `json:"cpu_quota"`
 	CpuPeriod  uint64 `json:"cpu_period"`
+	// host cpu set available for container 
+	// => CPU, i.e. the phyical cpu set allowed client to use; format="1,3-5"
+	CpusetCpus string `json:"cpuset_cpus"`
+	// default to be 1024, CpuShared : 1024 = related a weight 
+	// => CPUWeight(1-65535, default=256), in xen domain default weight is 256
+	CpuShares  uint64 `json:"cpu_shares"`
+	// VCPU
+	VPUNum         int `json:"vcpu_num"`
 
 	MemoryLimit       int64   `json:"memory_limit"`
 	MemoryReservation int64   `json:"memory_reservation"`
@@ -296,7 +303,7 @@ func (c *Container) start(ctx context.Context) error {
 	}
 
 	if err := startClient(ctx, c.sandbox, c); err != nil {
-		log.Error("failed to start container: %v", err)
+		log.Errorf("failed to start container: %v", err)
 		if err := c.stop(ctx, true); err != nil {
 			log.Warn("failed to stop the container after start failed")
 		}

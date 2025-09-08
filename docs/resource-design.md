@@ -158,6 +158,86 @@ if cpus := context.Float64("cpus"); cpus > 0.0 {
 
 通过 CRI 和 containerd 通信时（k8s集群等）,容器资源可以热更新.
 
+### ocispec Linux Resource 默认值
+
+`populateDefaultUnixSpec`:
+
+```go
+
+func populateDefaultUnixSpec(ctx context.Context, s *Spec, id string) error {
+	ns, err := namespaces.NamespaceRequired(ctx)
+	if err != nil {
+		return err
+	}
+
+	*s = Spec{
+		Version: specs.Version,
+		Root: &specs.Root{
+			Path: defaultRootfsPath,
+		},
+		Process: &specs.Process{
+			Cwd:             "/",
+			NoNewPrivileges: true,
+			User: specs.User{
+				UID: 0,
+				GID: 0,
+			},
+			Capabilities: &specs.LinuxCapabilities{
+				Bounding:  defaultUnixCaps(),
+				Permitted: defaultUnixCaps(),
+				Effective: defaultUnixCaps(),
+			},
+			Rlimits: []specs.POSIXRlimit{
+				{
+					Type: "RLIMIT_NOFILE",
+					Hard: uint64(1024),
+					Soft: uint64(1024),
+				},
+			},
+		},
+		Linux: &specs.Linux{
+			MaskedPaths: []string{
+				"/proc/acpi",
+				"/proc/asound",
+				"/proc/kcore",
+				"/proc/keys",
+				"/proc/latency_stats",
+				"/proc/timer_list",
+				"/proc/timer_stats",
+				"/proc/sched_debug",
+				"/sys/firmware",
+				"/sys/devices/virtual/powercap",
+				"/proc/scsi",
+			},
+			ReadonlyPaths: []string{
+				"/proc/bus",
+				"/proc/fs",
+				"/proc/irq",
+				"/proc/sys",
+				"/proc/sysrq-trigger",
+			},
+			CgroupsPath: filepath.Join("/", ns, id),
+			Resources: &specs.LinuxResources{
+				Devices: []specs.LinuxDeviceCgroup{
+					{
+						Allow:  false,
+						Access: rwm,
+					},
+				},
+			},
+			Namespaces: defaultUnixNamespaces(),
+		},
+	}
+	s.Mounts = defaultMounts()
+	return nil
+}
+```
+
+`Linux.Resources` 其他默认值都是 nil. 参考 runc 的行为，当 quota, peiord 这一对无效时，开放全部算力给容器。
+对于mica，此情况意味着，`CPUCapacity=0`, 全权交给调度器.
+
+
+
 ## k8s 资源管理
 
 以下不再重述:k8s的资源管控并不直接影响micran,但是它们的定义和containerd有相当的重合；而我们总要承接containerd的资源管控，并且，对可伸缩的“容器资源”而言，更多的伸缩和限制需求来自k8s,因此我们从k8s开始分析
@@ -530,10 +610,10 @@ type LinuxMemory struct {
 
 ```go
 type XenCPUMapping struct {
-    // 目标Xen配置
     VCPUs       int     // 虚拟CPU数量
-    CPUWeight   int     // 调度权重 (1-65535)
+    CPUWeight   int     // 调度权重 (1-65535, default=256)
     CPUCap      int     // CPU使用率上限 (每vCPU的百分比)
+    CPUS        string  // cpuset cpus
     CPUAffinity []int   // CPU亲和性
 }
 
@@ -544,7 +624,6 @@ func convertCPUResourcesXen(res *LinuxContainerResources, availableCPUs int) Xen
         CPUCap:    0,    // 0表示不限制
     }
     
-    // 1. CPU Period + Quota 转换
     if res.CpuQuota > 0 && res.CpuPeriod > 0 {
         // 计算需要的CPU核心数
         requestedCores := float64(res.CpuQuota) / float64(res.CpuPeriod)

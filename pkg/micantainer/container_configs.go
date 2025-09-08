@@ -4,6 +4,7 @@ import (
 	"fmt"
 	log "mica-shim/logger"
 	"mica-shim/pkg/libmica"
+	"mica-shim/pkg/pedestal"
 
 	"github.com/containerd/cgroups"
 	"github.com/opencontainers/runtime-spec/specs-go"
@@ -27,29 +28,26 @@ func (r *ContainerConfig) ParseOCICPUResources(spec *specs.Spec) error {
 		return nil
 	}
 
-	cpu := spec.Linux.Resources.CPU
-
-	// Parse CPU quota and period to get CPU limit
-	if cpu.Quota != nil && cpu.Period != nil && *cpu.Period > 0 {
-		r.CpuQuota = *cpu.Quota
-		r.CpuPeriod = *cpu.Period
-		cpuLimit := int(*cpu.Quota / int64(*cpu.Period))
-		if cpuLimit > 0 {
-			r.CpuLimit = cpuLimit
-		}
+	essentialRes := pedestal.LinuxResource2Essential(spec)
+	r.CpuLimit = int(essentialRes.CpuCpacity)
+	r.CpuPeriod = essentialRes.CpuPeriod
+	r.CpuQuota = essentialRes.CpuQuota
+	r.CpuShares = uint64(essentialRes.CPUWeight)
+	r.VPUNum = int(essentialRes.Vcpu)
+	r.CpusetCpus = essentialRes.ClientCpuSet
+	r.MemoryLimit = int64(essentialRes.MemoryLimit)
+	log.Debugf(`
+		EssentialResource:
+		CpuLimit = %d
+		CpuPeriod = %d
+		CpuQuota = %d
+		CpuShares = %d
+		VPUNum = %d
+		CpusetCpus = %s
+		MemoryLimit = %d
 	}
-
-	if cpu.Shares != nil {
-		r.CpuShares = *cpu.Shares
-	}
-
-	if cpu.Cpus != "" {
-		r.CpusetCpus = cpu.Cpus
-	}
-
-	// Parse realtime CPU constraints if present
-	if cpu.RealtimeRuntime != nil {
-	}
+	`, r.CpuLimit, r.CpuPeriod, r.CpuQuota, r.CpuShares, r.VPUNum, r.CpusetCpus, r.MemoryLimit)
+	
 
 	return nil
 }
