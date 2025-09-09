@@ -62,19 +62,19 @@ func (r *ContainerConfig) ParseOCIMemoryResources(spec *specs.Spec) error {
 	memory := spec.Linux.Resources.Memory
 
 	if memory.Limit != nil {
-		r.MemoryLimit = *memory.Limit
+		r.MemoryLimit = int64(*memory.Limit / 1024 / 1024)
 	}
 
 	if memory.Reservation != nil {
-		r.MemoryReservation = *memory.Reservation
+		r.MemoryReservation = int64(*memory.Reservation / 1024 / 1024)
 	}
 
 	if memory.Swap != nil {
-		r.MemorySwap = *memory.Swap
+		r.MemorySwap = int64(*memory.Swap / 1024 / 1024)
 	}
 
 	if memory.Swappiness != nil {
-		swappiness := uint64(*memory.Swappiness)
+		swappiness := uint64(*memory.Swappiness / 1024 / 1024)
 		r.MemorySwappiness = &swappiness
 	}
 
@@ -105,21 +105,6 @@ func ValidateResourceLimits(config *ContainerConfig) error {
 		if config.MemoryLimit > systemMemory {
 			return fmt.Errorf("container memory limit %d bytes exceeds system memory %d bytes", config.MemoryLimit, systemMemory)
 		}
-	}
-
-	// Validate memory swappiness
-	if config.MemorySwappiness != nil && *config.MemorySwappiness > 100 {
-		return fmt.Errorf("invalid memory swappiness value %d, must be 0-100", *config.MemorySwappiness)
-	}
-
-	// Validate CPU period constraints (from Linux kernel documentation)
-	if config.CpuPeriod > 0 && (config.CpuPeriod < 1000 || config.CpuPeriod > 1000000) {
-		return fmt.Errorf("invalid CPU period %d, must be between 1000 and 1000000 microseconds", config.CpuPeriod)
-	}
-
-	// Validate CPU quota constraints
-	if config.CpuQuota > 0 && config.CpuPeriod > 0 && config.CpuQuota < 1000 {
-		return fmt.Errorf("invalid CPU quota %d, must be at least 1000 microseconds", config.CpuQuota)
 	}
 
 	return nil

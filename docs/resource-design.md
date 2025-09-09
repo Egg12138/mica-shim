@@ -268,7 +268,80 @@ spec:
         memory: "1Gi"    # 可通过 kubectl patch 热更新
 ```
 
+kubelet 将 PodSpec 中的 `requested cpu, limited memory, limited cpu` 传给下游，
+ `requested memory` 不会被填充, 这是由k8s来监控的。因此 **micran必须要能够准确反馈内存资源信息给k8s**
 
+```go
+
+MilliCPUToCPU = 1000
+SharesPerCPU = 1024 //默认权重， cgroupv1 cpu.shares, cgroupv2 cpu.weight
+cpuRequests := int64(0)
+cpuLimits := int64(0)
+memoryLimits := int64(0)
+
+if request, found := reqs[v1.ResourceCPU]; found {
+    cpuRequests = request.MilliValue()
+}
+if limit, found := limits[v1.ResourceCPU]; found {
+    cpuLimits = limit.MilliValue()
+}
+if limit, found := limits[v1.ResourceMemory]; found {
+    memoryLimits = limit.Value()
+}
+
+// convert to CFS values
+cpuShares := MilliCPUToShares(cpuRequests)
+cpuQuota := MilliCPUToQuota(cpuLimits, int64(cpuPeriod))
+
+// quota is not capped when cfs quota is disabled
+if !enforceCPULimits {
+    cpuQuota = int64(-1)
+	}
+
+// MilliCPUToShares converts the milliCPU to CFS shares.
+func MilliCPUToShares(milliCPU int64) uint64 {
+	if milliCPU == 0 {
+		// Docker converts zero milliCPU to unset, which maps to kernel default
+		// for unset: 1024. Return 2 here to really match kernel default for
+		// zero milliCPU.
+		return MinShares
+	}
+	// Conceptually (milliCPU / milliCPUToCPU) * sharesPerCPU, but factored to improve rounding.
+	shares := (milliCPU * SharesPerCPU) / MilliCPUToCPU
+	if shares < MinShares {
+		return MinShares
+	}
+	if shares > MaxShares {
+		return MaxShares
+	}
+	return uint64(shares)
+}
+
+```
+
+在oci spec 中 `CPU.requests` => `CPU.shares` 是这样的逻辑：
+
+```go
+// 对于 cpu.requests = 500m 来说， cpuRequest = millivalue(500m) = 500
+cpuShares := cpuRequests * 1024 / 1000  // to 500 * 1024 / 1000
+// and MinShares <= cpuShares <= MaxShares
+```
+
+当争用时，我们需要 `cpuShares`, 近似的对应选项为 `Xen::cpu_weight`
+
+范围：
+
+```c
+#define MIN_SHARES		(1UL <<  1)
+#define MAX_SHARES		(1UL << 18)
+```
+* cpushares: 2 - 262144, default=1024
+* cpu_weight: 1 - 65535, default=256
+
+可见是不完全成比例的范围，$W(S)=\lfloor \frac{S}{R} \rfloor$ 要对范围首尾做处理:
+$$
+W(S) = \max({1, \min{(\lfloor \frac{S}{R} \rfloor, 65535)})}; R=4
+$$
 
 ### limit ranges
 

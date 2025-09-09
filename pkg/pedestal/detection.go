@@ -15,6 +15,8 @@ import (
 var (
 	hostPedCache PedType
 	hostPedOnce  sync.Once
+	// TODO: considering calculate default max vcpu number when 
+	DefaultMaxVCPUs uint32
 )
 
 // GetHostPed returns the host pedestal type with lazy initialization and caching

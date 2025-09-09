@@ -31,6 +31,8 @@ const (
 	MPause  MicaCommand = "pause"
 	MResume MicaCommand = "resume"
 	MStatus MicaCommand = "status"
+	// miuca set <short_id> MemoryInMiB/CPUCapacity <value>
+	MUpdate MicaCommand = "set"
 
 	// TODO:
 	// Mica message field length constants
@@ -376,7 +378,7 @@ func Stop(id string) error {
 // TALK: xen supports pause, but mica...
 // TODO: might passthrough mica, directly to ped?
 func Pause(id string) error {
-	if pedestal.GetHostPed() == pedestal.Xen && !defs.IsMock {
+	if pedestal.GetHostPed() == pedestal.Xen {
 		return pedestal.Pause(utils.ShortID(id))	
 	} else {
 		if err := MicaCtl(MPause, id); err != nil {
@@ -388,9 +390,14 @@ func Pause(id string) error {
 
 // TODO: mica may not support, we handle this via ped directly
 func Resume(id string) error {
-	log.Debugf("resuming %s", id)
-	shortId := utils.ShortID(id)
-	return pedestal.Resume(shortId)
+	if pedestal.GetHostPed() == pedestal.Xen {
+		return pedestal.Resume(utils.ShortID(id))	
+	} else {
+		if err := MicaCtl(MResume, id); err != nil {
+			return fmt.Errorf("failed to pause mica client %s %w", id, err)
+		}
+		return nil
+	}
 }
 
 func Remove(id string) error {

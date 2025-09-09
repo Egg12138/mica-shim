@@ -5,50 +5,9 @@ import (
 	"strings"
 )
 
-// LinuxResource.CPU.CPUs is a comma-separated list, with dashes to represent ranges.
-// 0-3,7 represents CPUs 0,1,2,3, and 7. we store them into an array
-// dot no need to consider the disorder case, because containerd guaranteeses it
-// hence, the return will not be nil
-func ParseOCICPUString(cpuset string) []int {
-	if cpuset == "" {
-		return []int{}
-	}
-
-	// For small ranges (most common case), use a simple approach
-	// Pre-allocate with small capacity optimized for typical CPU sets
-	cpuarr := make([]int, 0, 8) // Most CPU sets are small (1-8 CPUs)
-
-	parts := strings.Split(cpuset, ",")
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-
-		if strings.Contains(part, "-") {
-			rangeParts := strings.Split(part, "-")
-			if len(rangeParts) == 2 {
-				startStr := strings.TrimSpace(rangeParts[0])
-				endStr := strings.TrimSpace(rangeParts[1])
-				start, err1 := strconv.Atoi(startStr)
-				end, err2 := strconv.Atoi(endStr)
-				if err1 == nil && err2 == nil && start <= end {
-					for i := start; i <= end; i++ {
-						cpuarr = append(cpuarr, i)
-					}
-				}
-			}
-		} else {
-			if cpuNum, err := strconv.Atoi(part); err == nil {
-				cpuarr = append(cpuarr, cpuNum)
-			}
-		}
-	}
-	return cpuarr
-}
-
 // ParseCPUArr translates CPU array to CPU string format
 // Example: [1,4,5] -> "1,4-5"
+// TODO: use map[] struct{} to store CPU set instead of array
 func ParseCPUArr(cpus []int) string {
 	if len(cpus) == 0 {
 		return ""

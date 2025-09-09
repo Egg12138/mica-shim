@@ -146,6 +146,7 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 		OomKillDisable:    false,
 	}
 
+	// TODO: remove the duplicated parsing
 	if err := config.ParseOCICPUResources(&ocispec); err != nil {
 		return nil, err
 	}

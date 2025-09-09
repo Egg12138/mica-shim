@@ -92,6 +92,7 @@ type ContainerConfig struct {
 	// VCPU
 	VPUNum         int `json:"vcpu_num"`
 
+	// Memory in MiB
 	MemoryLimit       int64   `json:"memory_limit"`
 	MemoryReservation int64   `json:"memory_reservation"`
 	MemorySwap        int64   `json:"memory_swap"`

@@ -159,7 +159,7 @@ type Sandbox struct {
 	// fs, storage, devices, volumes...
 	// monitor
 	agent      RealAgent
-	config     SandboxConfig
+	config     *SandboxConfig
 	containers map[string]*Container
 	id         string
 	network    Network
@@ -218,7 +218,6 @@ func (s *Sandbox) DaemonState() *libmica.MicaDaemonState {
 }
 
 func (s *Sandbox) Monitor() {
-	return
 }
 
 func (s *Sandbox) GetNetNamespace() string {
@@ -730,7 +729,7 @@ func (s *Sandbox) StoreSandbox(ctx context.Context) error {
 	serializable := SandboxStorage{
 		ID:     s.id,
 		State:  s.state,
-		Config: s.config,
+		Config: *s.config,
 	}
 
 	// Get network config if needed
@@ -832,7 +831,7 @@ func newSandbox(ctx context.Context, config SandboxConfig) (sb *Sandbox, retErr 
 	network := DummyNetwork{}
 	s := &Sandbox{
 		ctx:        ctx,
-		config:     config,
+		config:     &config,
 		containers: make(map[string]*Container),
 		id:         config.ID,
 		state: SandboxState{
@@ -929,7 +928,7 @@ func (s *Sandbox) Restore() error {
 		s.state.Ped = ss.State.Ped
 		s.state.Version = ss.State.Version
 		s.state.State = ss.State.State
-		s.config = ss.Config
+		s.config = &ss.Config
 		s.network = &ss.Network
 	}
 
@@ -1030,10 +1029,24 @@ func (s *Sandbox) initContainers(ctx context.Context) error {
 
 // TODO: considering pinning vCPUs on different pedestal
 func (s *Sandbox) checkVCPUsPinning(ctx context.Context) error {
+	if s.config == nil {
+		return fmt.Errorf("no sandbox config found")
+	}
+
+	if !s.config.EnableVCPUsPining {
+		return nil
+	}
+	
 	return nil
 }
 
 func (s *Sandbox) updateResources(ctx context.Context) error {
+	if s == nil {
+		return er.ErrSandboxNil
+	}
+
+	if s.config == nil {
+	}
 	return nil
 }
 

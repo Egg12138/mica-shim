@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/cpuset"
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
@@ -78,7 +79,7 @@ const (
 	resume   xlSubCmd = "unpause"
 )
 
-func newCommand(subcmd xlSubCmd, args ...string) *exec.Cmd {
+func newxl(subcmd xlSubCmd, args ...string) *exec.Cmd {
 	cmdArgs := []string{string(subcmd)}
 	cmdArgs = append(cmdArgs, args...)
 	return exec.Command("xl", cmdArgs...)
@@ -88,7 +89,7 @@ func newCommand(subcmd xlSubCmd, args ...string) *exec.Cmd {
 func xlvcpu() (*XlVcpuInfo, error) {
 	var cmd *exec.Cmd
 	var out bytes.Buffer
-	cmd = newCommand(vcpulist)
+	cmd = newxl(vcpulist)
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("failed to run xl info: %v", err)
@@ -98,7 +99,7 @@ func xlvcpu() (*XlVcpuInfo, error) {
 }
 
 func xinfo() (*XlInfo, error) {
-	cmd := newCommand(info)
+	cmd := newxl(info)
 
 	// Capture output
 	var out bytes.Buffer
@@ -193,7 +194,7 @@ func Resume(id string) error {
 	if defs.IsMock {
 		return nil
 	}
-	cmd := newCommand(resume, id)
+	cmd := newxl(resume, id)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("xl failed to resume %s: %v", id, err)
 	}
@@ -205,7 +206,7 @@ func Pause(id string) error {
 	if defs.IsMock {
 		return nil
 	}
-	cmd := newCommand(pause, id)
+	cmd := newxl(pause, id)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("xl failed to pause %s: %v", id, err)
 	}
@@ -218,15 +219,17 @@ func XenDefaultPedConf() string {
 	return "image.bin"
 }
 
+
 func LinuxResource2Essential(spec *specs.Spec) *EssentialResource {
 	r := &EssentialResource{}	
+	// cpu
 	cpu := spec.Linux.Resources.CPU
 	if cpu.Quota != nil && cpu.Period != nil && *cpu.Period > 0 {
 		r.CpuPeriod = *cpu.Period
 		r.CpuQuota = *cpu.Quota
-		cpuLimit := *cpu.Quota / int64(*cpu.Period)
-		if cpuLimit > 0 {
-			r.CpuCpacity = uint32(100 * cpuLimit)
+		cpuCapacity := *cpu.Quota / int64(*cpu.Period)
+		if cpuCapacity > 0 {
+			r.CpuCpacity = uint32(100 * cpuCapacity)
 		} else {
 			r.CpuCpacity = 0
 		}
@@ -235,39 +238,59 @@ func LinuxResource2Essential(spec *specs.Spec) *EssentialResource {
 		r.CpuCpacity = 0
 	}
 
-
 	if cpu.Shares != nil {
-		r.CPUWeight = uint32(*cpu.Shares / ShareWeightRatio)
+		calculatedWeight := *cpu.Shares / ShareWeightRatio
+		if calculatedWeight < 1 {
+			r.CPUWeight = 1
+		} else if calculatedWeight > 65535 {
+			log.Debugf("cpu.Shares %d is too high, resulting weight is greater than 65535. Clamping to 65535.", *cpu.Shares)
+			r.CPUWeight = 65535
+		} else {
+			r.CPUWeight = uint32(calculatedWeight)
+		}
 	} else {
 		log.Debugf("cpu shares is nil, use default weight %d", DefaultXenWeight)
 		r.CPUWeight = DefaultXenWeight
 	}
 
-	var cpuarr []int
-	if cpu.Cpus != "" {
-		cpuarr = ParseOCICPUString(cpu.Cpus)
-		r.ClientCpuSet = validCpuset(cpu.Cpus)
+	cpus, set, vcpuNum := validateCPUSet(cpu.Cpus)
+
+	log.Debugf("pinning cpu set = %v, parse to %v", cpus, set)
+	// vcpuNum = calculateVCPU(&set, int(r.CpuCpacity))
+	r.Vcpu = uint32(vcpuNum)
+
+	// mem
+	mem := spec.Linux.Resources.Memory
+	if mem != nil && mem.Limit != nil {
+		r.MemoryLimit = uint32(*mem.Limit / 1024 / 1024)
 	}
 
-	log.Debugf("pinning cpu array = %v", cpuarr)
-	vcpu := calculateVCPU(cpuarr,int(r.CpuCpacity))
-	r.Vcpu = uint32(vcpu)
+
+	// net
 
 	return r
 }
 
 // the format of two cpuset are the same, but micran needs to calculate host cpu resource and so on
 // TODO: 	valid Cpu set
-func validCpuset(cpusets string) string {
-	return cpusets
+func validateCPUSet(s string) (validSet string, set cpuset.CPUSet, vcpus uint32) {
+	set, err := cpuset.Parse(s)
+	if err != nil {
+		return "", set, 0
+	}
+	validSet = ""
+	return validSet, set, uint32(set.Size())
 }
 
-// if cpuarr is empty, container will see cpu the same as maxcpu??
+// if cpuSet is empty, container will see cpu the same as maxcpu??
 // TODO: not sure the default value
-func calculateVCPU(cpuarr []int, maxcpu int) int {
-	if cpuarr == nil {
-		return maxcpu // or 1? 
-		// return 1 
+func calculateVCPU(cpuSet *cpuset.CPUSet, vcpuAssigned int) int {
+	if vcpuAssigned == 0 {
+		vcpuAssigned = 1
 	}
-	return len(cpuarr)
+	if cpuSet == nil {
+		return vcpuAssigned // or 1?
+		// return 1
+	}
+	return cpuSet.Size()
 }
