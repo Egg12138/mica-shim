@@ -183,61 +183,7 @@ func dummyCPUArr() []int {
 	return []int{1, 4, 5}
 }
 
-// ParseCPUArr translates CPU array to CPU string format
-// Example: [1,4,5] -> "1,4-5"
-func ParseCPUArr(cpus []int) string {
-	if len(cpus) == 0 {
-		return ""
-	}
 
-	// Sort the CPU array
-	sorted := make([]int, len(cpus))
-	copy(sorted, cpus)
-
-	// Simple bubble sort for small arrays
-	for i := 0; i < len(sorted)-1; i++ {
-		for j := 0; j < len(sorted)-i-1; j++ {
-			if sorted[j] > sorted[j+1] {
-				sorted[j], sorted[j+1] = sorted[j+1], sorted[j]
-			}
-		}
-	}
-
-	// Convert to string format
-	var result strings.Builder
-	start := sorted[0]
-	end := sorted[0]
-
-	for i := 1; i < len(sorted); i++ {
-		if sorted[i] == end+1 {
-			// Continue the range
-			end = sorted[i]
-		} else {
-			// End the current range and start a new one
-			if start == end {
-				result.WriteString(strconv.Itoa(start))
-			} else {
-				result.WriteString(strconv.Itoa(start))
-				result.WriteString("-")
-				result.WriteString(strconv.Itoa(end))
-			}
-			result.WriteString(",")
-			start = sorted[i]
-			end = sorted[i]
-		}
-	}
-
-	// Add the last range
-	if start == end {
-		result.WriteString(strconv.Itoa(start))
-	} else {
-		result.WriteString(strconv.Itoa(start))
-		result.WriteString("-")
-		result.WriteString(strconv.Itoa(end))
-	}
-
-	return result.String()
-}
 
 // autoBoot is a dummy function that always returns false
 func autoBoot() bool {
@@ -255,7 +201,7 @@ func (m *MicaClientConf) Init(cpu uint32, name string, path string, ped string, 
 
 	// Set default values for new fields
 	// Use dummy CPU array and convert to string
-	cpuStr := ParseCPUArr(dummyCPUArr())
+	cpuStr := pedestal.ParseCPUArr(dummyCPUArr())
 	copy(m.cpuStr[:], cpuStr)
 
 	m.vcpuNum = 0
@@ -279,7 +225,7 @@ func (m *MicaClientConf) InitWithOpts(opts MicaClientConfCreateOptions) {
 	m.debug = opts.Debug
 
 	// Convert CPU array to string
-	cpuStr := ParseCPUArr(opts.CPU)
+	cpuStr := pedestal.ParseCPUArr(opts.CPU)
 	copy(m.cpuStr[:], cpuStr)
 
 	// Set other fields
@@ -430,10 +376,14 @@ func Stop(id string) error {
 // TALK: xen supports pause, but mica...
 // TODO: might passthrough mica, directly to ped?
 func Pause(id string) error {
-	if err := MicaCtl(MPause, id); err != nil {
-		return fmt.Errorf("failed to pause mica client %s %w", id, err)
+	if pedestal.GetHostPed() == pedestal.Xen && !defs.IsMock {
+		return pedestal.Pause(utils.ShortID(id))	
+	} else {
+		if err := MicaCtl(MPause, id); err != nil {
+			return fmt.Errorf("failed to pause mica client %s %w", id, err)
+		}
+		return nil
 	}
-	return nil
 }
 
 // TODO: mica may not support, we handle this via ped directly
@@ -448,7 +398,7 @@ func Remove(id string) error {
 }
 
 // Status returns structured status information for a specific client
-// TODO: adapt return type to containerd-compatible status type
+// TODO: support filter?
 func Status(id string, filter Filter) (*MicaStatus, error) {
 	res, err := queryStatus(id)
 	if err != nil {

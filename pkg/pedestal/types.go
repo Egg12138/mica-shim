@@ -3,6 +3,8 @@ package pedestal
 import (
 	"context"
 	"fmt"
+	"sync"
+
 	defs "mica-shim/definitions"
 	log "mica-shim/logger"
 	"mica-shim/pkg/fileutils"
@@ -57,7 +59,23 @@ func ParsePedType(s string) PedType {
 	}
 }
 
-func HostPed() PedType {
+var (
+	hostPedCache PedType
+	hostPedOnce  sync.Once
+)
+
+
+// GetHostPed returns the host pedestal type with lazy initialization and caching
+// This is the preferred function for new code
+func GetHostPed() PedType {
+	hostPedOnce.Do(func() {
+		hostPedCache = computeHostPed()
+	})
+	return hostPedCache
+}
+
+// computeHostPed performs the actual pedestal type detection
+func computeHostPed() PedType {
 	if defs.IsMock {
 		return Xen
 	}

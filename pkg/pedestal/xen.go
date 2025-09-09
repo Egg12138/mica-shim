@@ -1,3 +1,5 @@
+// pakcage pedestal currently is basically a XEN package!
+// TODO: re-orgnize the package for better construction
 package pedestal
 
 import (
@@ -68,15 +70,20 @@ type XlVcpuInfo struct {
 type xlSubCmd string
 
 const (
-	info     xlSubCmd = "info"
-	vcpulist xlSubCmd = "vcpu-list"
+	info   xlSubCmd = "info"
+	vcpulist  xlSubCmd = "vcpu-list"
 	vcpupin  xlSubCmd = "vcpu-pin"
 	vmlist   xlSubCmd = "vm-list"
+	pause    xlSubCmd = "pause"
+	resume   xlSubCmd = "unpause"
 )
 
-func newCommand(subcmd xlSubCmd) *exec.Cmd {
-	return exec.Command("xl", string(subcmd))
+func newCommand(subcmd xlSubCmd, args ...string) *exec.Cmd {
+	cmdArgs := []string{string(subcmd)}
+	cmdArgs = append(cmdArgs, args...)
+	return exec.Command("xl", cmdArgs...)
 }
+
 
 func xlvcpu() (*XlVcpuInfo, error) {
 	var cmd *exec.Cmd
@@ -186,13 +193,26 @@ func Resume(id string) error {
 	if defs.IsMock {
 		return nil
 	}
-	return resumeById(id)
-}
-
-func resumeById(id string) error {
+	cmd := newCommand(resume, id)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("xl failed to resume %s: %v", id, err)
+	}
 	log.Debugf("resume %s successfully", id)
 	return nil
 }
+
+func Pause(id string) error {
+	if defs.IsMock {
+		return nil
+	}
+	cmd := newCommand(pause, id)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("xl failed to pause %s: %v", id, err)
+	}
+	log.Debugf("pause %s successfully", id)
+	return nil
+}
+
 
 func XenDefaultPedConf() string {
 	return "image.bin"

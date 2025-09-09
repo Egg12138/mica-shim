@@ -17,7 +17,7 @@ func isMicaAnnotation(fieldName string) string {
 }
 
 func MaxCPUNum() int {
-	pedtype := ped.HostPed()
+	pedtype := ped.GetHostPed()
 	if defs.IsMock {
 		return dummyCPUNum()
 	}

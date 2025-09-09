@@ -560,6 +560,25 @@ type LinuxMemory struct {
 
 ### Xen
 
+vcpus 默认值为 1, maxcpus 默认 = 0,此时会转为 `maxvcpus=vcpus`
+vcpus = 0会被设置为1
+
+```c
+// if maxvcpus is not set, use vcpus
+max_vcpus = strtoul(nr_vcpus, &endptr, 10);
+
+// maxcpus=0 => Error!
+if (maxcpus == 0)
+{
+    LOGED(ERROR, domid, "Requested 0 VCPUs!");
+    rc = ERROR_FAIL;
+    goto out;
+}
+
+if (opt_dom0_max_vcpus_min == 0)
+    opt_dom0_max_vcpus_min = 1;
+```
+
 ## 具体实现策略
 
 1. 由于multi-shim情况，我们需要维护一个全局的管理器到共享内存中，跟踪已分配的CPU和内存

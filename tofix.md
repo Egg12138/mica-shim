@@ -28,6 +28,24 @@
 
 # flaws and features-needed
 
+- [ ] 优化镜像配置、sandbox的设置逻辑:annotation => file => default, ordered by priority
+- [ ] 将Sandbox作为一个Pool:
+> for xen, sandbox cpu range => sandbox cpu pool
+> sandbox memory is a memory pool
+- [ ] 信息损失和同步问题：
+> baremetal中都是取整，那么multi-shim记录就需要使用这个取整后的值, xen同理.
+- [x] convert cpu resource calculation：
+> host bind cpu(default=physical core0)
+> CPUWeight:XEN-MICA = int((cpushares / (1024/256)))
+> make sure that xen is using credit2 or credit1
+> CPUCapacity:XEN-MICA = int((CpuQuota / CpuPeriod) * 100)
+> CPU:XEN-MICA = CPUs = Convert(cpusetcpus); 绑核，与vcpu 1:1
+> Start the guest with N vCPUs initially online.
+> VCPU:XEN-MICA is the cpus DomU aware of, 
+> 需要和CPUs做同步(vCPU=num(CPUs))
+- [ ] 确认以下cpuset对于集群来说——是否只从linux host获得？那么这样的话,k8s
+
+- [ ] future: mica pause 
 - [ ] containerd metric support
 - [x] delete 时bundle位置不当，validMicantainer失败
 - [x] pause -> stop ; resume -> start 的转发
