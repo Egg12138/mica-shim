@@ -652,6 +652,12 @@ if (opt_dom0_max_vcpus_min == 0)
     opt_dom0_max_vcpus_min = 1;
 ```
 
+**Roadmap**:
+
+对每个 Pod Sandbox所用的 cpu资源都 对应一个 xen cpu pool;
+
+分配的memory还有一个gap,Xen-PV的存在使得OS的保留内存体积更大
+
 ## 具体实现策略
 
 1. 由于multi-shim情况，我们需要维护一个全局的管理器到共享内存中，跟踪已分配的CPU和内存

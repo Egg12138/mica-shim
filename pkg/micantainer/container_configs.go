@@ -6,7 +6,6 @@ import (
 	"mica-shim/pkg/libmica"
 	"mica-shim/pkg/pedestal"
 
-	"github.com/containerd/cgroups"
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
@@ -85,9 +84,6 @@ func (r *ContainerConfig) ParseOCIMemoryResources(spec *specs.Spec) error {
 	return nil
 }
 
-func cgroupV1() bool {
-	return cgroups.Mode() == cgroups.Legacy || cgroups.Mode() == cgroups.Hybrid
-}
 
 // validateResourceLimits validates container resource limits against system constraints
 func ValidateResourceLimits(config *ContainerConfig) error {

@@ -129,28 +129,46 @@
 
 ###  核心添加
 
-1. shim API， 参数全对接，明确所有参数的处理策略:
-    - [x] task CreateRequest, task CreateResponse
-    - [ ] task StartRequest, task StartResponse
-    - [x] contaienrd -> shim -> 
+1. shim API， 全对接
+    - [x] task CreateRequest, task CreateResponse, ...生命周期相关
+    - [ ] task Update, Stats 资源管理和监控
+1. workarounds: mica后续会逐渐提供以下问题的原生支持
+    - [x] pause and resume, not via Mica, 
+    - [ ] MICA支持pause and resume
+    - [ ] update
+    - [ ] MICA支持update: `set Memory`, `set CPUs`
+    - [x] Metrics workaround: 1. dummy stats
+    - [ ] Metrics workaround: 2. via Xen api
+    - [ ] Metrics workaround: 3. via 
+
+1. ContainerConfig解析
+    - [x] 时序ok
+    - [ ] annotations 有效性验证
+
+
 1. demo 添加：bundle 解析:
     - [x] OCI zephyr-scratch 镜像
     - [x] fetch information from bundle 
     - [x] 分配可用(目前不支持多核)CPU给clientOS
-    - [ ] 改用ocispec annotation + rootfs conf双解析，保险起见
+    - [x] 改用ocispec annotation + rootfs conf双解析，保险起见
 1. image build tool 
     - [x] 独立可用；一键构建
     - [ ] 继承到yocto 
     - [ ] yocto对于xen-mica的情况需要编image.bin
 1. 核分配完善:
-    1. create时的freeCPU/create分配但是没有启动过的enqHead/使用过的CPU enqTail
-    2. stop时 CPU enqTail
-    3. 异常 CPU enqTailk
+    - [ ] 异常 CPU 
+    - [ ] 可分配核池
+    - [ ] Pod Sandbox CPU 归入 Pool
 1. IO
+    - [x] basic work
+    - [ ] 完全连通性
+    - [ ] pty 实现
+1. network
+1. **保留Linux上使用容器的能力**
 
-1. container events
+- [x] container events
 1. pod IP
-1. client sock收回的问题；
+- [x] client sock收回的问题；
 
 
 ###  其他事项
@@ -159,144 +177,3 @@
 * k8s接入的问题分析
 * log轻型化
 
-
-###  已知问题
-
-**TYPOS:**
-* micad会先响应一个"No such file"?
-
-**BUG:**
-* fix mock_micad memory leaking...
-
-## ️ Architecture (unstable)
-
-### MCS Arch
-
-```
-Linux Host Core (ARM Core 0)         RTOS Remote Core (ARM Core 1)
-┌─────────────────────────────┐      ┌─────────────────────────────┐
-│  micad (User Space)         │      │  Zephyr RTOS (Kernel)       │
-│  ├─ RPMsg PTY Client ───────┼──────┼─ RPMsg PTY Server           │
-│  ├─ RPMsg RPC Client ───────┼──────┼─ RPMsg RPC Server           │
-│  ├─ RPMsg Debug Client ─────┼──────┼─ RPMsg Debug Server         │
-│  └─ OpenAMP Library         │      │  └─ OpenAMP Library         │
-├─────────────────────────────┤      ├─────────────────────────────┤
-│  Kernel Space               │      │  Resource Table (Static)    │
-│  ├─ /dev/mcs device         │      │  ├─ Memory regions          │
-│  └─ Memory management       │      │  ├─ VirtIO devices          │
-└─────────────────────────────┘      │  └─ Endpoint definitions    │
-               |                     └─────────────────────────────┘
-               |                                      | 
-         ┌─────▼──────────────────────────────────────▼───┐
-         │  Physical Shared Memory                        │
-         │  ├─ VirtQueue Rings (RPMsg transport)          │
-         │  ├─ Buffer Pools (Message data)                │
-         │  └─ Control Structures (Status, locks)         │
-         └────────────────────────────────────────────────┘
-```
-
-## Agent Architecture Considerations
-
-### Current Status: No Agent Needed
-
-Micran currently uses a **direct communication model** without an Agent abstraction layer:
-```
-Containerd → Micran (Sandbox) → libmica → Unix Socket → micad → RTOS
-```
-
-This simple model is sufficient for micran's current requirements:
-- Single RTOS type (Zephyr) support
-- 1:1:1 mapping (Container:RTOS Client:Task)
-- Static task deployment (tasks auto-start with RTOS boot)
-- Basic resource management (CPU core assignment)
-- Simple PTY-based I/O
-
-### Evolution Thresholds Requiring Agent
-
-An Agent pattern would become necessary when micran evolves to support more complex scenarios:
-
-#### High Priority Thresholds
-1. **Multiple RTOS Types** (≥3 distinct RTOS)
-   - Current: Zephyr only
-   - Future: Zephyr + FreeRTOS + RT-Thread + custom RTOS
-   - Agent needed: Protocol translation and RTOS abstraction
-
-2. **Dynamic Task Management**
-   - Current: Tasks auto-start with RTOS boot
-   - Future: Start/stop tasks dynamically after RTOS is running
-   - Agent needed: In-RTOS task manager and service registry
-
-#### Medium Priority Thresholds
-3. **Advanced Resource Management**
-   - Memory hotplug, CPU sharing, QoS guarantees
-   - Agent needed: Resource negotiation and enforcement
-
-4. **Network Service Mesh**
-   - Inter-RTOS communication, service discovery
-   - Agent needed: Network proxy and service registry
-
-5. **Security Isolation Levels**
-   - Trusted execution, encrypted communication
-   - Agent needed: Security policy enforcement
-
-#### Low Priority Thresholds
-6. **Deep Monitoring & Observability**
-   - Performance profiling, distributed tracing
-   - Agent needed: Metrics collection and aggregation
-
-7. **Stateful Service Support**
-   - Database services, message queues
-   - Agent needed: State synchronization and recovery
-
-### Strategic Approach
-
-**Phase 1 (Current)**: Remove existing Agent pattern and use direct libmica calls from Sandbox
-
-**Phase 2 (Preparation)**: When approaching thresholds:
-- Standardize RTOS communication protocols
-- Implement service discovery in micad
-- Create resource allocation APIs
-- Build async event notification system
-
-**Phase 3 (Implementation)**: Introduce Agent when crossing ≥2 high-priority thresholds or ≥4 total thresholds
-
-The Agent would act as an RTOS-side service manager, handling:
-- Protocol translation for multiple RTOS types
-- In-RTOS service lifecycle management
-- Resource abstraction and enforcement
-- Security policy enforcement
-
-**Key Insight**: Agent should be introduced when transitioning from simple containerization to distributed RTOS orchestration.
-
-## Future Plans
-
-* containerd 2.0 (shim-v3)
-
-### yocto 相关
-
-* isulad yocto 需要跟随版本（k8s上游版本）;
-    * enable CRI V1(>=CRI 1.26)
-```json
-{
-"group": "isula",
-"default-runtime": "runc",
-...
-"enable-cri-v1": true
-}
-```
-    * 开启`ENABLE_CRI_API_V1` flag: `cmake ../ -D ENABLE_CRI_API_V1`
-* yocto: speed up the building of iSulad Shimv2? (其实也就是比用prebuild慢了几秒)
-  > 预定考虑的策略： remove debug-info; faster linker; ...
-* oebuild 加入 docker, 在构建时手动构建特定rtos的scratch镜像
-
-## TODO
-
-* using XMake to manage the building system ()
-* 组件内容设定为：shim + runtime 合并一起，与micad的通信移除，改为直接扩充libmica, 走openamp等策略发；语言可以换
-  - 比如pty，可能我们需要更优的策略来转
-
-
-
-# references
-
-[urunc talk](https://blog.cloudkernels.net/posts/urunc/)

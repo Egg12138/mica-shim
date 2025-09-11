@@ -92,7 +92,6 @@ func create(ctx context.Context, s *shimService, r *taskAPI.CreateTaskRequest) (
 		}
 
 		s.sandbox = sandbox
-		s.shimPid = uint32(os.Getpid())
 
 	case cntr.PodContainer:
 		if s.sandbox == nil {
@@ -150,7 +149,8 @@ func loadRuntimeConfig(s *shimService, r *taskAPI.CreateTaskRequest, annotations
 		configPath = os.Getenv(defs.MicranConfEnv)
 	}
 
-	// set configPath through environment variable
+	// use default configuration when configPath is not set
+	// TODO:  
 	if configPath != "" {
 		if _, err := loadConfigFromFile(configPath); errors.Is(err, errdefs.ErrNotImplemented) {
 			log.Warnf("loading config from file is not implemented yet")
@@ -184,7 +184,14 @@ func getConfigPathFromOptions(options typeurl.Any) (string, error) {
 // TODO: Implement actual config file loading
 func loadConfigFromFile(configPath string) (*oci.RuntimeConfig, error) {
 	// For now, create default config and enhance with file-specific settings
+	empty := &oci.RuntimeConfig{}
 	config := oci.NewRuntimeConfig()
+
+	err := config.ParseRuntimeFromFile(configPath)
+	if err != nil {
+		return empty, err
+	}
+
 	return config, errdefs.ErrNotImplemented
 }
 
@@ -202,14 +209,14 @@ func loadContainerState(id string) (*cntr.ContainerState, error) {
 }
 
 func setupMicranStateDir() error {
-	if err := os.MkdirAll(defs.MicranStateDir, 0755); err != nil {
+	if err := os.MkdirAll(defs.DefaultMicranStateDir, 0755); err != nil {
 		return fmt.Errorf("failed to create micran state directory: %w", err)
 	}
 	return nil
 }
 
 func saveContainerState(c *cntr.Container) error {
-	if err := os.MkdirAll(filepath.Join(defs.MicranStateDir, c.ID()), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(defs.DefaultMicranStateDir, c.ID()), 0o755); err != nil {
 		log.Debugf("failed to create <%s> state directory: %v", c.ID)
 		return err
 	}

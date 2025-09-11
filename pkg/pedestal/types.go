@@ -9,7 +9,7 @@ const (
 	Xen PedType = iota
 	FusionDock
 	ACRN
-	Baremetal
+	OpenAMP
 	Unsupported
 )
 

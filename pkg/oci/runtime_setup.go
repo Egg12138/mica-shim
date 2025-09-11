@@ -3,12 +3,27 @@ package oci
 import (
 	"encoding/json"
 	defs "mica-shim/definitions"
+	"mica-shim/pkg/fileutils"
+	"mica-shim/pkg/pedestal"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/gookit/ini/v2"
 	"github.com/opencontainers/runtime-spec/specs-go"
+)
+
+var (
+	runtimeConfigKeys = []string{
+		defs.ConfigKeyDebug,
+		defs.ConfigStaticResource,
+		defs.ConfigKeyStateDir,
+		defs.ConfigKeyLinuxContainer,
+		defs.ConfigKeyClientLimit,
+		defs.ConfigKeyMaxContainerVCPU,
+	}
+	
 )
 
 type RuntimeConfig struct {
@@ -19,24 +34,51 @@ type RuntimeConfig struct {
 	// Global resource management settings
 	MaxContainerCPUs   uint32 // Maximum CPU cores available for containers
 	MaxContainerMemMB  uint32 // Maximum memory available for containers
-	CPUSchedulerPolicy string // CPU scheduling policy: "round-robin", "priority", etc.
-	MemoryOvercommit   bool   // Allow memory overcommit
+	CPUSchedulerPolicy string 
+	MemoryOvercommit   bool   
 
 	// MICA-specific configurations
 	Pedestal            string // Default pedestal type if not specified
-	EnableResourceLimit bool   // Whether to enforce resource limits
 	PauseImage          string
+	StaticResourceManagement bool
 }
 
-// return a initialized RuntimeConfig
+// return a default RuntimeConfig
 func NewRuntimeConfig() *RuntimeConfig {
+	ped := pedestal.GetHostPed()
+	var staticResource bool
+	if ped == pedestal.OpenAMP {
+		staticResource = true
+	}
+
 	spec := RuntimeConfig{
 		// MICA defaults
-		Pedestal:            "baremetal",
-		EnableResourceLimit: true,
+		Pedestal:            pedestal.GetHostPed().String(),
+		StaticResourceManagement: staticResource,
 	}
 	return &spec
 }
+
+
+// ini conf
+// TODO: with expanding of micran runtime config, we will migrate gookit.ini/v2 to 
+// out ParseConfigINI, ParseConfigINI requires only half memory of ini package and faster
+// for large ini file parsing
+func (r *RuntimeConfig) ParseRuntimeFromFile(configPath string) error {
+	fileutils.ParseConfigINI(configPath, runtimeConfigKeys)
+	err := ini.LoadExists(configPath)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (r *RuntimeConfig) convertRawConfig(raw map[string]string) {
+
+}
+
+func filterRuntimeItems() bool {return true}
 
 func (r *RuntimeConfig) SetDebug(debug bool) *RuntimeConfig {
 	r.Debug = debug
@@ -78,10 +120,6 @@ func (r *RuntimeConfig) SetDefaultPedestal(pedestal string) *RuntimeConfig {
 	return r
 }
 
-func (r *RuntimeConfig) SetEnableResourceLimit(enable bool) *RuntimeConfig {
-	r.EnableResourceLimit = enable
-	return r
-}
 
 // ParseRuntimeConfig parses runtime configuration from annotations
 // TODO: match these dummy config items with actual implementation, define prefix in package definitions
@@ -92,8 +130,6 @@ func (cfg *RuntimeConfig) ParseRuntimeConfig(annotations map[string]string) *Run
 		if !strings.HasPrefix(key, defs.MicraAnnotationPrefix) || value == "" {
 			continue
 		}
-
-		// Remove prefix to get the config key
 
 		switch key {
 		case defs.RuntimeDebug:
@@ -124,10 +160,6 @@ func (cfg *RuntimeConfig) ParseRuntimeConfig(annotations map[string]string) *Run
 			}
 		case defs.Pedtype:
 			cfg.SetDefaultPedestal(value)
-		case "runtime.enable_resource_limit":
-			if enable, err := strconv.ParseBool(value); err == nil {
-				cfg.SetEnableResourceLimit(enable)
-			}
 		case "runtime.pause":
 			cfg.PauseImage = value
 		}

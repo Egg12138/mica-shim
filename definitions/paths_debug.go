@@ -19,7 +19,7 @@ const (
 )
 
 const (
-	MicaContainersRoot   = "/tmp/micran/containers"
+	DefaultMicranStateDir       =  "/tmp/micran/containers"
 	MicantainerStateFile = "state.json"
 	SandboxStateFile     = "state.json"
 	MicranStateDir       = "/tmp/micran"

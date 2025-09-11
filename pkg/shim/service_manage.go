@@ -40,7 +40,6 @@ type exit struct {
 type shimService struct {
 	sandbox    cntr.SandboxTraits
 	containers map[string]*container
-	shimPid    uint32
 	micadPid   uint32
 	// context:
 	ctx context.Context
@@ -64,6 +63,10 @@ type shimService struct {
 
 var (
 	_ taskAPI.TaskService = (*shimService)(nil)
+
+	// shimPid is the process ID of the shim.
+	// It's initialized once when the package is loaded.
+	shimPid = uint32(os.Getpid())
 )
 
 const (
@@ -92,7 +95,6 @@ func New(ctx context.Context, id string, publisher shimv2.Publisher, shutdown fu
 	s := &shimService{
 		id:         id,
 		micadPid:   micadPid,
-		shimPid:    uint32(os.Getpid()),
 		namespace:  ns,
 		ctx:        ctx,
 		containers: make(map[string]*container),

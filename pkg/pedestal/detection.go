@@ -28,12 +28,6 @@ func GetHostPed() PedType {
 	return hostPedCache
 }
 
-// ComputeHostPed performs the actual pedestal type detection without caching
-// This is exposed for testing and performance comparison
-func ComputeHostPed() PedType {
-	return computeHostPed()
-}
-
 // computeHostPed performs the actual pedestal type detection
 func computeHostPed() PedType {
 	if defs.IsMock {

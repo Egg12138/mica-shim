@@ -12,6 +12,7 @@ const (
 	// ContainerTypeKey is the annotation key for the container type.
 	ContainerTypeKey     = MicraAnnotationPrefix + "pkg.oci.container_type"
 	SandboxConfigPathKey = MicraAnnotationPrefix + "config_path"
+
 )
 
 // Pedestal configurations.
@@ -35,7 +36,7 @@ const (
 
 	NetPlaceholder = PedConfPrefix + "net_placeholder"
 	// DefaultMaxCPU specifies the maximum number of CPUs visible in the client.
-	// for Xen,ACRN : maxcpus; 
+	// for Xen,ACRN : maxcpus;
 	// for openAMP  : useless, no vcpu
 	DefaultMaxCPU = PedConfPrefix + "defautl_max_cpu"
 	// DefaulaMemory specifies the maximum byte size of memory assigned for the client.

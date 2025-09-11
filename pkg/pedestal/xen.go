@@ -22,47 +22,82 @@ const DefaultXenWeight = 256
 const ShareWeightRatio = DefaultCgroupShare / DefaultXenWeight
 
 // xl info:
-//             host                   : scarlett
-//             release                : 3.1.0-rc4+
-//             version                : #1001 SMP Wed Oct 19 11:09:54 UTC 2011
-//             machine                : x86_64
-//             nr_cpus                : 4
-//             nr_nodes               : 1
-//             cores_per_socket       : 4
-//             threads_per_core       : 1
-//             cpu_mhz                : 2266
-//             hw_caps                : bfebfbff:28100800:00000000:00003b40:009ce3bd:00000000:00000
-// 001:00000000
-//             virt_caps              : hvm hvm_directio
-//             total_memory           : 6141
-//             free_memory            : 4274
-//             free_cpus              : 0
-//             outstanding_claims     : 0
-//             xen_major              : 4
-//             xen_minor              : 2
-//             xen_extra              : -unstable
-//             xen_caps               : xen-3.0-x86_64 xen-3.0-x86_32p hvm-3.0-x86_32 hvm-3.0-x86_3
-// 2p hvm-3.0-x86_64
-//             xen_scheduler          : credit
-//             xen_pagesize           : 4096
-//             platform_params        : virt_start=0xffff800000000000
-//             xen_changeset          : Wed Nov 02 17:09:09 2011 +0000 24066:54a5e994a241
-//             xen_commandline        : com1=115200,8n1 guest_loglvl=all dom0_mem=750M console=com1
-//             cc_compiler            : gcc version 4.4.5 (Debian 4.4.5-8)
-//             cc_compile_by          : sstabellini
-//             cc_compile_domain      : uk.xensource.com
-//             cc_compile_date        : Tue Nov  8 12:03:05 UTC 2011
-//             xend_config_format     : 4
+// `host                   : qemu-aarch64
+// release                : 5.10.0-openeuler
+// version                : #1 SMP PREEMPT Sat Jun 7 07:26:44 UTC 2025
+// machine                : aarch64
+// nr_cpus                : 3
+// max_cpu_id             : 2
+// nr_nodes               : 1
+// cores_per_socket       : 1
+// threads_per_core       : 1
+// cpu_mhz                : 62.500
+// hw_caps                : 00000000:00000000:00000000:00000000:00000000:00000000:00000000:00000000
+// virt_caps              : hvm hap vpmu gnttab-v1
+// arm_sve_vector_length  : 0
+// total_memory           : 2048
+// free_memory            : 1427
+// sharing_freed_memory   : 0
+// sharing_used_memory    : 0
+// outstanding_claims     : 0
+// free_cpus              : 0
+// xen_major              : 4
+// xen_minor              : 18
+// xen_extra              : .2
+// xen_version            : 4.18.2
+// xen_caps               : xen-3.0-aarch64 xen-3.0-armv7l
+// xen_scheduler          : credit2
+// xen_pagesize           : 4096
+// platform_params        : virt_start=0x0
+// xen_changeset          :
+// xen_commandline        : console=dtuart dtuart=/pl011Git commit '9000000' (see below for commit info) dom0_mem=512M
+// cc_compiler            : aarch64-openeuler-linux-gnu-gcc (crosstool-NG 1.26.0) 12.3.1 20
+// cc_compile_by          :
+// cc_compile_domain      :
+// cc_compile_date        : 2025-06-07
+// build_id               : d54faddad0e57e72305a485d9b89288188c56ae8
+// xend_config_format     : 4`
+
 
 type XlInfo struct {
 	host        string
 	machine     string
+	// max physical cpus that Xen can handle
 	nrCpus      uint32
 	totalMemory uint64
 	freeMemory  uint64
-	// xlver = <info::xen_major>.<info::xen_minor>.<info::xen_extra>
 	xlver string
-	// TODO: attach Xl... struct into XlInfo, in order to parse once, reuse thoudsand times
+	
+	maxCpuId         uint32  
+	// Cores per socket (NUMA/topology awareness)
+	coresPerSocket   uint32  
+	// Threads per core (SMT/hyperthreading info)
+	threadsPerCore   uint32  
+	cpuMhz          float64  
+	// number of cpus that are not allocated in **a cpu pool**
+	freeCpus        uint32   
+	
+	xenCaps         string   
+	// Scheduler type (credit, credit2, etc.)
+	// decides in Xen building, default to be credit2 for now
+	xenScheduler    string   
+	xenPagesize     uint32   
+	virtCaps        string   
+
+	// Memory claims pending (affects available memory calculations)
+	outstandingClaims uint64 
+	// Shared memory freed (memory reuse optimization)
+	sharingFreedMemory uint64 
+	// Shared memory used (current shared memory usage)
+	sharingUsedMemory  uint64 
+	
+	platformParams  string   
+	// Xen boot parameters 
+	xenCommandline  string   
+	
+	// ARM-specific fields (for aarch64 systems - architecture optimizations)
+	// turn off by default
+	armSVEVectorLength uint32
 }
 
 type XlVcpuInfo struct {
@@ -113,6 +148,7 @@ func xinfo() (*XlInfo, error) {
 	return parseXlInfo(out.String())
 }
 
+
 func parseXlInfo(output string) (*XlInfo, error) {
 	info := &XlInfo{}
 	scanner := bufio.NewScanner(strings.NewReader(output))
@@ -159,6 +195,67 @@ func parseXlInfo(output string) (*XlInfo, error) {
 		case "xen_extra":
 			if info.xlver != "" {
 				info.xlver += value
+			}
+			
+		// CPU topology and scheduling information
+		case "max_cpu_id":
+			if maxCpuId, err := strconv.ParseUint(value, 10, 32); err == nil {
+				info.maxCpuId = uint32(maxCpuId)
+			}
+		case "cores_per_socket":
+			if coresPerSocket, err := strconv.ParseUint(value, 10, 32); err == nil {
+				info.coresPerSocket = uint32(coresPerSocket)
+			}
+		case "threads_per_core":
+			if threadsPerCore, err := strconv.ParseUint(value, 10, 32); err == nil {
+				info.threadsPerCore = uint32(threadsPerCore)
+			}
+		case "cpu_mhz":
+			if cpuMhz, err := strconv.ParseFloat(value, 64); err == nil {
+				info.cpuMhz = cpuMhz
+			}
+
+		case "free_cpus":
+			if freeCpus, err := strconv.ParseUint(value, 10, 32); err == nil {
+				info.freeCpus = uint32(freeCpus)
+			}
+			
+		// Xen capabilities and features
+		case "xen_caps":
+			info.xenCaps = value
+		case "xen_scheduler":
+			info.xenScheduler = value
+		case "xen_pagesize":
+			if xenPagesize, err := strconv.ParseUint(value, 10, 32); err == nil {
+				info.xenPagesize = uint32(xenPagesize)
+			}
+		case "virt_caps":
+			info.virtCaps = value
+			
+		// Memory management details
+		case "outstanding_claims":
+			if outstandingClaims, err := strconv.ParseUint(value, 10, 64); err == nil {
+				info.outstandingClaims = outstandingClaims
+			}
+		case "sharing_freed_memory":
+			if sharingFreedMemory, err := strconv.ParseUint(value, 10, 64); err == nil {
+				info.sharingFreedMemory = sharingFreedMemory
+			}
+		case "sharing_used_memory":
+			if sharingUsedMemory, err := strconv.ParseUint(value, 10, 64); err == nil {
+				info.sharingUsedMemory = sharingUsedMemory
+			}
+			
+		// Platform-specific information
+		case "platform_params":
+			info.platformParams = value
+		case "xen_commandline":
+			info.xenCommandline = value
+			
+		// ARM-specific fields
+		case "arm_sve_vector_length":
+			if armSVEVectorLength, err := strconv.ParseUint(value, 10, 32); err == nil {
+				info.armSVEVectorLength = uint32(armSVEVectorLength)
 			}
 		}
 	}
@@ -269,6 +366,20 @@ func LinuxResource2Essential(spec *specs.Spec) *EssentialResource {
 	// net
 
 	return r
+}
+
+// assume cpu set is valid
+// do hard affinity only
+func PinVCPU(shortId, cpus string) error {
+	if defs.IsMock {
+		return nil
+	}
+	cmd := newxl(vcpupin, shortId, "all", cpus)
+	log.Debugf("run %s to pinning vcpu %s to %s", cmd.String(), cpus, shortId)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("xl failed to pause %s: %v", shortId, err)
+	}
+	return nil
 }
 
 // the format of two cpuset are the same, but micran needs to calculate host cpu resource and so on

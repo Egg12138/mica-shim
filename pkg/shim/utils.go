@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/containerd/cgroups"
 	"github.com/containerd/containerd/api/types/task"
 	"github.com/containerd/containerd/mount"
 	shimv2 "github.com/containerd/containerd/runtime/v2/shim"
@@ -235,4 +236,14 @@ func loadSpec(id, bundle string) (*specs.Spec, string, error) {
 
 	return &spec, bundle, nil
 
+}
+
+func cgroupV1() (bool, error) {
+	if cgroups.Mode() == cgroups.Legacy || cgroups.Mode() == cgroups.Hybrid {
+		return true, nil
+	} else if cgroups.Mode() == cgroups.Unified {
+		return false, nil
+	} else {
+		return false, fmt.Errorf("get unknown cgroup mode")
+	}
 }

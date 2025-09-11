@@ -406,7 +406,7 @@ func waitContainerExit(ctx context.Context, s *shimService, c *container) (int32
 			ts:     timeStamp,
 			cid:    c.id,
 			execid: "",
-			pid:    s.shimPid,
+			pid:    shimPid,
 			status: int(ret),
 		}
 	}()

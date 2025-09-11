@@ -79,10 +79,12 @@ func bundleRootfs(bundle string) string {
 	return filepath.Join(bundle, "rootfs")
 }
 
+
+
 func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerType, detach bool) (*cntr.ContainerConfig, error) {
 	configPath := filepath.Join(bundleRootfs(bundle), defs.DefaultClientConf)
 	log.Debugf("config path = %s", configPath)
-	micaConf, err := fileutils.ParseConfigINI(configPath)
+	micaConf, err := fileutils.ParseConfigINI(configPath, defs.OKSectionList[:])
 	log.Pretty("mica config: %v", micaConf)
 	
 	// Debug: Check if file exists and list all parsed keys
@@ -185,6 +187,14 @@ func SandboxConfig(ocispec *specs.Spec, rc RuntimeConfig, bundle, sbContainerID 
 		log.Debugf("pedestal config for xen is the location of <image.bin>: %s", pedcfg)
 	}
 
+	staticResMngt := rc.StaticResourceManagement
+
+	// update container resource for openamp-based client is out of plan
+	
+	if pedestal.GetHostPed() == pedestal.OpenAMP {
+		staticResMngt = true
+	}
+
 	sandboxConfig := cntr.SandboxConfig{
 		ID:       sbContainerID,
 		Hostname: ocispec.Hostname,
@@ -201,8 +211,10 @@ func SandboxConfig(ocispec *specs.Spec, rc RuntimeConfig, bundle, sbContainerID 
 			WorkloadMemMB: rc.SandboxMemMB,
 		},
 
+		StaticResourceMgmt: staticResMngt,
 		EnableVCPUsPining: false,
 	}
+
 
 	return sandboxConfig, nil
 }

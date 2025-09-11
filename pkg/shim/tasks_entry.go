@@ -3,6 +3,7 @@ package shim
 import (
 	"context"
 	"fmt"
+	defs "mica-shim/definitions"
 	log "mica-shim/logger"
 	er "mica-shim/pkg/errors"
 	utils "mica-shim/pkg/fileutils"
@@ -77,11 +78,11 @@ func (s *shimService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) 
 			},
 			Checkpoint: r.Checkpoint,
 			// Pid is ExecID in comming task requests
-			Pid: s.shimPid,
+			Pid: shimPid,
 		})
 
 		return &taskAPI.CreateTaskResponse{
-			Pid: s.shimPid,
+			Pid: shimPid,
 		}, nil
 	}
 
@@ -106,7 +107,7 @@ func (s *shimService) Start(ctx context.Context, r *taskAPI.StartRequest) (*task
 		s.send(&events.TaskExecStarted{
 			ContainerID: c.id,
 			ExecID:      r.ExecID,
-			Pid:         s.shimPid,
+			Pid:         shimPid,
 		})
 	} else {
 		log.Info("starting container ")
@@ -116,12 +117,12 @@ func (s *shimService) Start(ctx context.Context, r *taskAPI.StartRequest) (*task
 		}
 		s.send(&events.TaskStart{
 			ContainerID: c.id,
-			Pid:         s.shimPid,
+			Pid:         shimPid,
 		})
 	}
 
 	return &taskAPI.StartResponse{
-		Pid: s.shimPid,
+		Pid: shimPid,
 	}, nil
 }
 
@@ -137,7 +138,7 @@ func (s *shimService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*ta
 		return &taskAPI.DeleteResponse{
 			ExitStatus: okExitCode,
 			ExitedAt:   timestamppb.Now(),
-			Pid:        s.shimPid,
+			Pid:        shimPid,
 		}, nil
 		// return nil, errdefs.ToGRPCf(errdefs.ErrNotFound, "container %s not found", r.ID)
 	}
@@ -147,7 +148,7 @@ func (s *shimService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*ta
 		return &taskAPI.DeleteResponse{
 			ExitStatus: okExitCode,
 			ExitedAt:   timestamppb.Now(),
-			Pid:        s.shimPid,
+			Pid:        shimPid,
 		}, nil
 	}
 
@@ -158,21 +159,21 @@ func (s *shimService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*ta
 	s.send(&events.TaskDelete{
 		ContainerID: r.ID,
 		ExitedAt:    timestamppb.New(c.exitTime),
-		Pid:         s.shimPid,
+		Pid:         shimPid,
 		ExitStatus:  okExitCode,
 	})
 
 	return &taskAPI.DeleteResponse{
 		ExitStatus: okExitCode,
 		ExitedAt:   timestamppb.New(c.exitTime),
-		Pid:        s.shimPid,
+		Pid:        shimPid,
 	}, nil
 }
 
 func (s *shimService) Pids(ctx context.Context, r *taskAPI.PidsRequest) (*taskAPI.PidsResponse, error) {
 	log.Debugf("Pids() start")
 	info := task.ProcessInfo{
-		Pid: s.shimPid,
+		Pid: shimPid,
 	}
 	proc := make([]*task.ProcessInfo, 1)
 	proc[0] = &info
@@ -449,8 +450,8 @@ func (s *shimService) Connect(ctx context.Context, r *taskAPI.ConnectRequest) (*
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return &taskAPI.ConnectResponse{
-		ShimPid: s.shimPid,
-		TaskPid: s.shimPid,
+		ShimPid: shimPid,
+		TaskPid: shimPid,
 	}, nil
 }
 
@@ -482,11 +483,33 @@ func (s *shimService) Shutdown(ctx context.Context, r *taskAPI.ShutdownRequest) 
 
 }
 
+
 func (s *shimService) Stats(ctx context.Context, r *taskAPI.StatsRequest) (*taskAPI.StatsResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	log.Warnf("protocol not implemented yet")
-	return &taskAPI.StatsResponse{Stats: nil}, nil
+	
+	c, ok := s.containers[r.ID]
+	if c == nil || !ok {
+		return nil, er.ErrContainerNotFound
+	}
+
+	stats, err := marshalMetrics(ctx, s, r.ID)
+	if err != nil {
+		log.Debugf("failed to marshal stats: %v", err)
+	}
+
+	if defs.IsMock && err != nil {
+		dummyStats, err := s.DummyStats()
+		if err != nil {
+			return &taskAPI.StatsResponse{Stats: nil}, nil
+		}
+		log.Debugf("returning dummy stats for container %s", r.ID)
+		stats = dummyStats
+	}
+
+	return &taskAPI.StatsResponse{
+		Stats: stats,
+	}, nil
 }
 
 func (s *shimService) State(ctx context.Context, r *taskAPI.StateRequest) (*taskAPI.StateResponse, error) {
@@ -501,7 +524,7 @@ func (s *shimService) State(ctx context.Context, r *taskAPI.StateRequest) (*task
 	return &taskAPI.StateResponse{
 		ID:         c.id,
 		Bundle:     c.bundle,
-		Pid:        s.shimPid,
+		Pid:        shimPid,
 		Status:     c.status,
 		Stdin:      c.stdin,
 		Stdout:     c.stdout,

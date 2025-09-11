@@ -16,6 +16,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/cpuset"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 )
@@ -46,8 +47,8 @@ type SandboxConfig struct {
 	Annotations       map[string]string
 	SharedMemorySize  uint64
 	SandboxResources  SandboxResourceSizing
-	EnableVCPUsPining bool
-	// TALK: consider static management
+	EnableVCPUsPining  bool
+	StaticResourceMgmt bool
 }
 
 func (sc *SandboxConfig) valid() bool {
@@ -690,6 +691,11 @@ func (s *Sandbox) ResumeContainer(ctx context.Context, id string) error {
 
 func (s *Sandbox) UpdateContainer(ctx context.Context, id string, resources specs.LinuxResources) error {
 	log.Debugf("Updated container %v resources", resources)
+
+	if s.config.StaticResourceMgmt {
+		return fmt.Errorf("container resources cannot be updated in static resource management mode")
+	}
+
 	c, ok := s.containers[id]
 	if !ok {
 		return er.ErrContainerNotFound
@@ -700,10 +706,16 @@ func (s *Sandbox) UpdateContainer(ctx context.Context, id string, resources spec
 		return err
 	}
 
+	if err := s.checkVCPUsPinning(ctx); err != nil {
+		log.Errorf("failed to check vcpus pinning: %v", err)
+		return err
+	}
+
 	if err := s.StoreSandbox(ctx); err != nil {
 		log.Error("failed to store sandbox after update container resource")
 		return err
 	}
+
 	return nil
 }
 
@@ -811,6 +823,7 @@ func DummySandboxConfig(cid string, spec *specs.Spec) (*SandboxConfig, error) {
 			WorkloadMemMB: 128,
 			BaseMemMB:     64,
 		},
+		StaticResourceMgmt: false,
 	}, nil
 }
 
@@ -1027,7 +1040,8 @@ func (s *Sandbox) initContainers(ctx context.Context) error {
 	return nil
 }
 
-// TODO: considering pinning vCPUs on different pedestal
+// TODO: universe pinning vCPUs for different pedestal in Libmica
+// if VCPUsPing
 func (s *Sandbox) checkVCPUsPinning(ctx context.Context) error {
 	if s.config == nil {
 		return fmt.Errorf("no sandbox config found")
@@ -1036,10 +1050,57 @@ func (s *Sandbox) checkVCPUsPinning(ctx context.Context) error {
 	if !s.config.EnableVCPUsPining {
 		return nil
 	}
-	
+
+	cpus, _, err := s.getMergedCpuset()
+	if err != nil {
+		return fmt.Errorf("failed to get merged CPUSet of containers in sandbox: %v", err)
+	}
+
+	cpuSet, err := cpuset.Parse(cpus)
+	if CpusetRangeValid(cpuSet) {
+		
+	}
+	if err != nil {
+		return fmt.Errorf("failed to parse CPUSet string %s: %v", cpus, err)
+	}
+
+
 	return nil
 }
 
+// merge all cpusets of containers in the sandbox
+// ocispec load memory nodes part and cpus part of cpuset in field of Linux.Resource.CPU.{Mems, Cpus}
+// string format cpuset is expected by mica
+// ref: kata-containers/src/runtime/virtcontainers/sandbox.go
+func (s *Sandbox) getMergedCpuset() (string, string, error) {
+	if s.config == nil {
+		return "", "", nil
+	}
+
+	cpuResult := cpuset.NewCPUSet()
+	memResult := cpuset.NewCPUSet()
+	for _, cfg := range s.config.ContainerConfigs {
+		resource := cfg.Resources
+		if resource != nil {
+			currCPUSet, err := cpuset.Parse(resource.CPU.Cpus)
+			if err != nil {
+				return "", "", fmt.Errorf("unable to parse CPUset.cpus for container %s: %v", cfg.ID, err)
+			}
+			cpuResult = cpuResult.Union(currCPUSet)
+
+			currMemSet, err := cpuset.Parse(resource.CPU.Mems)
+			if err != nil {
+				return "", "", fmt.Errorf("unable to parse CPUset.mems for container %s: %v", cfg.ID, err)
+			}
+			memResult = memResult.Union(currMemSet)
+		}
+	}
+
+	return cpuResult.String(), memResult.String(), nil
+
+}
+
+// recalculate resources pool for clients and call pedestal to resize
 func (s *Sandbox) updateResources(ctx context.Context) error {
 	if s == nil {
 		return er.ErrSandboxNil

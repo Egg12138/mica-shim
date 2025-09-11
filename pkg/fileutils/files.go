@@ -165,7 +165,7 @@ func SetReadonly(path string) error {
 // remove state file in micran state directory
 func RemoveExternalStatFile(id string) error {
 	// if the file does not exist, return nil
-	path := filepath.Join(defs.MicranStateDir, id, defs.MicantainerStateFile)
+	path := filepath.Join(defs.DefaultMicranStateDir, id, defs.MicantainerStateFile)
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil
 	}
@@ -174,7 +174,7 @@ func RemoveExternalStatFile(id string) error {
 }
 
 func RemoveStateDir(id string) error {
-	return os.RemoveAll(filepath.Join(defs.MicranStateDir, id))
+	return os.RemoveAll(filepath.Join(defs.DefaultMicranStateDir, id))
 }
 
 func MountDirs(mounts []*cdtypes.Mount, dest string) error {

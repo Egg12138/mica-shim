@@ -23,7 +23,36 @@ import (
 )
 
 type ContainerStats struct {
+	ResourceStats *ResourceStats
 	NetworkStats []*NetworkStats
+}
+
+type ResourceStats struct {
+	CPUStats     CPUStats                `json:"cpu_stats,omitempty"`
+	MemoryStats  MemoryStats             `json:"memory_stats,omitempty"`
+}
+
+type CPUStats struct {
+	// We only monitor total physical cpu time spending on current container
+	// in cgroup metrics, CPUStat includes UserUsec, SystemUsec (sum of them is TotalUsage)
+	// but it's unnecessary for RTOS to calculate them
+	TotalUsage uint64 `json:"total_usage,omitempty"`
+	// After client created, the number of schedule cycles pedestal (if supports)
+	NrPeriods uint64 `json:"nr_periods,omitempty"`
+}
+
+type MemoryStats struct {
+	Cache uint64            `json:"cache"`
+	Usage MemoryEntry       `json:"usage"`
+	Stats map[string]uint64 `json:"stats"`
+}
+
+type MemoryEntry struct {
+	Failcnt  uint64 `json:"failcnt,omitempty"`
+	Limit    uint64 `json:"limit,omitempty"`
+	// In static allocation, MaxEver = Limit
+	MaxEver uint64 `json:"max_ever,omitempty"`
+	Usage    uint64 `json:"usage,omitempty"`
 }
 
 type ContainerState struct {
@@ -70,7 +99,7 @@ type ContainerConfig struct {
 	// Pid is typically the shim pid.
 	Pid         int
 	Annotations map[string]string
-	OciSpec        *specs.Spec
+	Resources     *specs.LinuxResources
 
 	// relative path of <os>.elf in bundle
 	ElfPath      string      `json:"relative_path"`
@@ -426,6 +455,55 @@ func (c *Container) resume(ctx context.Context) error {
 
 // TODO: container update resource
 func (c *Container) update(ctx context.Context, resources specs.LinuxResources) error {
+	
+	if c.sandbox.state.State != StateRunning {
+		return fmt.Errorf("sandbox is not running, cannot stats container")
+	}
+
+	if c.notOperational() {
+		return fmt.Errorf("Container not ready or running, impossible to update the container")
+	}
+
+	res := c.config.Resources
+	if res.CPU == nil {
+		c.config.Resources.CPU = resources.CPU
+	}
+
+	if cpu := resources.CPU; cpu != nil {
+		period := cpu.Period
+		quota := cpu.Quota
+		Cpus := cpu.Cpus
+		Mems := cpu.Mems
+
+		if period != nil && *period != 0 {
+			res.CPU.Period = period
+		}
+
+		if quota != nil && *quota != 0 {
+			res.CPU.Quota = quota
+		}
+
+		if Cpus != "" {
+			res.CPU.Cpus = Cpus
+		}
+
+		if Mems != "" {
+			res.CPU.Mems = Mems
+		}
+	}
+
+	if res.Memory == nil {
+		c.config.Resources.Memory = resources.Memory
+	}
+
+	if mem := resources.Memory; mem != nil && mem.Limit != nil {
+		c.config.Resources.Memory.Limit = mem.Limit
+	}
+
+	if err := c.sandbox.updateResources(ctx); err != nil {
+		return err
+	}
+
 	log.Info("container dummy resource updated")
 	return nil
 }
@@ -650,7 +728,7 @@ func (c *Container) SaveState() error {
 	var err1 error
 
 	stateInBundle := filepath.Join(c.containerPath, defs.MicantainerStateFile)
-	stateInMicranDir := filepath.Join(defs.MicranStateDir, c.id, defs.MicantainerStateFile)
+	stateInMicranDir := filepath.Join(defs.DefaultMicranStateDir, c.id, defs.MicantainerStateFile)
 
 	// Ensure directories exist
 	if err := utils.EnsureDir(filepath.Dir(stateInBundle), defs.DirMode); err != nil {
@@ -693,7 +771,7 @@ func (c *Container) RestoreState() error {
 	var storage ContainerStorage
 
 	// Try to restore from micran state directory first
-	stateInMicranDir := filepath.Join(defs.MicranStateDir, c.id, defs.MicantainerStateFile)
+	stateInMicranDir := filepath.Join(defs.DefaultMicranStateDir, c.id, defs.MicantainerStateFile)
 	raw, err := utils.RestoreStructFromJSON(stateInMicranDir)
 
 	// If that fails, try bundle directory
