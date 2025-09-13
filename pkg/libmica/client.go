@@ -65,6 +65,8 @@ const (
 	serviceDebug MicaService = "debug"
 )
 
+type MicaExecutor struct {}
+
 // Structs and Methods
 
 // MicaStatus represents the complete status of a MICA client
@@ -466,3 +468,10 @@ func FilterStatuses(statuses []*MicaStatus, nameFilter string, stateFilter MicaS
 	return filtered
 }
 
+// TODO: this function is not in use now, we migrate from `UpdateVCPUs` to this function
+// after allocating sandbox cpus in xen pool is finished.
+func (me *MicaExecutor) UpdateSandboxPoolVCPUs() {}
+
+func (me *MicaExecutor) UpdateVCPUs(newVCPUs uint64) (oldCPUs, newCPUs uint64, retErr error)  {
+	return 0, 0, nil
+} 

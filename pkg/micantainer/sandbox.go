@@ -159,6 +159,7 @@ type Sandbox struct {
 	sync.Mutex
 	// fs, storage, devices, volumes...
 	// monitor
+	micaExecutor libmica.MicaExecutor
 	agent      RealAgent
 	config     *SandboxConfig
 	containers map[string]*Container
@@ -846,6 +847,7 @@ func newSandbox(ctx context.Context, config SandboxConfig) (sb *Sandbox, retErr 
 		ctx:        ctx,
 		config:     &config,
 		containers: make(map[string]*Container),
+		micaExecutor: libmica.MicaExecutor{},
 		id:         config.ID,
 		state: SandboxState{
 			State:   StateCreating,
@@ -1107,7 +1109,24 @@ func (s *Sandbox) updateResources(ctx context.Context) error {
 	}
 
 	if s.config == nil {
+		return fmt.Errorf("sandbox config is nil")
 	}
+
+	if s.config.StaticResourceMgmt {
+		log.Debug("static resource management is enabled, updating resource is not supported")
+	}
+
+	sandboxVCPUs, err := calculateSandboxVCPUs(s)
+	if err != nil {
+		return err
+	}
+
+	sandboxMemoryMB := calculateSandboxMemory(s)
+
+	log.Infof("trying to update sandbox vcpus")
+	oldCPU, newCPU, err := s.micaExecutor.UpdateVCPUs(sandboxVCPUs)
+	
+	
 	return nil
 }
 

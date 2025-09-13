@@ -2,6 +2,81 @@
 
 ### Design
 
+#### mica control flow
+
+```mermaid
+---
+config:
+  layout: elk
+---
+flowchart TB
+ subgraph IF["PedestalTraits"]
+        Compatibility["Compatibility"]
+        SRF["Statisitc Resources Usage function family"]
+        STF["Static Resource management functions family"]
+        DTF["Dynamic Resource Managemnent functions family"]
+  end
+ subgraph pedestalTypes["pedestalTypes"]
+        Xen["Xen:static/dyn"]
+        OpenAMP["OpenAMP:static resource"]
+        Jailhouse["Jailhouse:static resource"]
+  end
+ subgraph MH["Micacommand handler"]
+        ST["stop"]
+        CR["create"]
+        PA["pause"]
+        RS["resume"]
+        RM["remove"]
+        SS["status"]
+        MC["monitor"]
+        UP["update"]
+  end
+ subgraph MicaExecutor["MicaExecutor"]
+        CreateClient["CreateClient"]
+        StartClient["StartClient"]
+        PauseClient["PauseClient"]
+        ResumeClient["ResumeClient"]
+        DeleteClient["DeleteClient"]
+        StatusClient["StatusClient"]
+        StatusSandbox["StatusSandbox"]
+        MonitorClient["MonitorClient"]
+        UPR["Resource managment functions"]
+  end
+ subgraph libmica["libmica"]
+        MicaExecutor
+        MH
+  end
+    A["Shim"] --> MicaExecutor
+    Xen -.- impl["impl"]
+    impl -.-> IF & IF & IF
+    OpenAMP -.- impl
+    Jailhouse -.- impl
+    CreateClient --> CR
+    StartClient --> ST
+    PauseClient --> PA
+    ResumeClient --> RS
+    DeleteClient --> RM
+    StatusClient L_StatusClient_SS_0@--> SS
+    StatusSandbox -- **bypass mica** --> IF
+    MonitorClient -- **bypass mica** --> IF
+    UPR --> UP
+    MH -- **if mica unsupports, workaround: bypass micad** --> IF
+    MH -- **if mica supports, via micad** --> MICAD["MICAD"]
+    impl@{ shape: rect}
+     A:::Class_01
+     MICAD:::Aqua
+    classDef Aqua stroke-width:1px, stroke-dasharray:none, stroke:#46EDC8, fill:#DEFFF8, color:#378E7A
+    classDef Class_01 fill:#FFF9C4
+    style MicaExecutor stroke:#FFF9C4,fill:transparent
+    style MH stroke:#000000,fill:transparent
+    style impl stroke-width:4px,stroke-dasharray: 5
+    style IF fill:#FFCDD2
+    style libmica stroke:none,fill:#BBDEFB
+    L_StatusClient_SS_0@{ animation: none }
+```
+
+![control flow](./images/micran-mica-controlflow.png)
+
 #### configs
 
 ![config flow](./images/micranConfigFlow.png)

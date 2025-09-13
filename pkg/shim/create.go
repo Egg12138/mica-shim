@@ -197,7 +197,7 @@ func loadConfigFromFile(configPath string) (*oci.RuntimeConfig, error) {
 
 func parseRuntimeConfigFromAnnotations(annotations map[string]string) *oci.RuntimeConfig {
 	rc := oci.NewRuntimeConfig()
-	return rc.ParseRuntimeConfig(annotations)
+	return rc.ParseRuntimeConfigFromAnno(annotations)
 }
 
 // loadContainerState loads container state from various locations

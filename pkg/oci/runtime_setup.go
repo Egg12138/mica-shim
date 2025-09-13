@@ -121,9 +121,9 @@ func (r *RuntimeConfig) SetDefaultPedestal(pedestal string) *RuntimeConfig {
 }
 
 
-// ParseRuntimeConfig parses runtime configuration from annotations
+// ParseRuntimeConfigFromAnno parses runtime configuration from annotations
 // TODO: match these dummy config items with actual implementation, define prefix in package definitions
-func (cfg *RuntimeConfig) ParseRuntimeConfig(annotations map[string]string) *RuntimeConfig {
+func (cfg *RuntimeConfig) ParseRuntimeConfigFromAnno(annotations map[string]string) *RuntimeConfig {
 	cfg.PauseImage = defs.PauseImage
 	// Parse runtime-level annotations with mica annotation prefix
 	for key, value := range annotations {

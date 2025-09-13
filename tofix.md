@@ -47,10 +47,11 @@
 - [ ] 优化镜像配置、sandbox的设置逻辑:annotation => file => default => bundle, ordered by priority; bundle 作为 校验使用。annotation的必须要和 bundle 中解析出来的一致
 
 - [ ] sandbox Update Resource: parse cpuset when updating!
+- [ ] openAMP case的静态资源管理
 - [ ] 将Sandbox作为一个Pool:
 > for xen, sandbox cpu range => sandbox cpu pool
 > sandbox memory is a memory pool
-- [x] 圆整和同步问题：
+- [x] 圆整：
 > baremetal中都是取整，那么multi-shim记录就需要使用这个取整后的值, xen同理.
 > vcpu统一解决：默认圆整cpucapacity
 - [x] vcpu映射决策

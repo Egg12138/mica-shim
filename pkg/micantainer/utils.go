@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/cpuset"
 )
 
 func createContainerInSandbox(sandbox SandboxTraits, config *ContainerConfig) (*RTOSTask, error) {
@@ -78,8 +80,18 @@ func createMicaConf(container *Container) (libmica.MicaClientConf, error) {
 	return conf, nil
 }
 
+// TODO: impl
+func calculateSandboxVCPUs(s *Sandbox) (uint32, error) { 
+	return 0, nil
+}
+
+// TODO: impl
+func calculateSandboxMemory(s *Sandbox) uint64 { 
+	return 0
+}
+
+
 // getSystemMemoryBytes returns the total system memory in bytes
-// BUG:
 func getSystemMemoryBytes() int64 {
 	data, err := os.ReadFile("/proc/meminfo")
 	if err != nil {
@@ -103,3 +115,10 @@ func getSystemMemoryBytes() int64 {
 	log.Warnf("failed to parse MemTotal from /proc/meminfo, using default")
 	return 2 * 1024 * 1024 * 1024 // Default to 2GB
 }
+
+
+// TODO: not overrange of machine nrcpus
+func CpusetRangeValid(cpuset cpuset.CPUSet) bool {
+	return true
+}
+
