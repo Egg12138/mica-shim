@@ -1,4 +1,4 @@
-package fileutils
+package utils
 
 import (
 	"bufio"
@@ -11,7 +11,6 @@ import (
 // KoLoaded reports whether the named kernel module is present in the running kernel.
 // It reads /proc/modules once and caches the parsed list for subsequent calls.
 func KoLoaded(name string) (bool, error) {
-	// 1. Lock-free, per-package cache: map[string]struct{} is ~O(1) lookup.
 	staticList, err := loadKoList()
 	if err != nil {
 		return false, err
