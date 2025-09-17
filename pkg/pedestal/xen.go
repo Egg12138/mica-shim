@@ -20,6 +20,7 @@ import (
 const DefaultCgroupShare = 1024
 const DefaultXenWeight = 256
 const ShareWeightRatio = DefaultCgroupShare / DefaultXenWeight
+const balloonDriverName = "xen_balloon"
 
 // xl info:
 // `host                   : qemu-aarch64
@@ -318,48 +319,45 @@ func XenDefaultPedConf() string {
 
 
 func LinuxResource2Essential(spec *specs.Spec) *EssentialResource {
-	r := &EssentialResource{}	
+	r := InitResource()
 	// cpu
 	cpu := spec.Linux.Resources.CPU
 	if cpu.Quota != nil && cpu.Period != nil && *cpu.Period > 0 {
-		r.CpuPeriod = *cpu.Period
-		r.CpuQuota = *cpu.Quota
+		r.CpuPeriod = cpu.Period
+		r.CpuQuota = cpu.Quota
 		cpuCapacity := *cpu.Quota / int64(*cpu.Period)
 		if cpuCapacity > 0 {
-			r.CpuCpacity = uint32(100 * cpuCapacity)
-		} else {
-			r.CpuCpacity = 0
-		}
+			*r.CpuCpacity = uint32(100 * cpuCapacity)
+		} 
 	} else {
 		log.Debugf("cpu quota/period pair = < %s:%s > is incomplete,Xen scheduler will allow all possible cpu to container", cpu.Quota, cpu.Period)
-		r.CpuCpacity = 0
 	}
 
 	if cpu.Shares != nil {
 		calculatedWeight := *cpu.Shares / ShareWeightRatio
 		if calculatedWeight < 1 {
-			r.CPUWeight = 1
+			*r.CPUWeight = 1
 		} else if calculatedWeight > 65535 {
 			log.Debugf("cpu.Shares %d is too high, resulting weight is greater than 65535. Clamping to 65535.", *cpu.Shares)
-			r.CPUWeight = 65535
+			*r.CPUWeight = 65535
 		} else {
-			r.CPUWeight = uint32(calculatedWeight)
+			*r.CPUWeight = uint32(calculatedWeight)
 		}
 	} else {
 		log.Debugf("cpu shares is nil, use default weight %d", DefaultXenWeight)
-		r.CPUWeight = DefaultXenWeight
+		*r.CPUWeight = DefaultXenWeight
 	}
 
 	cpus, set, vcpuNum := validateCPUSet(cpu.Cpus)
 
 	log.Debugf("pinning cpu set = %v, parse to %v", cpus, set)
 	// vcpuNum = calculateVCPU(&set, int(r.CpuCpacity))
-	r.Vcpu = uint32(vcpuNum)
+	*r.Vcpu = uint32(vcpuNum)
 
 	// mem
 	mem := spec.Linux.Resources.Memory
 	if mem != nil && mem.Limit != nil {
-		r.MemoryLimit = uint32(*mem.Limit / 1024 / 1024)
+		*r.MemoryLimitMB = uint32(*mem.Limit >> 20)
 	}
 
 
@@ -405,3 +403,4 @@ func calculateVCPU(cpuSet *cpuset.CPUSet, vcpuAssigned int) int {
 	}
 	return cpuSet.Size()
 }
+

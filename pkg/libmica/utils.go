@@ -4,8 +4,8 @@ import (
 	"fmt"
 	defs "mica-shim/definitions"
 	log "mica-shim/logger"
-	utils "mica-shim/pkg/fileutils"
 	ped "mica-shim/pkg/pedestal"
+	utils "mica-shim/pkg/utils"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -68,7 +68,7 @@ func queryStatus(id string) (string, error) {
 	// It will then send the MStatus command to this socket.
 	// BUG: micactl status will write status information directly to stdout!!!!
 	// we have to manually parse status
-	if err := MicaCtl(MStatus, id); err != nil {
+	if err := micaCtl(MStatus, id); err != nil {
 		// MicaCtl might already return a detailed error.
 		// We can add more context here if needed.
 		return "", fmt.Errorf("failed to query status for client %s via MicaCtl: %w", id, err)

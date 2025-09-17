@@ -7,9 +7,10 @@ import (
 	defs "mica-shim/definitions"
 	log "mica-shim/logger"
 	er "mica-shim/pkg/errors"
-	utils "mica-shim/pkg/fileutils"
 	"mica-shim/pkg/pedestal"
+	utils "mica-shim/pkg/utils"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -65,7 +66,10 @@ const (
 	serviceDebug MicaService = "debug"
 )
 
-type MicaExecutor struct {}
+type MicaExecutor struct {
+	records MicaClientConf
+	Id string
+}
 
 // Structs and Methods
 
@@ -130,6 +134,7 @@ type MicaClientConfCreateOptions struct {
 	VCPU        int
 	CPUWeight   int
 	CPUCapacity int
+	// TODO: add maxmem
 	Memory      int
 	Network     string
 }
@@ -331,7 +336,8 @@ func CreateMicaClient(conf MicaClientConf) error {
 	return nil
 }
 
-func MicaCtl(cmd MicaCommand, rawId string) error {
+// TODO: consider better way to parse variable parameters
+func micaCtl(cmd MicaCommand, rawId string, opts... string) error {
 	if !validSocketPath(defs.MicaCreatSocketPath) {
 		return er.ErrMicadNotRunning
 	}
@@ -341,8 +347,6 @@ func MicaCtl(cmd MicaCommand, rawId string) error {
 		cmd = MStop
 	case MResume:
 		cmd = MStart
-	default:
-		cmd = cmd
 	}
 	shortId := utils.ShortID(rawId)
 	clientSocketPath := filepath.Join(defs.MicaStateDir, shortId+".socket")
@@ -357,7 +361,7 @@ func MicaCtl(cmd MicaCommand, rawId string) error {
 }
 
 func Start(id string) error {
-	if err := MicaCtl(MStart, id); err != nil {
+	if err := micaCtl(MStart, id); err != nil {
 		return fmt.Errorf("failed to start container %s", id)
 	}
 	return nil
@@ -370,7 +374,7 @@ func Stop(id string) error {
 	if completelyDown(id) {
 		log.Infof("%s is already down, not need to stop it", id)
 	}
-	if err := MicaCtl(MStop, id); err != nil {
+	if err := micaCtl(MStop, id); err != nil {
 		return fmt.Errorf("failed to stop mica client %s %w", id, err)
 	}
 	return nil
@@ -382,7 +386,7 @@ func Pause(id string) error {
 	if pedestal.GetHostPed() == pedestal.Xen {
 		return pedestal.Pause(utils.ShortID(id))	
 	} else {
-		if err := MicaCtl(MPause, id); err != nil {
+		if err := micaCtl(MPause, id); err != nil {
 			return fmt.Errorf("failed to pause mica client %s %w", id, err)
 		}
 		return nil
@@ -394,7 +398,7 @@ func Resume(id string) error {
 	if pedestal.GetHostPed() == pedestal.Xen {
 		return pedestal.Resume(utils.ShortID(id))	
 	} else {
-		if err := MicaCtl(MResume, id); err != nil {
+		if err := micaCtl(MResume, id); err != nil {
 			return fmt.Errorf("failed to pause mica client %s %w", id, err)
 		}
 		return nil
@@ -402,7 +406,7 @@ func Resume(id string) error {
 }
 
 func Remove(id string) error {
-	return MicaCtl(MRemove, id)
+	return micaCtl(MRemove, id)
 }
 
 // Status returns structured status information for a specific client
@@ -428,10 +432,6 @@ func Status(id string, filter Filter) (*MicaStatus, error) {
 	}
 
 	return status, nil
-}
-
-func Update(id string) error {
-	return nil
 }
 
 // StatusToString converts MicaStatus back to string format for backward compatibility
@@ -472,6 +472,100 @@ func FilterStatuses(statuses []*MicaStatus, nameFilter string, stateFilter MicaS
 // after allocating sandbox cpus in xen pool is finished.
 func (me *MicaExecutor) UpdateSandboxPoolVCPUs() {}
 
-func (me *MicaExecutor) UpdateVCPUs(newVCPUs uint64) (oldCPUs, newCPUs uint64, retErr error)  {
-	return 0, 0, nil
+// number of visible vcpus
+func (me *MicaExecutor) UpdateVCPUNum(newVCPUs uint32) (oldCPUs, newCPUs uint32, retErr error)  {
+	cmdArgs := []string{"VCPU", strconv.Itoa(int(newVCPUs))}
+	s := strings.Join(cmdArgs, " ")
+	err := micaCtl(MUpdate, me.Id, s)
+	if err != nil {
+		log.Warnf("failed to update vcpu number: %v", err)
+		return uint32(me.records.vcpuNum), uint32(me.records.vcpuNum), err
+	}
+	return uint32(me.records.cpuWeight), newVCPUs, err
 } 
+
+// TODO: temporarily dirty-join string as command line, need to change to a better way
+func (me *MicaExecutor) UpdatePCPUConstrains(cpus string) error {
+	cmdArgs := []string{"CPU", cpus}
+	s := strings.Join(cmdArgs, " ")
+	err := micaCtl(MUpdate, me.Id,s)
+	if err != nil {
+		log.Warnf("failed to bind physical cpuset \"%s\" to container: %v", cpus,  err)
+	} else {
+		me.records.cpuStr = [MaxCPUStringLen]byte{}
+		log.Info("updated to new cpuset")
+	}
+	return err
+}
+
+
+func (me *MicaExecutor) UpdateCPUCapacity(cap uint32) error {
+	cmdArgs := []string{"CPUCpacity", strconv.Itoa(int(cap))}
+	s := strings.Join(cmdArgs, " ")
+	err := micaCtl(MUpdate, me.Id,s)
+	if err != nil {
+		log.Warnf("failed to update cap time to %d that container can run: %v", cap,  err)
+	} else {
+		me.records.cpuCapacity = int(cap)
+		log.Info("updated to new cpu capacity")
+	}
+	return err
+}
+
+func (me *MicaExecutor) UpdateCPUShare(weight uint32) error {
+	cmdArgs := []string{"CPUWeight", strconv.Itoa(int(weight))}
+	s := strings.Join(cmdArgs, " ")
+	err := micaCtl(MUpdate, me.Id,s)
+	if err != nil {
+		log.Warnf("failed to update cpu share time to %d that container can run: %v", weight,  err)
+	} else {
+		me.records.cpuWeight = int(weight)
+		log.Info("updated to new cpu weight")
+	}
+	return err
+}
+
+
+func (me *MicaExecutor) UpdateMemory(memMiB uint32) error {
+	cmdArgs := []string{"Memory", strconv.Itoa(int(memMiB))}
+	s := strings.Join(cmdArgs, " ")
+	err := micaCtl(MUpdate, me.Id,s)
+	if err != nil {
+		log.Warnf("failed to request new memory \"%d\" to container: %v", memMiB,  err)
+	} else {
+		me.records.memory = int(memMiB)
+		log.Infof("update memory to %d", memMiB)
+	}
+	return err
+}
+
+
+func (me *MicaExecutor) ReadResource() *pedestal.EssentialResource {
+	res := pedestal.InitResource()
+
+	// Initialize pointer fields with values from records
+	if me.records.vcpuNum > 0 {
+		vcpu := uint32(me.records.vcpuNum)
+		res.Vcpu = &vcpu
+	}
+
+	if me.records.cpuWeight > 0 {
+		weight := uint32(me.records.cpuWeight)
+		res.CPUWeight = &weight
+	}
+
+	if me.records.cpuCapacity > 0 {
+		capacity := uint32(me.records.cpuCapacity)
+		res.CpuCpacity = &capacity
+	}
+
+	if me.records.memory > 0 {
+		memory := uint32(me.records.memory)
+		res.MemoryLimitMB = &memory
+	}
+
+	// Set ClientCpuSet from cpuStr (convert byte array to string)
+	res.ClientCpuSet = strings.TrimRight(string(me.records.cpuStr[:]), "\x00")
+
+	return res
+}

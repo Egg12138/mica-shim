@@ -7,7 +7,7 @@ import (
 
 	defs "mica-shim/definitions"
 	log "mica-shim/logger"
-	"mica-shim/pkg/fileutils"
+	"mica-shim/pkg/utils"
 	"os/exec"
 	"time"
 )
@@ -45,7 +45,7 @@ func computeHostPed() PedType {
 
 func detectXen() bool {
 	// xl binary exist
-	if !fileutils.FileExist("/proc/xen/xenbus") {
+	if !utils.FileExist("/proc/xen/xenbus") {
 		log.Debug("missing xen bus")
 		return false
 	}
@@ -69,7 +69,7 @@ func checkXenKos() error {
 	// TODO: migrate xen-essentials ko to mica-xen related ko
 	essentials := []string{"xen_gntalloc", "xen_gntdev"}
 	for i, ko := range essentials {
-		loaded, err := fileutils.KoLoaded(ko)
+		loaded, err := utils.KoLoaded(ko)
 		if err != nil {
 			return err
 		}
@@ -104,5 +104,20 @@ func checkXLCommand() error {
 }
 
 func detectACRN() bool {
+	return false
+}
+
+const hpsupport = false
+// for xen, if ballooning driver was enable, hugepage is not supported
+func HugePageSupport(dynamicMem bool) bool { 
+	if dynamicMem || GetHostPed() != Xen {
+		return false
+	}
+
+	if ConflictKoLoaded, err := utils.KoLoaded(balloonDriverName); err != nil && hpsupport{
+		return !ConflictKoLoaded
+	}
+
+	// default: not support
 	return false
 }

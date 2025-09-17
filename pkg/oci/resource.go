@@ -3,6 +3,7 @@ package oci
 
 import (
 	log "mica-shim/logger"
+	"mica-shim/pkg/utils"
 	"strconv"
 
 	ctrAnnotations "github.com/containerd/containerd/pkg/cri/annotations"
@@ -76,7 +77,7 @@ func CalculateContainerSizing(spec *specs.Spec) (numCPU, memSizeMB uint32) {
 // calculate real resource count for client initialization
 func clientInitResources(period uint64, quota int64, memory int64) (numCPU, memSizeMB uint32) {
 	// cooredinate with CPU calculating capacity
-	numCPU = CalculateVCpusFromMilliCpus(CalculateMilliCPUs(quota, period))
+	numCPU = utils.CalculateVCpusFromMilliCpus(utils.CalculateMilliCPUs(quota, period))
 
 	if memory < 0 {
 		// While spec allows for a negative value to indicate unconstrained, we don't
@@ -89,25 +90,3 @@ func clientInitResources(period uint64, quota int64, memory int64) (numCPU, memS
 	}
 	return numCPU, memSizeMB
 }
-
-// CalculateVCpusFromMilliCpus converts from mCPU to CPU, taking the ceiling
-// value when necessary
-func CalculateVCpusFromMilliCpus(mCPU uint32) uint32 {
-	return (mCPU + 999) / 1000
-}
-
-// CalculateMilliCPUs converts CPU quota and period to milli-CPUs
-func CalculateMilliCPUs(quota int64, period uint64) uint32 {
-
-	// If quota is -1, it means the CPU resource request is
-	// unconstrained.  In that case, we don't currently assign
-	// additional CPUs.
-	if quota >= 0 && period != 0 {
-		return uint32((uint64(quota) * 1000) / period)
-	}
-
-	return 0
-}
-
-// TODO: convert linux ocispec cpu information into xen' compatible settings
-func quota2weight() {}

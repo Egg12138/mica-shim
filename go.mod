@@ -20,6 +20,7 @@ require (
 	github.com/vishvananda/netlink v1.2.1-beta.2
 	golang.org/x/sys v0.31.0
 	google.golang.org/protobuf v1.35.2
+	github.com/gookit/ini/v2 v2.3.2 
 )
 
 require (
@@ -70,7 +71,6 @@ require (
 	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gookit/goutil v0.7.1 // indirect
-	github.com/gookit/ini/v2 v2.3.2 // indirect
 	github.com/gopherjs/gopherjs v1.17.2 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect

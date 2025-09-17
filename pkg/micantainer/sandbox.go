@@ -8,9 +8,9 @@ import (
 	defs "mica-shim/definitions"
 	log "mica-shim/logger"
 	er "mica-shim/pkg/errors"
-	"mica-shim/pkg/fileutils"
 	"mica-shim/pkg/libmica"
 	ped "mica-shim/pkg/pedestal"
+	"mica-shim/pkg/utils"
 	"os"
 	"path/filepath"
 	"sync"
@@ -41,14 +41,14 @@ type SandboxConfig struct {
 	ID                string
 	Hostname          string
 	NetworkConfig     NetworkConfig
-	PedType           ped.PedType
-	PedConfig         ped.PedConfig
+	PedConfig         ped.PedestalConfig
 	ContainerConfigs  map[string]*ContainerConfig
 	Annotations       map[string]string
 	SharedMemorySize  uint64
 	SandboxResources  SandboxResourceSizing
 	EnableVCPUsPining  bool
 	StaticResourceMgmt bool
+	HugePageSupport bool
 }
 
 func (sc *SandboxConfig) valid() bool {
@@ -57,7 +57,7 @@ func (sc *SandboxConfig) valid() bool {
 		return false
 	}
 
-	if sc.PedType == ped.Unsupported {
+	if sc.PedConfig.PedType == ped.Unsupported {
 		log.Warn("pedestal type is unsupported")
 		return false
 	}
@@ -159,8 +159,7 @@ type Sandbox struct {
 	sync.Mutex
 	// fs, storage, devices, volumes...
 	// monitor
-	micaExecutor libmica.MicaExecutor
-	agent      RealAgent
+	resManager      SandboxAgent
 	config     *SandboxConfig
 	containers map[string]*Container
 	id         string
@@ -580,7 +579,7 @@ func (s *Sandbox) Stats(ctx context.Context) (SandboxStats, error) {
 	stats := SandboxStats{}
 
 	// BUG: logic leaks
-	vCpuNum, err := s.agent.vcpuSet(ctx)
+	vCpuNum, err := s.resManager.vcpuSet(ctx)
 	if err != nil {
 		log.Errorf("failed to get vcpu number: %v", err)
 		return stats, err
@@ -753,7 +752,7 @@ func (s *Sandbox) StoreSandbox(ctx context.Context) error {
 		}
 	}
 
-	if err := fileutils.SaveStructToJSON(target, serializable); err != nil {
+	if err := utils.SaveStructToJSON(target, serializable); err != nil {
 		return err
 	}
 	return nil
@@ -800,7 +799,7 @@ func (s *Sandbox) removeNetwork(ctx context.Context) error {
 
 func (s *Sandbox) stopClient(ctx context.Context) error {
 	log.Debugf("stop sandbox %s", s.id)
-	if err := s.agent.stopSandbox(ctx, s); err != nil {
+	if err := s.resManager.stopSandbox(ctx, s); err != nil {
 		log.Errorf("failed to stop sandbox %s: %v", s.id, err)
 		return err
 	}
@@ -847,7 +846,6 @@ func newSandbox(ctx context.Context, config SandboxConfig) (sb *Sandbox, retErr 
 		ctx:        ctx,
 		config:     &config,
 		containers: make(map[string]*Container),
-		micaExecutor: libmica.MicaExecutor{},
 		id:         config.ID,
 		state: SandboxState{
 			State:   StateCreating,
@@ -855,7 +853,7 @@ func newSandbox(ctx context.Context, config SandboxConfig) (sb *Sandbox, retErr 
 			Version: defs.SandboxVersion,
 		},
 		network:    &network,
-		agent:      *NewAgent(),
+		resManager:      *NewAgent(),
 		wg:         &sync.WaitGroup{},
 		annotaLock: &sync.RWMutex{},
 	}
@@ -965,7 +963,7 @@ func RestoreSandbox(ctx context.Context, id string) (*SandboxStorage, error) {
 	sandboxDir := filepath.Join(defs.SandboxDataDir, id)
 	configPath := filepath.Join(sandboxDir, defs.SandboxStateFile)
 
-	raw, err := fileutils.RestoreStructFromJSON(configPath)
+	raw, err := utils.RestoreStructFromJSON(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			log.Debugf("not found sandbox state file: %s, a new one should be created", configPath)
@@ -1121,12 +1119,18 @@ func (s *Sandbox) updateResources(ctx context.Context) error {
 		return err
 	}
 
-	sandboxMemoryMB := calculateSandboxMemory(s)
+	sandboxVCPUs += s.config.PedConfig.MiniVCPUNum
 
-	log.Infof("trying to update sandbox vcpus")
-	oldCPU, newCPU, err := s.micaExecutor.UpdateVCPUs(sandboxVCPUs)
-	
-	
+	newSandboxMemoryMB := calculateSandboxMemory(s)
+
+	oldVCPUs, newVCPUs := s.resManager.resizeVCPUs(sandboxVCPUs)
+	log.Infof("sandbox total vcpu number from %d to %d", oldVCPUs, newVCPUs)
+
+	oldMemBytes, newMemBytes := s.resManager.resizeMemory(newSandboxMemoryMB)
+	log.Infof("sandbox total memory usage from %d to %d", oldMemBytes, newMemBytes)
+
+	// TODO: remains for cpu pool design 
+	// changes in cpu pool size and memory pool size
 	return nil
 }
 

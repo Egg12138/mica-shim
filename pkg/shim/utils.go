@@ -5,10 +5,10 @@ import (
 	"fmt"
 	defs "mica-shim/definitions"
 	log "mica-shim/logger"
-	"mica-shim/pkg/fileutils"
 	"mica-shim/pkg/libmica"
 	cntr "mica-shim/pkg/micantainer"
 	"mica-shim/pkg/oci"
+	"mica-shim/pkg/utils"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,7 +32,7 @@ func validBundle(containerID, bundlePath string) (string, error) {
 	}
 
 	// resolve path first to handle symlinks before other checks
-	resolved, err := fileutils.ResolvePath(bundlePath)
+	resolved, err := utils.ResolvePath(bundlePath)
 	if err != nil {
 		return "", err
 	}
@@ -74,7 +74,7 @@ func setInternalRootfs(bundle string) error {
 	rootfs := filepath.Join(bundle, "rootfs")
 
 	// TODO: recursively chmod 0555
-	if err := fileutils.SetReadonly(rootfs); err != nil {
+	if err := utils.SetReadonly(rootfs); err != nil {
 		return fmt.Errorf("failed to chmod rootfs: %w", err)
 	}
 	os.Chdir(bundle)

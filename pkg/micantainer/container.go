@@ -8,9 +8,9 @@ import (
 	defs "mica-shim/definitions"
 	log "mica-shim/logger"
 	er "mica-shim/pkg/errors"
-	utils "mica-shim/pkg/fileutils"
 	"mica-shim/pkg/libmica"
 	ped "mica-shim/pkg/pedestal"
+	utils "mica-shim/pkg/utils"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -106,7 +106,6 @@ type ContainerConfig struct {
 	PedestalType ped.PedType `json:"pedestal_type"`
 	PedestalConf string      `json:"pedestal_conf"`
 	OS           string      `json:"os"`
-	NCpu         int         `json:"ncpu"` // Default = 1
 
 	// cpuqupta / cpuperiod = cpus: f64 => CPUCapacity = cpus * 100, 
 	CpuLimit   int    `json:"cpu_limit"`
@@ -118,8 +117,11 @@ type ContainerConfig struct {
 	// default to be 1024, CpuShared : 1024 = related a weight 
 	// => CPUWeight(1-65535, default=256), in xen domain default weight is 256
 	CpuShares  uint64 `json:"cpu_shares"`
-	// VCPU
-	VPUNum         int `json:"vcpu_num"`
+	// VCPU, == CpuLimit if not pinning; if pinning, VCPU= Size(cpuset)
+	VCPUNum         int `json:"vcpu_num"`
+	// allocated physical cpu number, coordinates with CPULimit
+	// TODO: remove PCPUNum
+	PCPUNum         int         `json:"ncpu"`
 
 	// Memory in MiB
 	MemoryLimit       int64   `json:"memory_limit"`
@@ -129,6 +131,8 @@ type ContainerConfig struct {
 	MemorySwappiness  *uint64 `json:"memory_swappiness"`
 	OomKillDisable    bool    `json:"oom_kill_disable"`
 
+	// boot cmdline for guest
+	Cmdline string `json:"cmdline"`
 	// cpu is the allocated CPU, -1 if not allocated.
 	cpu int
 }
@@ -167,7 +171,7 @@ const (
 // Container represents a single container instance.
 type Container struct {
 	ctx context.Context
-
+	me libmica.MicaExecutor
 	config *ContainerConfig
 	id     string
 
@@ -297,6 +301,7 @@ func newContainer(ctx context.Context, s *Sandbox, cc *ContainerConfig) (*Contai
 
 	c := &Container{
 		id:            cc.ID,
+		me: libmica.MicaExecutor{Id: cc.ID},
 		sandbox:       s,
 		sandboxId:     s.id,
 		config:        cc,
@@ -465,6 +470,7 @@ func (c *Container) update(ctx context.Context, resources specs.LinuxResources) 
 	}
 
 	res := c.config.Resources
+	pedRes := ped.InitResource()
 	if res.CPU == nil {
 		c.config.Resources.CPU = resources.CPU
 	}
@@ -477,14 +483,17 @@ func (c *Container) update(ctx context.Context, resources specs.LinuxResources) 
 
 		if period != nil && *period != 0 {
 			res.CPU.Period = period
+			*pedRes.CpuPeriod = *period
 		}
 
 		if quota != nil && *quota != 0 {
 			res.CPU.Quota = quota
+			*pedRes.CpuQuota = *quota
 		}
 
 		if Cpus != "" {
 			res.CPU.Cpus = Cpus
+			pedRes.ClientCpuSet = Cpus
 		}
 
 		if Mems != "" {
@@ -498,14 +507,14 @@ func (c *Container) update(ctx context.Context, resources specs.LinuxResources) 
 
 	if mem := resources.Memory; mem != nil && mem.Limit != nil {
 		c.config.Resources.Memory.Limit = mem.Limit
+		*pedRes.MemoryLimitMB = uint32(*mem.Limit >> 20)
 	}
 
 	if err := c.sandbox.updateResources(ctx); err != nil {
 		return err
 	}
 
-	log.Info("container dummy resource updated")
-	return nil
+	return updateContainerResource(c, pedRes)
 }
 
 func (c *Container) ID() string {
@@ -631,7 +640,7 @@ func (c *Container) setContainerState(ctx context.Context, state StateString) er
 
 func (c *Container) allocClientCPU() error {
 	// Use the container-specific CPU limit instead of the global HostMaxCPU.
-	cpu, err := allocCPUWithLimit(c.config.NCpu, c.config)
+	cpu, err := allocCPUWithLimit(c.config.PCPUNum, c.config)
 	if err != nil {
 		return err
 	}

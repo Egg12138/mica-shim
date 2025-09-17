@@ -3,25 +3,51 @@ package oci
 import (
 	"encoding/json"
 	defs "mica-shim/definitions"
-	"mica-shim/pkg/fileutils"
+	log "mica-shim/logger"
 	"mica-shim/pkg/pedestal"
+	"mica-shim/pkg/utils"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
-	"github.com/gookit/ini/v2"
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
+// configurations keys
+const (
+	// default=true
+	KeyStaticResource = "static_resource"
+	// default=0, unlimited
+	KeyClientLimit = "max_client_number"
+	// default=false
+	KeyLinuxContainer = "enable_host_container"
+	KeyDebug = "debug"
+	// default=defs.StateDir
+	KeyStateDir = "state_dir"
+	// default=defs.PauseImage
+	KeyPauseImg = "pause_image"
+	// default=0, unlimited
+	KeyMaxContainerVCPU = "max_container_vcpu"
+	// default=1
+	KeySandboxMinVCPU = "sandbox_minimum_vcpu"
+	// only for Xen; default=false
+	KeyHugePage = "hugepage_enable"
+)
+
+
+
 var (
 	runtimeConfigKeys = []string{
-		defs.ConfigKeyDebug,
-		defs.ConfigStaticResource,
-		defs.ConfigKeyStateDir,
-		defs.ConfigKeyLinuxContainer,
-		defs.ConfigKeyClientLimit,
-		defs.ConfigKeyMaxContainerVCPU,
+		KeyStaticResource,
+		KeyClientLimit,
+		KeyDebug,
+		KeyLinuxContainer,
+		KeyStateDir,
+		KeyPauseImg,
+		KeyMaxContainerVCPU,
+		KeySandboxMinVCPU,
+		KeyHugePage,
 	}
 	
 )
@@ -30,17 +56,26 @@ type RuntimeConfig struct {
 	Debug        bool
 	SandboxCPUs  uint32
 	SandboxMemMB uint32
+	// TODO: enable Linux host act as a container
+	HostLinuxContainer bool
+	MaxClinetNum uint32
 
 	// Global resource management settings
-	MaxContainerCPUs   uint32 // Maximum CPU cores available for containers
+	MaxContainerCPUs   uint32 // Maximum CPU cores visible for containers
 	MaxContainerMemMB  uint32 // Maximum memory available for containers
+	HugePageSupport      bool
+	StaticResourceManagement bool
+	// TODO: not implement
 	CPUSchedulerPolicy string 
+	// TODO: not implement
 	MemoryOvercommit   bool   
 
 	// MICA-specific configurations
-	Pedestal            string // Default pedestal type if not specified
+	ImagePath   string
+	AuxFilePath string
+
 	PauseImage          string
-	StaticResourceManagement bool
+	MiniVCPUNum uint32
 }
 
 // return a default RuntimeConfig
@@ -53,7 +88,6 @@ func NewRuntimeConfig() *RuntimeConfig {
 
 	spec := RuntimeConfig{
 		// MICA defaults
-		Pedestal:            pedestal.GetHostPed().String(),
 		StaticResourceManagement: staticResource,
 	}
 	return &spec
@@ -65,63 +99,139 @@ func NewRuntimeConfig() *RuntimeConfig {
 // out ParseConfigINI, ParseConfigINI requires only half memory of ini package and faster
 // for large ini file parsing
 func (r *RuntimeConfig) ParseRuntimeFromFile(configPath string) error {
-	fileutils.ParseConfigINI(configPath, runtimeConfigKeys)
-	err := ini.LoadExists(configPath)
+	filtered, err := utils.ParseConfigINI(configPath, runtimeConfigKeys)
 	if err != nil {
 		return err
 	}
 
+	log.Debugf("parsed runtime config: %v", filtered)
+	r.convertRawConfig(filtered)
 	return nil
 }
 
 func (r *RuntimeConfig) convertRawConfig(raw map[string]string) {
-
+	r.SetStaticResourceManagement(raw[KeyStaticResource])
+	r.SetDebug(raw[KeyDebug])
+	r.SetPauseImage(raw[KeyPauseImg])
+	r.SetMaxContainerCPUs(raw[KeyMaxContainerVCPU])
+	r.SetMiniVCPUNum(raw[KeySandboxMinVCPU])
+	r.SetHugePageSupport(raw[KeyHugePage])
+	r.SetStateDir(raw[KeyStateDir])
 }
 
 func filterRuntimeItems() bool {return true}
 
-func (r *RuntimeConfig) SetDebug(debug bool) *RuntimeConfig {
+func (r *RuntimeConfig) SetDebug(debugStr string) {
+	debug, err := strconv.ParseBool(debugStr)
+	if err != nil {
+		log.Debugf("Failed to parse debug %v into bool", debugStr, err)
+		debug = false
+	}
 	r.Debug = debug
-	return r
 }
 
-func (r *RuntimeConfig) SetSandboxCPUs(cpu uint32) *RuntimeConfig {
-	r.SandboxCPUs = cpu
-	return r
+func (r *RuntimeConfig) SetSandboxCPUs(cpuString string) {
+	cpu, err := strconv.ParseUint(cpuString, 10, 32)
+	if err != nil {
+		log.Debugf("Failed to parse sandbox cpus %v into uint32", cpuString, err)
+	}
+	r.SandboxCPUs = uint32(cpu)
 }
 
-func (r *RuntimeConfig) SetSandboxMemMB(mem uint32) *RuntimeConfig {
-	r.SandboxMemMB = mem
-	return r
+func (r *RuntimeConfig) SetSandboxMemMB(memString string) {
+	mem, err := strconv.ParseUint(memString, 10, 32)
+	if err != nil {
+		log.Debugf("Failed to parse sandbox memory %v into uint32", memString, err)
+	}
+	r.SandboxMemMB = uint32(mem)
 }
 
-func (r *RuntimeConfig) SetMaxContainerCPUs(cpu uint32) *RuntimeConfig {
-	r.MaxContainerCPUs = cpu
-	return r
+func (r *RuntimeConfig) SetMaxContainerCPUs(cpuString string) {
+	cpu, err := strconv.ParseUint(cpuString, 10, 32)
+	if err != nil {
+		log.Debugf("Failed to parse max container cpus %v into uint32", cpuString, err)
+	}
+	r.MaxContainerCPUs = uint32(cpu)
 }
 
-func (r *RuntimeConfig) SetMaxContainerMemMB(mem uint32) *RuntimeConfig {
-	r.MaxContainerMemMB = mem
-	return r
+func (r *RuntimeConfig) SetMaxContainerMemMB(memString string) {
+	mem, err := strconv.ParseUint(memString, 10, 32)
+	if err != nil {
+		log.Debugf("Failed to parse max container memory %v into uint32", memString, err)
+	}
+	r.MaxContainerMemMB = uint32(mem)
 }
 
-func (r *RuntimeConfig) SetCPUSchedulerPolicy(policy string) *RuntimeConfig {
+func (r *RuntimeConfig) SetCPUSchedulerPolicy(policy string) {
 	r.CPUSchedulerPolicy = policy
-	return r
 }
 
-func (r *RuntimeConfig) SetMemoryOvercommit(allow bool) *RuntimeConfig {
+func (r *RuntimeConfig) SetMemoryOvercommit(allowStr string) {
+	allow, err := strconv.ParseBool(allowStr)
+	if err != nil {
+		log.Debugf("Failed to parse memory overcommit %v into bool", allowStr, err)
+		allow = false
+	}
 	r.MemoryOvercommit = allow
-	return r
 }
 
-func (r *RuntimeConfig) SetDefaultPedestal(pedestal string) *RuntimeConfig {
-	r.Pedestal = pedestal
-	return r
+
+func (r *RuntimeConfig) SetHugePageSupport(hugePageStr string) {
+	hugePage, err := strconv.ParseBool(hugePageStr)
+	if err != nil {
+		log.Debugf("Failed to parse hugepage %v into bool", hugePageStr, err)
+		hugePage = false
+	}
+	r.HugePageSupport = hugePage
+}
+
+func (r *RuntimeConfig) SetPauseImage(pauseImage string) {
+	r.PauseImage = pauseImage
+}
+
+func (r *RuntimeConfig) SetStaticResourceManagement(staticResourceStr string) {
+	staticResource, err := strconv.ParseBool(staticResourceStr)
+	if err != nil {
+		log.Debugf("Failed to parse static_resource %v into bool", staticResourceStr, err)
+		staticResource = false
+	}
+	r.StaticResourceManagement = staticResource
+}
+
+func (r *RuntimeConfig) SetMiniVCPUNum(miniVCPUString string) {
+	miniVCPU, err := strconv.ParseUint(miniVCPUString, 10, 32)
+	if err != nil {
+		log.Debugf("Failed to parse mini vcpu %v into uint32", miniVCPUString, err)
+	}
+	r.MiniVCPUNum = uint32(miniVCPU)
+}
+
+func (r *RuntimeConfig) SetClientLimit(clientLimitString string) {
+	clientLimit, err := strconv.ParseUint(clientLimitString, 10, 32)
+	if err != nil {
+		log.Debugf("Failed to parse client limit %v into uint32", clientLimitString, err)
+	}
+	r.MaxClinetNum = uint32(clientLimit)
+}
+
+func (r *RuntimeConfig) SetLinuxContainer(linuxContainerStr string) {
+	linuxContainer, err := strconv.ParseBool(linuxContainerStr)
+	if err != nil {
+		log.Debugf("Failed to parse linux container %v into bool", linuxContainerStr, err)
+		linuxContainer = false
+	}
+	r.HostLinuxContainer = linuxContainer
+}
+
+func (r *RuntimeConfig) SetStateDir(stateDir string) {
+	// Note: This field doesn't exist in RuntimeConfig yet, but the key is defined
+	// For now, we'll just log it since it's a path configuration
+	log.Debugf("Setting state dir to: %v", stateDir)
 }
 
 
 // ParseRuntimeConfigFromAnno parses runtime configuration from annotations
+// Annotations holds highest priority for values
 // TODO: match these dummy config items with actual implementation, define prefix in package definitions
 func (cfg *RuntimeConfig) ParseRuntimeConfigFromAnno(annotations map[string]string) *RuntimeConfig {
 	cfg.PauseImage = defs.PauseImage
@@ -133,35 +243,21 @@ func (cfg *RuntimeConfig) ParseRuntimeConfigFromAnno(annotations map[string]stri
 
 		switch key {
 		case defs.RuntimeDebug:
-			if debug, err := strconv.ParseBool(value); err == nil {
-				cfg.SetDebug(debug)
-			}
+			cfg.SetDebug(value)
 		case "runtime.sandbox.cpus":
-			if cpus, err := strconv.ParseUint(value, 10, 32); err == nil {
-				cfg.SetSandboxCPUs(uint32(cpus))
-			}
+			cfg.SetSandboxCPUs(value)
 		case "runtime.sandbox.memory":
-			if mem, err := strconv.ParseUint(value, 10, 32); err == nil {
-				cfg.SetSandboxMemMB(uint32(mem))
-			}
+			cfg.SetSandboxMemMB(value)
 		case "runtime.max_container_cpus":
-			if cpus, err := strconv.ParseUint(value, 10, 32); err == nil {
-				cfg.SetMaxContainerCPUs(uint32(cpus))
-			}
+			cfg.SetMaxContainerCPUs(value)
 		case "runtime.max_container_memory":
-			if mem, err := strconv.ParseUint(value, 10, 32); err == nil {
-				cfg.SetMaxContainerMemMB(uint32(mem))
-			}
+			cfg.SetMaxContainerMemMB(value)
 		case "runtime.cpu_scheduler_policy":
 			cfg.SetCPUSchedulerPolicy(value)
 		case "runtime.memory_overcommit":
-			if overcommit, err := strconv.ParseBool(value); err == nil {
-				cfg.SetMemoryOvercommit(overcommit)
-			}
-		case defs.Pedtype:
-			cfg.SetDefaultPedestal(value)
+			cfg.SetMemoryOvercommit(value)
 		case "runtime.pause":
-			cfg.PauseImage = value
+			cfg.SetPauseImage(value)
 		}
 	}
 

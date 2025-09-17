@@ -8,9 +8,9 @@ import (
 
 	defs "mica-shim/definitions"
 	log "mica-shim/logger"
-	"mica-shim/pkg/fileutils"
 	cntr "mica-shim/pkg/micantainer"
 	"mica-shim/pkg/pedestal"
+	"mica-shim/pkg/utils"
 
 	ctrAnnotations "github.com/containerd/containerd/pkg/cri/annotations"
 	podmanAnnotations "github.com/containers/podman/v4/pkg/annotations"
@@ -84,7 +84,7 @@ func bundleRootfs(bundle string) string {
 func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerType, detach bool) (*cntr.ContainerConfig, error) {
 	configPath := filepath.Join(bundleRootfs(bundle), defs.DefaultClientConf)
 	log.Debugf("config path = %s", configPath)
-	micaConf, err := fileutils.ParseConfigINI(configPath, defs.OKSectionList[:])
+	micaConf, err := utils.ParseConfigINI(configPath, defs.OKSectionList[:])
 	log.Pretty("mica config: %v", micaConf)
 	
 	// Debug: Check if file exists and list all parsed keys
@@ -132,7 +132,7 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 		PedestalType: pedtype,
 		PedestalConf: pedconf,
 		OS:           os,
-		NCpu:         1,
+		PCPUNum:         1,
 		CpuLimit:     0,
 		CpusetCpus:   "",
 		CpuShares:    0,
@@ -188,6 +188,8 @@ func SandboxConfig(ocispec *specs.Spec, rc RuntimeConfig, bundle, sbContainerID 
 	}
 
 	staticResMngt := rc.StaticResourceManagement
+	hugePage := pedestal.HugePageSupport(staticResMngt)
+
 
 	// update container resource for openamp-based client is out of plan
 	
@@ -198,7 +200,11 @@ func SandboxConfig(ocispec *specs.Spec, rc RuntimeConfig, bundle, sbContainerID 
 	sandboxConfig := cntr.SandboxConfig{
 		ID:       sbContainerID,
 		Hostname: ocispec.Hostname,
-		PedType:  cntr.HostPedType,
+		PedConfig:  pedestal.PedestalConfig{
+			PedType:       pedestal.GetHostPed(),
+			PedConfig: "",
+			MiniVCPUNum:   rc.MiniVCPUNum,
+		},
 		ContainerConfigs: map[string]*cntr.ContainerConfig{
 			sbContainerID: containerConfig,
 		},
@@ -212,6 +218,7 @@ func SandboxConfig(ocispec *specs.Spec, rc RuntimeConfig, bundle, sbContainerID 
 		},
 
 		StaticResourceMgmt: staticResMngt,
+		HugePageSupport: hugePage,
 		EnableVCPUsPining: false,
 	}
 

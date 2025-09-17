@@ -28,13 +28,13 @@ func (r *ContainerConfig) ParseOCICPUResources(spec *specs.Spec) error {
 	}
 
 	essentialRes := pedestal.LinuxResource2Essential(spec)
-	r.CpuLimit = int(essentialRes.CpuCpacity)
-	r.CpuPeriod = essentialRes.CpuPeriod
-	r.CpuQuota = essentialRes.CpuQuota
-	r.CpuShares = uint64(essentialRes.CPUWeight)
-	r.VPUNum = int(essentialRes.Vcpu)
+	r.CpuLimit = int(*essentialRes.CpuCpacity)
+	r.CpuPeriod = *essentialRes.CpuPeriod
+	r.CpuQuota = *essentialRes.CpuQuota
+	r.CpuShares = uint64(*essentialRes.CPUWeight)
+	r.VCPUNum = int(*essentialRes.Vcpu)
 	r.CpusetCpus = essentialRes.ClientCpuSet
-	r.MemoryLimit = int64(essentialRes.MemoryLimit)
+	r.MemoryLimit = int64(*essentialRes.MemoryLimitMB)
 	log.Debugf(`
 		EssentialResource:
 		CpuLimit = %d
@@ -45,7 +45,7 @@ func (r *ContainerConfig) ParseOCICPUResources(spec *specs.Spec) error {
 		CpusetCpus = %s
 		MemoryLimit = %d
 	}
-	`, r.CpuLimit, r.CpuPeriod, r.CpuQuota, r.CpuShares, r.VPUNum, r.CpusetCpus, r.MemoryLimit)
+	`, r.CpuLimit, r.CpuPeriod, r.CpuQuota, r.CpuShares, r.VCPUNum, r.CpusetCpus, r.MemoryLimit)
 	
 
 	return nil

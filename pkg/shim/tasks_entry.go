@@ -6,7 +6,7 @@ import (
 	defs "mica-shim/definitions"
 	log "mica-shim/logger"
 	er "mica-shim/pkg/errors"
-	utils "mica-shim/pkg/fileutils"
+	utils "mica-shim/pkg/utils"
 	"os"
 	"syscall"
 

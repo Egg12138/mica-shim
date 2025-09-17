@@ -3,7 +3,13 @@ package pedestal
 import "strings"
 
 type PedType int
-type PedConfig string
+type PedConfigString string
+
+type PedestalConfig struct {
+	PedType      PedType
+	PedConfig    PedConfigString
+	MiniVCPUNum   uint32		
+}
 
 const (
 	Xen PedType = iota

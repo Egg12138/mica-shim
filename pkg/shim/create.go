@@ -6,9 +6,9 @@ import (
 	"fmt"
 	defs "mica-shim/definitions"
 	log "mica-shim/logger"
-	"mica-shim/pkg/fileutils"
 	cntr "mica-shim/pkg/micantainer"
 	"mica-shim/pkg/oci"
+	"mica-shim/pkg/utils"
 	"os"
 	"path/filepath"
 
@@ -229,7 +229,7 @@ func mountRootfs(rootfsPath string, rootfs []*types.Mount) error {
 		log.Warnf("only support one rootfs in bundle")
 	}
 
-	if err := fileutils.MountDirs(rootfs, rootfsPath); err != nil {
+	if err := utils.MountDirs(rootfs, rootfsPath); err != nil {
 		return err
 	}
 	return nil
@@ -246,7 +246,7 @@ func createSandbox(ctx context.Context, ocispec *specs.Spec,
 
 	if !rootfs.Mounted && len(sandboxConfig.ContainerConfigs) == 1 {
 		if rootfs.Source != "" {
-			realPath, err := fileutils.ResolvePath(rootfs.Source)
+			realPath, err := utils.ResolvePath(rootfs.Source)
 			if err != nil {
 				return nil, err
 			}

@@ -15,16 +15,3 @@ const (
 	IsMock   = true
 	HostContainerSupports = false
 )
-
-// configurations keys
-const (
-	ConfigStaticResource = "static_resource"
-	ConfigKeyClientLimit = "max_client_number"
-	ConfigKeyLinuxContainer = "enable_host_container"
-	ConfigKeyDebug = "debug"
-	ConfigKeyStateDir = "state_dir"
-	ConfigKeyPauseImg = "pause_image"
-	ConfigKeyMaxContainerVCPU = "max_container_vcpu"
-)
-
-
