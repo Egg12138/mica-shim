@@ -107,8 +107,8 @@ type ContainerConfig struct {
 	PedestalConf string      `json:"pedestal_conf"`
 	OS           string      `json:"os"`
 
-	// cpuqupta / cpuperiod = cpus: f64 => CPUCapacity = cpus * 100, 
-	CpuLimit   int    `json:"cpu_limit"`
+	// cpuqupta / cpuperiod = cpus: f64 => CPUCapacity = cpus * 100,
+	CpuLimit   uint32    `json:"cpu_limit"`
 	CpuQuota   int64  `json:"cpu_quota"`
 	CpuPeriod  uint64 `json:"cpu_period"`
 	// host cpu set available for container 
@@ -116,19 +116,19 @@ type ContainerConfig struct {
 	CpusetCpus string `json:"cpuset_cpus"`
 	// default to be 1024, CpuShared : 1024 = related a weight 
 	// => CPUWeight(1-65535, default=256), in xen domain default weight is 256
-	CpuShares  uint64 `json:"cpu_shares"`
+	CpuShares  uint32 `json:"cpu_shares"`
 	// VCPU, == CpuLimit if not pinning; if pinning, VCPU= Size(cpuset)
-	VCPUNum         int `json:"vcpu_num"`
+	VCPUNum         uint32 `json:"vcpu_num"`
 	// allocated physical cpu number, coordinates with CPULimit
 	// TODO: remove PCPUNum
 	PCPUNum         int         `json:"ncpu"`
 
 	// Memory in MiB
-	MemoryLimit       int64   `json:"memory_limit"`
-	MemoryReservation int64   `json:"memory_reservation"`
-	MemorySwap        int64   `json:"memory_swap"`
-	MemoryKernel      int64   `json:"memory_kernel"`
-	MemorySwappiness  *uint64 `json:"memory_swappiness"`
+	MemoryLimitMB       uint32   `json:"memory_limit"`
+	MemoryReservationMB uint32   `json:"memory_reservation"`
+	MemorySwapMB        uint32   `json:"memory_swap"`
+	MemoryKernelMB      uint32   `json:"memory_kernel"`
+	MemorySwappinessMB  *uint32 `json:"memory_swappiness"`
 	OomKillDisable    bool    `json:"oom_kill_disable"`
 
 	// boot cmdline for guest
@@ -530,7 +530,7 @@ func (c *Container) GetPid() int {
 }
 
 func (c *Container) GetMemoryLimit() uint64 {
-	return uint64(c.config.MemoryLimit)
+	return uint64(c.config.MemoryLimitMB)
 }
 
 func (c *Container) Sandbox() SandboxTraits {
@@ -691,7 +691,7 @@ func getContainerCPULimit(cfg *ContainerConfig) int {
 
 	}
 	if cfg != nil && cfg.CpuLimit > 0 {
-		return min(cfg.CpuLimit, int(systemCPUs))
+		return min(int(cfg.CpuLimit), int(systemCPUs))
 	}
 
 	// As a fallback, use all available CPUs, but reserve one for the host.

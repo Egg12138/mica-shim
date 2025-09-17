@@ -140,11 +140,11 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 		CpuPeriod:    0,
 
 		// Memory defaults
-		MemoryLimit:       0,
-		MemoryReservation: 0,
-		MemorySwap:        0,
-		MemoryKernel:      0,
-		MemorySwappiness:  nil,
+		MemoryLimitMB:       0,
+		MemoryReservationMB: 0,
+		MemorySwapMB:        0,
+		MemoryKernelMB:      0,
+		MemorySwappinessMB:  nil,
 		OomKillDisable:    false,
 	}
 
@@ -266,24 +266,24 @@ func formatMemoryLimit(config *cntr.ContainerConfig) string {
 
 	parts := []string{}
 
-	if config.MemoryLimit > 0 {
-		parts = append(parts, fmt.Sprintf("limit=%s", formatBytes(config.MemoryLimit)))
+	if config.MemoryLimitMB > 0 {
+		parts = append(parts, fmt.Sprintf("limit=%s", formatBytes(int64(config.MemoryLimitMB)*1024*1024)))
 	}
 
-	if config.MemoryReservation > 0 {
-		parts = append(parts, fmt.Sprintf("reservation=%s", formatBytes(config.MemoryReservation)))
+	if config.MemoryReservationMB > 0 {
+		parts = append(parts, fmt.Sprintf("reservation=%s", formatBytes(int64(config.MemoryReservationMB)*1024*1024)))
 	}
 
-	if config.MemorySwap > 0 {
-		parts = append(parts, fmt.Sprintf("swap=%s", formatBytes(config.MemorySwap)))
+	if config.MemorySwapMB > 0 {
+		parts = append(parts, fmt.Sprintf("swap=%s", formatBytes(int64(config.MemorySwapMB)*1024*1024)))
 	}
 
-	if config.MemoryKernel > 0 {
-		parts = append(parts, fmt.Sprintf("kernel=%s", formatBytes(config.MemoryKernel)))
+	if config.MemoryKernelMB > 0 {
+		parts = append(parts, fmt.Sprintf("kernel=%s", formatBytes(int64(config.MemoryKernelMB)*1024*1024)))
 	}
 
-	if config.MemorySwappiness != nil {
-		parts = append(parts, fmt.Sprintf("swappiness=%d", *config.MemorySwappiness))
+	if config.MemorySwappinessMB != nil {
+		parts = append(parts, fmt.Sprintf("swappiness=%d", *config.MemorySwappinessMB))
 	}
 
 	if config.OomKillDisable {

@@ -156,9 +156,11 @@ type MicaClientConfCreateOptions struct {
 // /*optional configs for pedestal */
 // char cpu str[MAX CPUSTR LEN];
 // int vcpu num;
+// int maxvcpus num;
 // int cpu weight;
 // int cpu capacity;
-// int memory;
+// int memory; // in MB
+// int maxmem; // in MB
 // char network[MAX NETWORK LEN];
 // };
 type MicaClientConf struct {
@@ -180,7 +182,7 @@ type MicaClientConf struct {
 	cpuWeight int
 	// cpuCapacity is the capacity of cpu
 	cpuCapacity int
-	// memory size
+	// memory size in MiB
 	memory int
 	// network config
 	network [MaxNetworkLen]byte

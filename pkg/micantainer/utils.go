@@ -66,14 +66,15 @@ func createMicaConf(container *Container) (libmica.MicaClientConf, error) {
 	if err != nil {
 		return conf, fmt.Errorf("failed to get client cpu: %w", err)
 	}
-	mem := uint64(config.MemoryLimit)
+	// MemoryLimitMB is already in MiB
+	memMiB := config.MemoryLimitMB
 	conf.InitWithOpts(libmica.MicaClientConfCreateOptions{
 		CPU: []int{cpu},
 		// TODO: dummy settings
 		CPUCapacity: int(config.CpuQuota),
 		CPUWeight:   int(config.CpuShares),
 		Debug:       false,
-		Memory:      int(mem),
+		Memory:      int(memMiB),
 		Name:        name,
 		Network:     "",
 		Path:        firmware,

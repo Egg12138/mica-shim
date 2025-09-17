@@ -16,7 +16,7 @@ const (
 type SandboxAgent struct {
 	VcpuNum uint32
 	// vcpu number of each container
-	Vcpus map[string] int
+	Vcpus map[string] uint32
 	// Cpuset of each container
 	CpuSetMap map[string]cpuset.CPUSet
 	// Total `Cpucapacity %` of CPUs used for sandbox workloads

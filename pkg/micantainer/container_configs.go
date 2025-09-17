@@ -28,13 +28,13 @@ func (r *ContainerConfig) ParseOCICPUResources(spec *specs.Spec) error {
 	}
 
 	essentialRes := pedestal.LinuxResource2Essential(spec)
-	r.CpuLimit = int(*essentialRes.CpuCpacity)
+	r.CpuLimit = *essentialRes.CpuCpacity
 	r.CpuPeriod = *essentialRes.CpuPeriod
 	r.CpuQuota = *essentialRes.CpuQuota
-	r.CpuShares = uint64(*essentialRes.CPUWeight)
-	r.VCPUNum = int(*essentialRes.Vcpu)
+	r.CpuShares = *essentialRes.CPUWeight
+	r.VCPUNum = *essentialRes.Vcpu
 	r.CpusetCpus = essentialRes.ClientCpuSet
-	r.MemoryLimit = int64(*essentialRes.MemoryLimitMB)
+	r.MemoryLimitMB = *essentialRes.MemoryLimitMB
 	log.Debugf(`
 		EssentialResource:
 		CpuLimit = %d
@@ -45,7 +45,7 @@ func (r *ContainerConfig) ParseOCICPUResources(spec *specs.Spec) error {
 		CpusetCpus = %s
 		MemoryLimit = %d
 	}
-	`, r.CpuLimit, r.CpuPeriod, r.CpuQuota, r.CpuShares, r.VCPUNum, r.CpusetCpus, r.MemoryLimit)
+	`, r.CpuLimit, r.CpuPeriod, r.CpuQuota, r.CpuShares, r.VCPUNum, r.CpusetCpus, r.MemoryLimitMB)
 	
 
 	return nil
@@ -61,20 +61,20 @@ func (r *ContainerConfig) ParseOCIMemoryResources(spec *specs.Spec) error {
 	memory := spec.Linux.Resources.Memory
 
 	if memory.Limit != nil {
-		r.MemoryLimit = int64(*memory.Limit / 1024 / 1024)
+		r.MemoryLimitMB = uint32(*memory.Limit / 1024 / 1024)
 	}
 
 	if memory.Reservation != nil {
-		r.MemoryReservation = int64(*memory.Reservation / 1024 / 1024)
+		r.MemoryReservationMB = uint32(*memory.Reservation / 1024 / 1024)
 	}
 
 	if memory.Swap != nil {
-		r.MemorySwap = int64(*memory.Swap / 1024 / 1024)
+		r.MemorySwapMB = uint32(*memory.Swap / 1024 / 1024)
 	}
 
 	if memory.Swappiness != nil {
-		swappiness := uint64(*memory.Swappiness / 1024 / 1024)
-		r.MemorySwappiness = &swappiness
+		swappiness := uint32(*memory.Swappiness)
+		r.MemorySwappinessMB = &swappiness
 	}
 
 	if memory.DisableOOMKiller != nil {
@@ -90,16 +90,17 @@ func ValidateResourceLimits(config *ContainerConfig) error {
 	// Validate CPU limits
 	if config.CpuLimit > 0 {
 		systemCPUs := libmica.MaxClientCPUNum()
-		if config.CpuLimit > systemCPUs {
+		if int(config.CpuLimit) > systemCPUs {
 			return fmt.Errorf("container CPU limit %d exceeds system CPU count %d", config.CpuLimit, systemCPUs)
 		}
 	}
 
 	// Validate memory limits
-	if config.MemoryLimit > 0 {
+	if config.MemoryLimitMB > 0 {
 		systemMemory := getSystemMemoryBytes()
-		if config.MemoryLimit > systemMemory {
-			return fmt.Errorf("container memory limit %d bytes exceeds system memory %d bytes", config.MemoryLimit, systemMemory)
+		systemMemoryMB := systemMemory / 1024 / 1024
+		if config.MemoryLimitMB > uint32(systemMemoryMB) {
+			return fmt.Errorf("container memory limit %d MiB exceeds system memory %d MiB", config.MemoryLimitMB, systemMemoryMB)
 		}
 	}
 
