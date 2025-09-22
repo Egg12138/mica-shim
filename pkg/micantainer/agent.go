@@ -2,6 +2,7 @@ package micantainer
 
 import (
 	"context"
+	er "mica-shim/errors"
 	"mica-shim/pkg/libmica"
 	"mica-shim/pkg/utils"
 	"time"
@@ -14,18 +15,20 @@ const (
 )
 
 type SandboxAgent struct {
+	// total vcpu number of sanbox
 	VcpuNum uint32
-	// vcpu number of each container
-	Vcpus map[string] uint32
+
+	// TODO: Pool is not enabled currently
+	// Physical cpu pool for container, 
+	PcpuPool []int
+
+	// Vcpu number of each container
+	ContainerVcpus map[string][]int
 	// Cpuset of each container
-	CpuSetMap map[string]cpuset.CPUSet
-	// Total `Cpucapacity %` of CPUs used for sandbox workloads
-	CpuCapacity map[string]uint64
+	ContainerCpuSets map[string]cpuset.CPUSet
 	// Total requested memory of sandbox workloads
 	MemoryPoolBytes uint64
 
-	// TODO: Pool is not enabled currently
-	CpuPool map[int] struct{}
 }
 
 // nolint:golint
@@ -118,10 +121,6 @@ func (n *SandboxAgent) readTaskStdout(ctx context.Context, c *Container, taskID 
 	return n.readOut(ctx, c, taskID, data)
 }
 
-func (n *SandboxAgent) vcpuSet(ctx context.Context) (uint32, error) {
-	return maxVCPUNumber(), nil
-}
-
 func (n *SandboxAgent) resizeVCPUs(newNum uint32) (uint32, uint32) {
 	old := n.VcpuNum
 	if old < newNum {
@@ -148,4 +147,17 @@ func (n *SandboxAgent) getTotalMemoryMB() uint64 {
 
 // try to reorder resources dom0 can do, it cannot, just okay
 func (n *SandboxAgent) Cleanup(ctx context.Context) {
+}
+
+func (n *SandboxAgent) ContainerVcpuSet(cid string) ([]int, error) {
+	list, ok := n.ContainerVcpus[cid]
+	if !ok {
+		return []int{}, er.ErrContainerNotFound
+	}
+
+	return list, nil
+}
+
+func (n *SandboxAgent) setNewPCpuList(cpulist []int) {
+	n.PcpuPool = cpulist
 }

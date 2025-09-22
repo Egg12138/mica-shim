@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"io"
 	defs "mica-shim/definitions"
+	er "mica-shim/errors"
 	log "mica-shim/logger"
-	er "mica-shim/pkg/errors"
 	"mica-shim/pkg/libmica"
 	ped "mica-shim/pkg/pedestal"
 	utils "mica-shim/pkg/utils"
@@ -17,7 +17,9 @@ import (
 	"time"
 
 	"github.com/containerd/errdefs"
+	"github.com/hashicorp/go-multierror"
 	vc "github.com/kata-containers/kata-containers/src/runtime/virtcontainers"
+	"github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/cpuset"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 )
@@ -120,7 +122,7 @@ type ContainerConfig struct {
 	// VCPU, == CpuLimit if not pinning; if pinning, VCPU= Size(cpuset)
 	VCPUNum         uint32 `json:"vcpu_num"`
 	// allocated physical cpu number, coordinates with CPULimit
-	// TODO: remove PCPUNum
+	// TODO: for openAMP, Jailhouse case
 	PCPUNum         int         `json:"ncpu"`
 
 	// Memory in MiB
@@ -133,8 +135,6 @@ type ContainerConfig struct {
 
 	// boot cmdline for guest
 	Cmdline string `json:"cmdline"`
-	// cpu is the allocated CPU, -1 if not allocated.
-	cpu int
 }
 
 // RootFs represents the root filesystem of the container.
@@ -638,16 +638,6 @@ func (c *Container) setContainerState(ctx context.Context, state StateString) er
 	return nil
 }
 
-func (c *Container) allocClientCPU() error {
-	// Use the container-specific CPU limit instead of the global HostMaxCPU.
-	cpu, err := allocCPUWithLimit(c.config.PCPUNum, c.config)
-	if err != nil {
-		return err
-	}
-	c.config.cpu = cpu
-	return nil
-}
-
 func allocCPUWithLimit(ncpu int, config *ContainerConfig) (int, error) {
 	if ncpu < 1 {
 		return 0, fmt.Errorf("ncpu must be at least 1")
@@ -677,7 +667,7 @@ func allocCPUWithLimit(ncpu int, config *ContainerConfig) (int, error) {
 // considering both OCI spec limits and system constraints.
 func getContainerCPULimit(cfg *ContainerConfig) int {
 	// TODO: The runtime cannot detect the max number of CPUs Xen can handle.
-	systemCPUs := maxCPUNumber()
+	systemCPUs := machineCPUNumber()
 
 	// Use the container-specific CPU limit from the OCI spec, if available.
 	if cfg != nil {
@@ -703,13 +693,11 @@ func getContainerCPULimit(cfg *ContainerConfig) int {
 	return defaultLimit
 }
 
-func (c *Container) GetClientCPU() (int, error) {
+func (c *Container) GetClientCPU() (string, error) {
 	if c.cpuUnset() {
-		if err := c.allocClientCPU(); err != nil {
-			return c.config.cpu, err
-		}
+		return "", nil
 	}
-	return c.config.cpu, nil
+	return c.config.CpusetCpus, nil
 }
 
 func (c *Container) SaveState() error {
@@ -839,6 +827,22 @@ func (c *Container) wait4exit() (int32, error) {
 	return ok0, nil
 }
 
+func (c *Container) setVcpuAffinity(cpuSet cpuset.CPUSet) error {
+	var result *multierror.Error
+	cpulist := cpuSet.ToSlice()
+	if err := c.me.VcpuPin(cpulist); err != nil {
+		result = multierror.Append(result, err)
+	}
+
+	ret := result.ErrorOrNil()
+	if ret == nil {
+		c.config.VCPUNum = uint32(cpuSet.Size())
+		c.config.CpusetCpus = cpuSet.String()
+		c.config.PCPUNum = int(c.config.VCPUNum)
+	}
+	return ret
+}
+
 func (c *Container) ioStream(taskID string) (io.WriteCloser, io.Reader, io.Reader, error) {
 	if c.notOperational() {
 		return nil, nil, nil, fmt.Errorf("Container not ready or running, impossible to signal the container")
@@ -871,7 +875,7 @@ func (c *Container) GetOS() string {
 }
 
 func (c *Container) cpuUnset() bool {
-	return c.config.cpu == -1
+	return c.config.CpusetCpus == ""
 }
 
 func (c *Container) GetPedGuestBootBin() string {

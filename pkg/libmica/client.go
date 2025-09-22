@@ -5,12 +5,11 @@ import (
 	"encoding/binary"
 	"fmt"
 	defs "mica-shim/definitions"
+	er "mica-shim/errors"
 	log "mica-shim/logger"
-	er "mica-shim/pkg/errors"
 	"mica-shim/pkg/pedestal"
 	utils "mica-shim/pkg/utils"
 	"path/filepath"
-	"strconv"
 	"strings"
 )
 
@@ -125,17 +124,19 @@ type mcsFS struct {
 
 // MicaClientConfCreateOptions is an intermediate layer to pass configurations to MicaClientConf
 type MicaClientConfCreateOptions struct {
-	CPU         []int
+	CPU         string
 	Name        string
 	Path        string
 	Ped         string
 	PedCfg      string
 	Debug       bool
-	VCPU        int
+	VCPUs       int
+	MaxVCPUs    int
 	CPUWeight   int
 	CPUCapacity int
 	// TODO: add maxmem
-	Memory      int
+	MemoryMB    int
+	MaxMemMB   	int
 	Network     string
 }
 
@@ -182,8 +183,8 @@ type MicaClientConf struct {
 	cpuWeight int
 	// cpuCapacity is the capacity of cpu
 	cpuCapacity int
-	// memory size in MiB
-	memory int
+	// memoryMB size in MiB
+	memoryMB int
 	// network config
 	network [MaxNetworkLen]byte
 }
@@ -201,7 +202,7 @@ func autoBoot() bool {
 }
 
 // Deprecated: Use InitWithOpts instead for new implementations.
-func (m *MicaClientConf) Init(cpu uint32, name string, path string, ped string, pedCfg string, debug bool) {
+func (m *MicaClientConf) MockInit(cpu uint32, name string, path string, ped string, pedCfg string, debug bool) {
 	name = utils.ShortID(name)
 	copy(m.name[:], name)
 	copy(m.path[:], path)
@@ -217,7 +218,7 @@ func (m *MicaClientConf) Init(cpu uint32, name string, path string, ped string, 
 	m.vcpuNum = 0
 	m.cpuWeight = 0
 	m.cpuCapacity = 0
-	m.memory = 0
+	m.memoryMB = 0
 
 	// Clear network field
 	for i := range m.network {
@@ -235,14 +236,15 @@ func (m *MicaClientConf) InitWithOpts(opts MicaClientConfCreateOptions) {
 	m.debug = opts.Debug
 
 	// Convert CPU array to string
-	cpuStr := pedestal.ParseCPUArr(opts.CPU)
+	// cpuStr := pedestal.ParseCPUArr(opts.CPU)
+	cpuStr := opts.CPU
 	copy(m.cpuStr[:], cpuStr)
 
 	// Set other fields
-	m.vcpuNum = opts.VCPU
+	m.vcpuNum = opts.VCPUs
 	m.cpuWeight = opts.CPUWeight
 	m.cpuCapacity = opts.CPUCapacity
-	m.memory = opts.Memory
+	m.memoryMB = opts.MemoryMB
 	copy(m.network[:], opts.Network)
 }
 
@@ -277,7 +279,7 @@ func (m *MicaClientConf) pack() []byte {
 	offset += 4
 	binary.LittleEndian.PutUint32(buf[offset:], uint32(m.cpuCapacity))
 	offset += 4
-	binary.LittleEndian.PutUint32(buf[offset:], uint32(m.memory))
+	binary.LittleEndian.PutUint32(buf[offset:], uint32(m.memoryMB))
 	offset += 4
 	copy(buf[offset:offset+MaxNetworkLen], m.network[:])
 
@@ -298,16 +300,16 @@ func NewMicaCreateMsg(cpu uint32, name string, path string, ped string, pedCfg s
 	msg := MicaClientConf{}
 	// Convert simple parameters to the new options format
 	opts := MicaClientConfCreateOptions{
-		CPU:         dummyCPUArr(), // Use dummy CPU array as default
+		CPU:         pedestal.ParseCPUArr(dummyCPUArr()),
 		Name:        name,
 		Path:        path,
 		Ped:         ped,
 		PedCfg:      pedCfg,
 		Debug:       debug,
-		VCPU:        0,
+		VCPUs:        0,
 		CPUWeight:   0,
 		CPUCapacity: 0,
-		Memory:      0,
+		MemoryMB:      0,
 		Network:     "",
 	}
 	msg.InitWithOpts(opts)
@@ -468,106 +470,4 @@ func FilterStatuses(statuses []*MicaStatus, nameFilter string, stateFilter MicaS
 	}
 
 	return filtered
-}
-
-// TODO: this function is not in use now, we migrate from `UpdateVCPUs` to this function
-// after allocating sandbox cpus in xen pool is finished.
-func (me *MicaExecutor) UpdateSandboxPoolVCPUs() {}
-
-// number of visible vcpus
-func (me *MicaExecutor) UpdateVCPUNum(newVCPUs uint32) (oldCPUs, newCPUs uint32, retErr error)  {
-	cmdArgs := []string{"VCPU", strconv.Itoa(int(newVCPUs))}
-	s := strings.Join(cmdArgs, " ")
-	err := micaCtl(MUpdate, me.Id, s)
-	if err != nil {
-		log.Warnf("failed to update vcpu number: %v", err)
-		return uint32(me.records.vcpuNum), uint32(me.records.vcpuNum), err
-	}
-	return uint32(me.records.cpuWeight), newVCPUs, err
-} 
-
-// TODO: temporarily dirty-join string as command line, need to change to a better way
-func (me *MicaExecutor) UpdatePCPUConstrains(cpus string) error {
-	cmdArgs := []string{"CPU", cpus}
-	s := strings.Join(cmdArgs, " ")
-	err := micaCtl(MUpdate, me.Id,s)
-	if err != nil {
-		log.Warnf("failed to bind physical cpuset \"%s\" to container: %v", cpus,  err)
-	} else {
-		me.records.cpuStr = [MaxCPUStringLen]byte{}
-		log.Info("updated to new cpuset")
-	}
-	return err
-}
-
-
-func (me *MicaExecutor) UpdateCPUCapacity(cap uint32) error {
-	cmdArgs := []string{"CPUCpacity", strconv.Itoa(int(cap))}
-	s := strings.Join(cmdArgs, " ")
-	err := micaCtl(MUpdate, me.Id,s)
-	if err != nil {
-		log.Warnf("failed to update cap time to %d that container can run: %v", cap,  err)
-	} else {
-		me.records.cpuCapacity = int(cap)
-		log.Info("updated to new cpu capacity")
-	}
-	return err
-}
-
-func (me *MicaExecutor) UpdateCPUShare(weight uint32) error {
-	cmdArgs := []string{"CPUWeight", strconv.Itoa(int(weight))}
-	s := strings.Join(cmdArgs, " ")
-	err := micaCtl(MUpdate, me.Id,s)
-	if err != nil {
-		log.Warnf("failed to update cpu share time to %d that container can run: %v", weight,  err)
-	} else {
-		me.records.cpuWeight = int(weight)
-		log.Info("updated to new cpu weight")
-	}
-	return err
-}
-
-
-func (me *MicaExecutor) UpdateMemory(memMiB uint32) error {
-	cmdArgs := []string{"Memory", strconv.Itoa(int(memMiB))}
-	s := strings.Join(cmdArgs, " ")
-	err := micaCtl(MUpdate, me.Id,s)
-	if err != nil {
-		log.Warnf("failed to request new memory \"%d\" to container: %v", memMiB,  err)
-	} else {
-		me.records.memory = int(memMiB)
-		log.Infof("update memory to %d", memMiB)
-	}
-	return err
-}
-
-
-func (me *MicaExecutor) ReadResource() *pedestal.EssentialResource {
-	res := pedestal.InitResource()
-
-	// Initialize pointer fields with values from records
-	if me.records.vcpuNum > 0 {
-		vcpu := uint32(me.records.vcpuNum)
-		res.Vcpu = &vcpu
-	}
-
-	if me.records.cpuWeight > 0 {
-		weight := uint32(me.records.cpuWeight)
-		res.CPUWeight = &weight
-	}
-
-	if me.records.cpuCapacity > 0 {
-		capacity := uint32(me.records.cpuCapacity)
-		res.CpuCpacity = &capacity
-	}
-
-	if me.records.memory > 0 {
-		memory := uint32(me.records.memory)
-		res.MemoryLimitMB = &memory
-	}
-
-	// Set ClientCpuSet from cpuStr (convert byte array to string)
-	res.ClientCpuSet = strings.TrimRight(string(me.records.cpuStr[:]), "\x00")
-
-	return res
 }

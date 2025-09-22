@@ -26,7 +26,7 @@ type ContainerTraits interface {
 	GetMemoryLimit() uint64
 	Status() StateString
 	State() *ContainerState
-	GetClientCPU() (int, error)
+	GetClientCPU() (string, error)
 	SaveState() error
 	Signal(ctx context.Context, signal syscall.Signal) error
 }

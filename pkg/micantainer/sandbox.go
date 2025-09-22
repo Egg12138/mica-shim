@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"io"
 	defs "mica-shim/definitions"
+	er "mica-shim/errors"
 	log "mica-shim/logger"
-	er "mica-shim/pkg/errors"
 	"mica-shim/pkg/libmica"
 	ped "mica-shim/pkg/pedestal"
 	"mica-shim/pkg/utils"
@@ -16,6 +16,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/hashicorp/go-multierror"
 	"github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/cpuset"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
@@ -165,6 +166,8 @@ type Sandbox struct {
 	id         string
 	network    Network
 	state      SandboxState
+
+	vcpuAlreadyPinned bool
 
 	annotaLock *sync.RWMutex
 	wg         *sync.WaitGroup
@@ -577,14 +580,7 @@ func (s *Sandbox) StatsContainer(ctx context.Context, id string) (ContainerStats
 
 func (s *Sandbox) Stats(ctx context.Context) (SandboxStats, error) {
 	stats := SandboxStats{}
-
-	// BUG: logic leaks
-	vCpuNum, err := s.resManager.vcpuSet(ctx)
-	if err != nil {
-		log.Errorf("failed to get vcpu number: %v", err)
-		return stats, err
-	}
-	stats.Cpus = int(vCpuNum)
+	stats.Cpus = int(s.resManager.VcpuNum)
 	return stats, nil
 }
 
@@ -1041,7 +1037,10 @@ func (s *Sandbox) initContainers(ctx context.Context) error {
 }
 
 // TODO: universe pinning vCPUs for different pedestal in Libmica
-// if VCPUsPing
+// if pinning: 
+// * Container:VCPU = 1:N; VCPU:PCU = 1:1; Container CpuSet ∈ CpuPool (CpuPool = MergedCPUSet)
+// if not pinning:
+// * Container:VCPU = 1:N; VCPU:PCU = N:M (affinity not set); Container CpuSet ∈ CpuPool (CpuPool = MergedCPUSet)
 func (s *Sandbox) checkVCPUsPinning(ctx context.Context) error {
 	if s.config == nil {
 		return fmt.Errorf("no sandbox config found")
@@ -1051,20 +1050,45 @@ func (s *Sandbox) checkVCPUsPinning(ctx context.Context) error {
 		return nil
 	}
 
-	cpus, _, err := s.getMergedCpuset()
+
+	cpus, _, err := s.getSandboxCpusetStr()
 	if err != nil {
-		return fmt.Errorf("failed to get merged CPUSet of containers in sandbox: %v", err)
+		return fmt.Errorf("failed to get CPUSet string: %v", err)
 	}
 
 	cpuSet, err := cpuset.Parse(cpus)
-	if CpusetRangeValid(cpuSet) {
-		
-	}
 	if err != nil {
 		return fmt.Errorf("failed to parse CPUSet string %s: %v", cpus, err)
 	}
+	cpuList := cpuSet.ToSlice()
+	
+	match := true
 
+	if outOfRange, overrange := CpusetRangeValid(cpuList); outOfRange {
+		match = false
+		log.Debugf("these cpus are out of range: %v", overrange)
+		// TODO: handle the overrange cpus
+	}
 
+	numVCPUs, numCPUs := int(s.resManager.VcpuNum), len(cpuList)
+	if numCPUs != numVCPUs {
+		match = false
+		log.Debugf("the number of cpusets %d is not equal to the number of vcpus %d", numCPUs, numVCPUs)
+	}
+
+	if !match {
+		if s.vcpuAlreadyPinned {
+			s.vcpuAlreadyPinned = false
+			log.Debugf("the sandbox is already pinned to cpusets")
+		}
+	}
+
+	if err := s.pinVCPU(cpuSet); err != nil {
+		log.Warnf("failed to pin vcpu: %v", err)
+		return err
+	}
+
+	s.vcpuAlreadyPinned = true
 	return nil
 }
 
@@ -1072,7 +1096,7 @@ func (s *Sandbox) checkVCPUsPinning(ctx context.Context) error {
 // ocispec load memory nodes part and cpus part of cpuset in field of Linux.Resource.CPU.{Mems, Cpus}
 // string format cpuset is expected by mica
 // ref: kata-containers/src/runtime/virtcontainers/sandbox.go
-func (s *Sandbox) getMergedCpuset() (string, string, error) {
+func (s *Sandbox) getSandboxCpusetStr() (string, string, error) {
 	if s.config == nil {
 		return "", "", nil
 	}
@@ -1097,7 +1121,6 @@ func (s *Sandbox) getMergedCpuset() (string, string, error) {
 	}
 
 	return cpuResult.String(), memResult.String(), nil
-
 }
 
 // recalculate resources pool for clients and call pedestal to resize
@@ -1129,8 +1152,6 @@ func (s *Sandbox) updateResources(ctx context.Context) error {
 	oldMemBytes, newMemBytes := s.resManager.resizeMemory(newSandboxMemoryMB)
 	log.Infof("sandbox total memory usage from %d to %d", oldMemBytes, newMemBytes)
 
-	// TODO: remains for cpu pool design 
-	// changes in cpu pool size and memory pool size
 	return nil
 }
 
@@ -1154,3 +1175,27 @@ func (s *Sandbox) loadContainersToSandbox(ctx context.Context) error {
 	return nil
 
 }
+
+// update cpu affinity for sandbox vcpu
+// repin vcpus in vcpuList to the cpupool
+func (s *Sandbox) pinVCPU(cpuSet cpuset.CPUSet) error { 
+	var result *multierror.Error
+	pcpuList := cpuSet.ToSlice()
+	for cid, c := range s.containers {
+		log.Infof("try to pin container %s vcpu affinity to cpuset %v", cid, pcpuList)
+		if err := c.setVcpuAffinity(cpuSet); err != nil {
+			result = multierror.Append(result, err)
+		} else {
+			s.resManager.ContainerCpuSets[cid] = cpuSet
+		}
+	}
+
+	ret := result.ErrorOrNil()
+	if ret == nil {
+		s.resManager.VcpuNum = uint32(cpuSet.Size())
+		s.resManager.setNewPCpuList(pcpuList)
+	}
+	return ret
+}
+
+func (s *Sandbox) alignVcpuMapping()

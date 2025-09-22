@@ -7,14 +7,17 @@ import (
 	"bytes"
 	"fmt"
 	defs "mica-shim/definitions"
+	er "mica-shim/errors"
 	log "mica-shim/logger"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 
 	"github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/cpuset"
 	"github.com/opencontainers/runtime-spec/specs-go"
+	"github.com/shirou/gopsutil/v3/mem"
 )
 
 const DefaultCgroupShare = 1024
@@ -65,8 +68,8 @@ type XlInfo struct {
 	machine     string
 	// max physical cpus that Xen can handle
 	nrCpus      uint32
-	totalMemory uint64
-	freeMemory  uint64
+	totalMemoryMB uint32
+	freeMemoryMB  uint32
 	xlver string
 	
 	maxCpuId         uint32  
@@ -101,7 +104,52 @@ type XlInfo struct {
 	armSVEVectorLength uint32
 }
 
+
+//  xl vcpu-list Output Format
+//   Header Line:
+//   Name                              ID  VCPU  CPU  State  Time(s)  Affinity (Hard / Soft)
+//   Data Lines:
+//   <domain_name>                    <domid> <vcpuid> <cpu> <state> <time> <hard_affinity> / <soft_affinity>
+//   Field Details:
+//   1. Name (32 chars, left-aligned): Domain name
+//   2. ID (5 chars, right-aligned): Domain ID (numeric)
+//   3. VCPU (5 chars, right-aligned): VCPU ID (numeric)
+//   4. CPU (5 chars, right-aligned):
+//     - If VCPU is offline: -
+//     - If VCPU is online: CPU number the VCPU is currently running on
+//   5. State (5 chars):
+//     - Format: XYZ- where:
+//         - X: r if running, - if not
+//       - Y: b if blocked, - if not
+//       - Z: - (always)
+//     - If VCPU is offline: ---
+//   6. Time(s) (9 chars, right-aligned): CPU time consumed by this VCPU in seconds (with 1 decimal place)
+//   7. Affinity (variable width):
+//     - Hard affinity: CPU bitmap showing which CPUs the VCPU is allowed to run on
+//     - Soft affinity: CPU bitmap showing preferred CPUs for the VCPU
+//     - Format: <hard_bitmap> / <soft_bitmap>
+//   Example Output:
+// $xl vcpu-list
+// Name                                ID  VCPU   CPU State   Time(s) Affinity (Hard / Soft)
+// Domain-0                             0     0    1   -b-     271.1  all / all
+// Domain-0                             0     1    0   r--     257.5  all / all
+// Domain-0                             0     2    -   --p       0.0  all / all
 type XlVcpuInfo struct {
+	DomainVCPUMap map[string][]VCPUEntry
+}
+
+// VCPUEntry represents a single VCPU entry
+type VCPUEntry struct {
+	// short Id
+	DomainName    string
+	// micran ignore it acutally;
+	DomainID      int
+	VCPUID        int
+	CPU           int  // -1 if offline
+	State         string
+	TimeSeconds   float64
+	HardAffinity  string
+	SoftAffinity  string
 }
 
 type xlSubCmd string
@@ -137,7 +185,6 @@ func xlvcpu() (*XlVcpuInfo, error) {
 func xinfo() (*XlInfo, error) {
 	cmd := newxl(info)
 
-	// Capture output
 	var out bytes.Buffer
 	cmd.Stdout = &out
 
@@ -145,7 +192,6 @@ func xinfo() (*XlInfo, error) {
 		return nil, fmt.Errorf("failed to run xl info: %v", err)
 	}
 
-	// Parse the output
 	return parseXlInfo(out.String())
 }
 
@@ -160,7 +206,6 @@ func parseXlInfo(output string) (*XlInfo, error) {
 			continue
 		}
 
-		// Split on ":" and trim whitespace
 		parts := strings.SplitN(line, ":", 2)
 		if len(parts) != 2 {
 			continue
@@ -179,12 +224,12 @@ func parseXlInfo(output string) (*XlInfo, error) {
 				info.nrCpus = uint32(nrCpus)
 			}
 		case "total_memory":
-			if totalMemory, err := strconv.ParseUint(value, 10, 64); err == nil {
-				info.totalMemory = totalMemory
+			if totalMemory, err := strconv.ParseUint(value, 10, 32); err == nil {
+				info.totalMemoryMB = uint32(totalMemory)
 			}
 		case "free_memory":
-			if freeMemory, err := strconv.ParseUint(value, 10, 64); err == nil {
-				info.freeMemory = freeMemory
+			if freeMemory, err := strconv.ParseUint(value, 10, 32); err == nil {
+				info.freeMemoryMB = uint32(freeMemory)
 			}
 		case "xen_major":
 			// Build xl version
@@ -198,7 +243,6 @@ func parseXlInfo(output string) (*XlInfo, error) {
 				info.xlver += value
 			}
 			
-		// CPU topology and scheduling information
 		case "max_cpu_id":
 			if maxCpuId, err := strconv.ParseUint(value, 10, 32); err == nil {
 				info.maxCpuId = uint32(maxCpuId)
@@ -221,7 +265,6 @@ func parseXlInfo(output string) (*XlInfo, error) {
 				info.freeCpus = uint32(freeCpus)
 			}
 			
-		// Xen capabilities and features
 		case "xen_caps":
 			info.xenCaps = value
 		case "xen_scheduler":
@@ -233,7 +276,6 @@ func parseXlInfo(output string) (*XlInfo, error) {
 		case "virt_caps":
 			info.virtCaps = value
 			
-		// Memory management details
 		case "outstanding_claims":
 			if outstandingClaims, err := strconv.ParseUint(value, 10, 64); err == nil {
 				info.outstandingClaims = outstandingClaims
@@ -247,13 +289,11 @@ func parseXlInfo(output string) (*XlInfo, error) {
 				info.sharingUsedMemory = sharingUsedMemory
 			}
 			
-		// Platform-specific information
 		case "platform_params":
 			info.platformParams = value
 		case "xen_commandline":
 			info.xenCommandline = value
 			
-		// ARM-specific fields
 		case "arm_sve_vector_length":
 			if armSVEVectorLength, err := strconv.ParseUint(value, 10, 32); err == nil {
 				info.armSVEVectorLength = uint32(armSVEVectorLength)
@@ -269,19 +309,115 @@ func parseXlInfo(output string) (*XlInfo, error) {
 }
 
 func parseXlVcpuInfo(output string) (*XlVcpuInfo, error) {
-	return nil, nil
+	info := &XlVcpuInfo{
+		DomainVCPUMap: make(map[string][]VCPUEntry),
+	}
+	
+	scanner := bufio.NewScanner(strings.NewReader(output))
+	
+	headerFound := false
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.Contains(line, "Name") && strings.Contains(line, "Affinity") {
+			headerFound = true
+			break
+		}
+	}
+	
+	if !headerFound {
+		return nil, fmt.Errorf("could not find vcpu-list header")
+	}
+	
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		
+		vcpu, err := parseVcpuLine(line)
+		if err != nil {
+			return nil, fmt.Errorf("error parsing line '%s': %v", line, err)
+		}
+		
+		info.DomainVCPUMap[vcpu.DomainName] = append(info.DomainVCPUMap[vcpu.DomainName], vcpu)
+	}
+	
+	return info, nil
+}
+
+func parseVcpuLine(line string) (VCPUEntry, error) {
+	// line format: Name(32) ID(5) VCPU(5) CPU(5) State(5) Time(9) Affinity(variable)
+	re := regexp.MustCompile(`^(\S.{31})\s+(\d+)\s+(\d+)\s+(\d+|-)\s+([r-])([b-])([-])\s+([\d.]+)\s+(.+)$`)
+	matches := re.FindStringSubmatch(line)
+	if matches == nil {
+		return VCPUEntry{}, er.ErrCommandOutputParse
+	}
+	
+	domainName := strings.TrimSpace(matches[1])
+	domainID, _ := strconv.Atoi(matches[2])
+	vcpuid, _ := strconv.Atoi(matches[3])
+	
+	cpu := -1
+	if matches[4] != "-" {
+		cpu, _ = strconv.Atoi(matches[4])
+	}
+	
+	state := "---"
+	if matches[4] != "-" {
+		state = matches[5] + matches[6] + matches[7]
+	}
+	
+	timeSeconds, _ := strconv.ParseFloat(matches[8], 64)
+	
+	affinity := matches[9]
+	parts := strings.Split(affinity, " / ")
+	hardAffinity := parts[0]
+	softAffinity := ""
+	if len(parts) > 1 {
+		softAffinity = parts[1]
+	}
+	
+	return VCPUEntry{
+		DomainName:    domainName,
+		DomainID:     domainID,
+		VCPUID:       vcpuid,
+		CPU:          cpu,
+		State:        state,
+		TimeSeconds:  timeSeconds,
+		HardAffinity: hardAffinity,
+		SoftAffinity: softAffinity,
+	}, nil
 }
 
 func (xi *XlInfo) nodePhysicalCPUNum() uint32 {
 	return xi.nrCpus
 }
 
+func MemoryMB() (free, total uint32) {
+	v, _ := mem.VirtualMemory()
+	free = uint32(v.Free >> 20) // Convert bytes to MB
+	total = uint32(v.Total >> 20) // Convert bytes to MB
+	if defs.IsMock {
+		return free, total
+	}
+
+	i, err := xinfo()
+	if err != nil {
+		log.Debugf("failed to get machine info: %v", err)
+		return free, total
+	}
+	free, total = i.freeMemoryMB, i.totalMemoryMB
+	return free, total
+}
+
+// TODO: make this function a FnOnce for lower cost
 func MaxCPUNum() uint32 {
 	if defs.IsMock {
 		return uint32(runtime.NumCPU())
 	}
 	i, err := xinfo()
 	if err != nil {
+		log.Debugf("failed to get machine info: %v", err)
 		return uint32(runtime.NumCPU())
 	}
 	return i.nodePhysicalCPUNum()
@@ -404,3 +540,78 @@ func calculateVCPU(cpuSet *cpuset.CPUSet, vcpuAssigned int) int {
 	return cpuSet.Size()
 }
 
+
+func MemLowThreshold() uint32 {
+	if defs.IsMock {
+		return 32
+	}
+	return 2
+}
+
+func MemHighThreshold() uint32 {
+	xi, err :=xinfo()
+	if err != nil {
+		return 0
+	}
+	maxMem := xi.totalMemoryMB
+	if maxMem < MemLowThreshold() {
+		maxMem = MemLowThreshold() + 1
+	}
+
+	return maxMem
+}
+
+func ControlOSCpuset() cpuset.CPUSet {
+	if defs.IsMock {
+		return cpuset.NewCPUSet(0, 1)
+	}
+	
+	vcpuInfo, err := xlvcpu()
+	if err != nil {
+		log.Debugf("failed to get vcpu info: %v", err)
+		return cpuset.NewCPUSet(0)
+	}
+	
+	dom0VCPUs, exists := vcpuInfo.DomainVCPUMap["Domain-0"]
+	if !exists {
+		log.Debugf("Domain-0 not found in vcpu list")
+		return cpuset.NewCPUSet(0)
+	}
+	
+	cpuSet := cpuset.NewCPUSet()
+	for _, vcpu := range dom0VCPUs {
+		affinityCPUs, err := parseAffinity(vcpu.HardAffinity)
+		if err != nil {
+			log.Debugf("failed to parse affinity '%s': %v", vcpu.HardAffinity, err)
+			continue
+		}
+		cpuSet = cpuSet.Union(affinityCPUs)
+	}
+	
+	if cpuSet.Size() == 0 {
+		return cpuset.NewCPUSet(0)
+	}
+	
+	return cpuSet
+}
+
+func parseAffinity(affinity string) (cpuset.CPUSet, error) {
+	if affinity == "all" {
+		xlInfo, err := xinfo()
+		if err != nil {
+			return cpuset.NewCPUSet(0, 1, 2, 3), nil
+		}
+		cpuList := make([]int, xlInfo.nrCpus)
+		for i := uint32(0); i < xlInfo.nrCpus; i++ {
+			cpuList[i] = int(i)
+		}
+		return cpuset.NewCPUSet(cpuList...), nil
+	}
+	
+	set, err := cpuset.Parse(affinity)
+	if err != nil {
+		return cpuset.NewCPUSet(), err
+	}
+	
+	return set, nil
+}

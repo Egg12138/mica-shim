@@ -30,10 +30,13 @@
 - [ ] k8s example
 - [ ] show cadvisor CPU Topology
 - [ ] service::Stats 完整实现
+- [ ] k8s/cadvisor感知到整个机器的全部资源，而不是Dom0的资源
 
 
 # flaws and features
 
+- [x] Xen vcpu reader
+- [ ] 验证xl vcpu-list相关输出和micran存储的都同步！后者保证性能，不应该总是从xl输出来读取信息
 - [ ] Xen API: 将对xen相关二进制的调用都走 xapi  [go-xen-api](https://github.com/terra-farm/go-xen-api-client)
 > metrics support
 > ...
@@ -43,10 +46,10 @@
 > 目前实现是： initResource中 ContainerSize::CPU = numCPU = ceil(quota/period) = inited.VCPUs; CPUs=""
 > if EnableVCPUPinning, then VCPUS = num(CPUSet); CPUs = CPUSet
 - [ ] duplicated OCI Resource config parsing when `ContainerConfig()` and `CalculatingContainerResource()`
-- [ ] Lazy&Once的q:全局变量优化：HostPedType, etc... 开销太大了 (e.g. hostpedtype 目前可以加速十倍)
+- [x] Lazy&Once的q:全局变量优化：HostPedType, etc... 开销太大了 (e.g. hostpedtype 目前可以加速十倍)
 - [ ] 优化镜像配置、sandbox的设置逻辑:annotation => file => default => bundle, ordered by priority; bundle 作为 校验使用。annotation的必须要和 bundle 中解析出来的一致
-
-- [ ] sandbox Update Resource: parse cpuset when updating!
+- [ ] mica错误处理
+- [x] sandbox Update Resource: parse cpuset when updating!
 - [ ] openAMP case的静态资源管理
 - [ ] 将Sandbox作为一个Pool:
 > for xen, sandbox cpu range => sandbox cpu pool
@@ -86,7 +89,7 @@
 - [x] bundle rootfs 全空
 - [x] clientpath这一项解析为空
 - [x] clientpath firmwarepath的值如果是绝对路径开头的，要处理掉
-- [ ] sandbox storage 应该存储更加有意义的信息，分离无状态信息和状态信息
+- [x] sandbox storage 应该存储更加有意义的信息，分离无状态信息和状态信息
 - [x] sandbox state.json not cleaned --- after shim disconnected
 - [x] validMicaContainer before mount Rootfs
 - [x] defer nil error: when shim.Kill()
@@ -96,7 +99,7 @@
 - [ ] container update not implemented: recalculate resource, realloca resources; 资源伸缩的真实实现
 - [ ] CNI support
 > [k8s cri api](pkg/apis/runtime/v1/api.proto)
-- [ ] `UpdateTaskRequest::Resource` is of anypb type, !!! 类型转为 specs.LinuxResource是我们的一个乐观假设(通常情况下)，事实上这是可以扩展, e.g.:
+- [x] `UpdateTaskRequest::Resource` is of anypb type, !!! 类型转为 specs.LinuxResource是我们的一个乐观假设(通常情况下)，事实上这是可以扩展, e.g.:
 ```go
 switch req.Resources.TypeUrl {
 case "types.containerd.io/LinuxResources":
@@ -122,18 +125,20 @@ message UpdateContainerResourcesRequest {
 - [ ] pedestal结构调整：
 
 ```console
-├── acrn
 ├── interfaces.go
+├── types.go
+├── acrn
+│   └── resource_mngt.go
 ├── jailhouse
 │   ├── j_metrics.go
-│   └── resource_mng.go
+│   └── resource_mngt.go
 ├── openamp
 │   ├── openamp_metrics.go
-│   └── resource_mng.go
-├── types.go
-└── xen
+│   └── resource_mngt.go
+└── xen (the one pedestal that supports dynamic resource)
     ├── cmds_and_parser.go
-    ├── xapi.go
+    ├── xapi.go (xen-api 实际是将 cmd_and_parser.go 的逻辑通过 libxl 等库来实现，旨在提高性能和控制精细度。)
+    ├── resource_mngt.go
     └── xen_metrics.go
 ```
 
@@ -143,12 +148,15 @@ type PedTraits interface {
     Statistics()
     ToString()
     GeneratePedCfg()
-    UpdateResource()
+    UpdateResource()...
 }
 ```
 
-- [ ] 在核心包中去除对pedestal的依赖，将它们全部仅指向为libmica的依赖;
+- [ ] 在micantainer包中去除对pedestal的依赖，将它们全部仅指向为libmica的依赖;
+> pedestal package主要是为了补充 mica 无法做的能力；
 - [ ] 让镜像所需的 rpmsg, 探测等组件都作为一个agent。统一构建出来
+- [ ] 当前 sandbox 不太方便将多个 Domain 的vcpu统一起来，只能管理一个pcpu pool，因此没法
+在sandbox scope设置某个vcpu的亲和性，只能对每个容器的vcpu进行设置
 
 
 # performance

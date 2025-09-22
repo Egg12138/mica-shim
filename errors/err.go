@@ -34,6 +34,7 @@ const (
 	IOClose
 	NotSuppoted
 	MicadAbnormal
+	ParseFailed
 )
 
 // Pre-defined errors.
@@ -49,6 +50,9 @@ var (
 	ErrSandboxDown       = new(UnexpectedStatus, "sandbox is not running")
 	ErrIOClose           = new(IOClose, "io closed")
 	ErrNotRunning        = new(UnexpectedStatus, "container is not running")
+
+	ErrPedestalMismatch = new(Invalid, "host pedestal type mismatch with image pedestal type")
+	ErrCommandOutputParse = new(ParseFailed, "failed to parse command output")
 
 	ErrMicadFailed     = new(MicadFailed, "mica operation failed")
 	ErrMicadNotRunning = new(MicadAbnormal, "mica daemon is not running")
@@ -68,4 +72,5 @@ var (
 
 var (
 	FlexibleTaskUnsupported = new(MicadFailed, "micran does not support exec task, task are immutable inside client os")
+	ContainerVCPUNotPined = new(MicadFailed, "container's vcpus are not pinned")
 )

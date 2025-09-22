@@ -21,15 +21,13 @@ func isMicaAnnotation(fieldName string) string {
 	return strings.TrimPrefix(fieldName, defs.MicraAnnotationPrefix)
 }
 
+func MaxMemMB() uint32 {
+	_, max := ped.MemoryMB()
+	return max
+}
+
 func MaxCPUNum() int {
-	pedtype := ped.GetHostPed()
-	if defs.IsMock {
-		return dummyCPUNum()
-	}
-	if pedtype == ped.Xen {
-		return int(ped.MaxCPUNum())
-	}
-	return dummyCPUNum()
+	return int(ped.MaxCPUNum())
 }
 
 func MaxClientCPUNum() int {
@@ -184,7 +182,7 @@ func isValidCPUString(cpuStr string) bool {
 		return true
 	}
 
-	// Split by comma for multiple groups
+	// split by comma for multiple groups
 	groups := strings.Split(cpuStr, ",")
 
 	for _, group := range groups {
@@ -193,14 +191,14 @@ func isValidCPUString(cpuStr string) bool {
 			return false
 		}
 
-		// Check if it's a range (contains dash)
+		// check if it's a range (contains dash)
 		if strings.Contains(group, "-") {
 			parts := strings.Split(group, "-")
 			if len(parts) != 2 {
 				return false
 			}
 
-			// Validate both parts are integers
+			// validate both parts are integers
 			start, err1 := strconv.Atoi(strings.TrimSpace(parts[0]))
 			end, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
 
@@ -208,7 +206,6 @@ func isValidCPUString(cpuStr string) bool {
 				return false
 			}
 		} else {
-			// Single CPU number
 			if _, err := strconv.Atoi(group); err != nil {
 				return false
 			}

@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	defs "mica-shim/definitions"
+	er "mica-shim/errors"
 	log "mica-shim/logger"
-	er "mica-shim/pkg/errors"
 	utils "mica-shim/pkg/utils"
 	"os"
 	"syscall"
@@ -92,8 +92,8 @@ func (s *shimService) Start(ctx context.Context, r *taskAPI.StartRequest) (*task
 	log.Infof("shim Start() container %s", r.ID)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	c, ok := s.containers[r.ID]
-	if c == nil || !ok {
+	c, found := s.containers[r.ID]
+	if c == nil || !found {
 		log.Debugf("container %s not found in shimservice storage", r.ID)
 		return nil, er.ErrContainerNotFound
 	}
@@ -132,8 +132,8 @@ func (s *shimService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*ta
 	defer s.mu.Unlock()
 	log.Debugf("deleting container %s", r.ID)
 
-	c, ok := s.containers[r.ID]
-	if c == nil || !ok {
+	c, found := s.containers[r.ID]
+	if c == nil || !found {
 		log.Debugf("container %s not found in shimservice storage", r.ID)
 		return &taskAPI.DeleteResponse{
 			ExitStatus: okExitCode,
@@ -185,8 +185,8 @@ func (s *shimService) Pids(ctx context.Context, r *taskAPI.PidsRequest) (*taskAP
 func (s *shimService) Pause(ctx context.Context, r *taskAPI.PauseRequest) (*ptypes.Empty, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	c, ok := s.containers[r.ID]
-	if !ok || c == nil {
+	c, found := s.containers[r.ID]
+	if !found || c == nil {
 		return nil, er.ErrContainerNotFound
 	}
 	c.status = task.Status_PAUSING
@@ -221,8 +221,8 @@ func (s *shimService) Resume(ctx context.Context, r *taskAPI.ResumeRequest) (*pt
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	c, ok := s.containers[r.ID]
-	if c == nil || !ok {
+	c, found := s.containers[r.ID]
+	if c == nil || !found {
 		return nil, er.ErrContainerNotFound
 	}
 
@@ -252,8 +252,8 @@ func (s *shimService) Kill(ctx context.Context, r *taskAPI.KillRequest) (*ptypes
 	// TODO: after mica supports passing POSIX signals to client os, we use sandbox.SignalTask to kill task
 	signum := syscall.Signal(r.Signal)
 
-	c, ok := s.containers[r.ID]
-	if !ok {
+	c, found := s.containers[r.ID]
+	if !found {
 		return nil, er.ErrContainerNotFound
 	}
 
@@ -315,8 +315,8 @@ func (s *shimService) KillBySignal(ctx context.Context, r *taskAPI.KillRequest) 
 	// TODO: after mica supports passing POSIX signals to client os, we use sandbox.SignalTask to kill task
 	signum := syscall.Signal(r.Signal)
 
-	c, ok := s.containers[r.ID]
-	if c == nil || !ok {
+	c, found := s.containers[r.ID]
+	if c == nil || !found {
 		return nil, er.ErrContainerNotFound
 	}
 
@@ -341,8 +341,8 @@ func (s *shimService) Exec(ctx context.Context, r *taskAPI.ExecProcessRequest) (
 // NOTICE: always consider resizepty request is to contaienr, whatever r.ExecID is
 func (s *shimService) ResizePty(ctx context.Context, r *taskAPI.ResizePtyRequest) (*ptypes.Empty, error) {
 	log.Debugf("resize pty: (%d, %d)", r.Height, r.Width)
-	c, ok := s.containers[r.ID]
-	if !ok || c == nil {
+	c, found := s.containers[r.ID]
+	if !found || c == nil {
 		return nil, er.ErrContainerNotFound
 	}
 
@@ -357,8 +357,8 @@ func (s *shimService) ResizePty(ctx context.Context, r *taskAPI.ResizePtyRequest
 func (s *shimService) CloseIO(ctx context.Context, r *taskAPI.CloseIORequest) (*ptypes.Empty, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	c, ok := s.containers[r.ID]
-	if c == nil || !ok {
+	c, found := s.containers[r.ID]
+	if c == nil || !found {
 		return nil, er.ErrContainerNotFound
 	}
 
@@ -386,8 +386,8 @@ func (s *shimService) Checkpoint(ctx context.Context, r *taskAPI.CheckpointTaskR
 func (s *shimService) Update(ctx context.Context, r *taskAPI.UpdateTaskRequest) (*ptypes.Empty, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	c, ok := s.containers[r.ID]
-	if c == nil || !ok {
+	c, found := s.containers[r.ID]
+	if c == nil || !found {
 		return nil, er.ErrContainerNotFound
 	}
 
@@ -397,8 +397,8 @@ func (s *shimService) Update(ctx context.Context, r *taskAPI.UpdateTaskRequest) 
 		return nil, err
 	}
 
-	res, ok = raw.(*specs.LinuxResources)
-	if !ok {
+	res, found = raw.(*specs.LinuxResources)
+	if !found {
 		return nil, errdefs.ToGRPCf(errdefs.ErrInvalidArgument, "Invalid resources type for %s", s.id)
 	}
 	log.Infof("update task annotations: %v", r.Annotations)
@@ -412,8 +412,8 @@ func (s *shimService) Update(ctx context.Context, r *taskAPI.UpdateTaskRequest) 
 
 func (s *shimService) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*taskAPI.WaitResponse, error) {
 	s.mu.Lock()
-	c, ok := s.containers[r.ID]
-	if c == nil || !ok {
+	c, found := s.containers[r.ID]
+	if c == nil || !found {
 		s.mu.Unlock()
 		return nil, er.ErrContainerNotFound
 	}
@@ -488,8 +488,8 @@ func (s *shimService) Stats(ctx context.Context, r *taskAPI.StatsRequest) (*task
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	
-	c, ok := s.containers[r.ID]
-	if c == nil || !ok {
+	c, found := s.containers[r.ID]
+	if c == nil || !found {
 		return nil, er.ErrContainerNotFound
 	}
 
@@ -516,8 +516,8 @@ func (s *shimService) State(ctx context.Context, r *taskAPI.StateRequest) (*task
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	c, ok := s.containers[r.ID]
-	if c == nil || !ok {
+	c, found := s.containers[r.ID]
+	if c == nil || !found {
 		return nil, fmt.Errorf("container %s not found", r.ID)
 	}
 

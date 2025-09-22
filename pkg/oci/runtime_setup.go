@@ -33,11 +33,16 @@ const (
 	KeySandboxMinVCPU = "sandbox_minimum_vcpu"
 	// only for Xen; default=false
 	KeyHugePage = "hugepage_enable"
+	// default base memory for container
+	KeyMinMemory = "container_minmem"
+	KeyMaxMemory = "container_maxmem"
 )
 
 
 
 var (
+	thredsholdMemHigh = pedestal.MemHighThreshold()
+	thredsholdMemLow = pedestal.MemLowThreshold()
 	runtimeConfigKeys = []string{
 		KeyStaticResource,
 		KeyClientLimit,
@@ -48,6 +53,8 @@ var (
 		KeyMaxContainerVCPU,
 		KeySandboxMinVCPU,
 		KeyHugePage,
+		KeyMaxMemory,
+		KeyMinMemory,
 	}
 	
 )
@@ -63,12 +70,13 @@ type RuntimeConfig struct {
 	// Global resource management settings
 	MaxContainerCPUs   uint32 // Maximum CPU cores visible for containers
 	MaxContainerMemMB  uint32 // Maximum memory available for containers
+	MinContainerMemMB          uint32 // Minimum memory for containers
 	HugePageSupport      bool
 	StaticResourceManagement bool
 	// TODO: not implement
-	CPUSchedulerPolicy string 
+	CPUSchedulerPolicy string
 	// TODO: not implement
-	MemoryOvercommit   bool   
+	MemoryOvercommit   bool
 
 	// MICA-specific configurations
 	ImagePath   string
@@ -114,6 +122,8 @@ func (r *RuntimeConfig) convertRawConfig(raw map[string]string) {
 	r.SetDebug(raw[KeyDebug])
 	r.SetPauseImage(raw[KeyPauseImg])
 	r.SetMaxContainerCPUs(raw[KeyMaxContainerVCPU])
+	r.SetMaxContainerMemMB(raw[KeyMaxMemory])
+	r.SetMinContainerMemMB(raw[KeyMinMemory])
 	r.SetMiniVCPUNum(raw[KeySandboxMinVCPU])
 	r.SetHugePageSupport(raw[KeyHugePage])
 	r.SetStateDir(raw[KeyStateDir])
@@ -156,10 +166,24 @@ func (r *RuntimeConfig) SetMaxContainerCPUs(cpuString string) {
 
 func (r *RuntimeConfig) SetMaxContainerMemMB(memString string) {
 	mem, err := strconv.ParseUint(memString, 10, 32)
-	if err != nil {
-		log.Debugf("Failed to parse max container memory %v into uint32", memString, err)
+	if err != nil || memoryOutOfRange(uint32(mem)){
+		log.Warnf("Failed to parse max container memory %v into uint32 or out or range", memString, err)
+		r.MaxContainerMemMB = thredsholdMemHigh
+		return
 	}
+	
 	r.MaxContainerMemMB = uint32(mem)
+}
+
+func (r *RuntimeConfig) SetMinContainerMemMB(memString string) {
+	mem, err := strconv.ParseUint(memString, 10, 32)
+	if err != nil || memoryOutOfRange(uint32(mem)){
+		log.Debugf("Failed to parse min container memory %v into uint32 or out or range", memString, err)
+		r.MinContainerMemMB = thredsholdMemLow
+		return
+	}
+
+	r.MinContainerMemMB = uint32(mem)
 }
 
 func (r *RuntimeConfig) SetCPUSchedulerPolicy(policy string) {
@@ -282,4 +306,20 @@ func LoadSpec(bundle string) (specs.Spec, error) {
 	// For docker , config.v2.json, this line is useless;
 	configPath := filepath.Join(bundle, "config.json")
 	return parseConfigJSON(configPath)
+}
+
+// 2MB < cfgmem < 
+func memoryOutOfRange(cfgmem uint32) bool {
+	if cfgmem > thredsholdMemHigh {
+		log.Debugf("configurated micran memory out of range, set to %dMB by default", thredsholdMemHigh)
+		return true
+	}
+
+	if cfgmem < thredsholdMemLow {
+		log.Debugf("configurated micran memory out of range, set to %dMB by default", thredsholdMemLow)
+		return true
+	}
+
+	return false
+
 }

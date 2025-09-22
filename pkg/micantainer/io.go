@@ -4,7 +4,7 @@ import (
 	"context"
 	"io"
 
-	er "mica-shim/pkg/errors"
+	er "mica-shim/errors"
 )
 
 type iostream struct {

@@ -3,7 +3,6 @@ package micantainer
 import (
 	"context"
 	"fmt"
-	defs "mica-shim/definitions"
 	log "mica-shim/logger"
 	"mica-shim/pkg/libmica"
 	"mica-shim/pkg/pedestal"
@@ -29,12 +28,10 @@ func createContainerInSandbox(sandbox SandboxTraits, config *ContainerConfig) (*
 }
 
 func startClient(ctx context.Context, sandbox SandboxTraits, c *Container) error {
-	conf, err := createMicaConf(c)
+	conf, err := createMicaClientConf(c)
 	if err != nil {
 		return err
 	}
-
-	log.Infof("startClient: container=%s socket=%s mock=%t", c.ID(), defs.MicaCreatSocketPath, defs.IsMock)
 
 	start := time.Now()
 	if err = libmica.Create(conf); err != nil {
@@ -56,29 +53,27 @@ func startClient(ctx context.Context, sandbox SandboxTraits, c *Container) error
 // 1. search bundle/.../<clientOSname>.elf
 // 2. if missing, log and search for binary in bundle recursively
 // TODO: Only copy values, the evaluation procedure is in the caller function
-func createMicaConf(container *Container) (libmica.MicaClientConf, error) {
+func createMicaClientConf(container *Container) (libmica.MicaClientConf, error) {
 	config := container.config
-	firmware := container.GetFirmwarePath()
 	pedestal := HostPedType
 	name := container.ID()
-	cpu, err := container.GetClientCPU()
+	cpus, err := container.GetClientCPU()
 	conf := libmica.MicaClientConf{}
 	if err != nil {
 		return conf, fmt.Errorf("failed to get client cpu: %w", err)
 	}
 	// MemoryLimitMB is already in MiB
-	memMiB := config.MemoryLimitMB
 	conf.InitWithOpts(libmica.MicaClientConfCreateOptions{
-		CPU: []int{cpu},
-		// TODO: dummy settings
-		CPUCapacity: int(config.CpuQuota),
+		CPU: cpus,
+		CPUCapacity: int(config.CpuLimit),
 		CPUWeight:   int(config.CpuShares),
-		Debug:       false,
-		Memory:      int(memMiB),
+		VCPUs: int(config.VCPUNum),
+		MaxMemMB: int(config.MemoryLimitMB),
 		Name:        name,
-		Network:     "",
-		Path:        firmware,
+		Path:        config.ElfPath,
 		Ped:         pedestal.String(),
+		PedCfg:      config.PedestalConf,
+		Debug:       true,
 	})
 	return conf, nil
 }
@@ -181,37 +176,77 @@ func getSystemMemoryBytes() int64 {
 }
 
 
-// TODO: not overrange of machine nrcpus
-func CpusetRangeValid(cpuset cpuset.CPUSet) bool {
-	return true
+func CpusetRangeValid(sortedCpuList []int) (bool, []int) {
+	maxCpus := machineCPUNumber()
+	outrange := []int{}
+
+	for _, cpu := range sortedCpuList {
+		// cpuid start from 0 
+		if cpu >= int(maxCpus) {
+			outrange = append(outrange, cpu)
+		}
+	}
+
+	if len(outrange) > 0 {
+		log.Warnf("cpuset range is out of machine max cpu: %v", outrange)
+		return false, outrange
+	}
+
+	return true, outrange
 }
 
 
 
 // Update resource for changed resource
-// TODO: if modified => update 
-func  updateContainerResource(c *Container, updated *pedestal.EssentialResource) error {
+func updateContainerResource(c *Container, updated *pedestal.EssentialResource) error {
 	old := c.me.ReadResource()
 	if needUpdateCpuCap(*old.CpuCpacity, *updated.CpuCpacity) {
-
+		err := c.me.UpdateCPUCapacity(*updated.CpuCpacity)
+		if err != nil {
+			return fmt.Errorf("failed to update cpu capacity of %s: %v", c.id, err)
+		}
+		if *updated.CpuCpacity == 0 {
+			log.Infof("container %s's cpu capacity is unlimited", c.id)
+		}
 	}
 
 	if needUpdateMemLimit(*old.MemoryLimitMB, *updated.MemoryLimitMB) {
+		err := c.me.UpdateMemoryLimit(*updated.MemoryLimitMB)
+		if err != nil {
+			return fmt.Errorf("failed to update max memory of %s: %v", c.id, err)
+		}
+	}
 
+
+	if needUpdateCpuSet(old.ClientCpuSet, updated.ClientCpuSet) {
+		err := c.me.UpdatePCPUConstrains(updated.ClientCpuSet)
+		if err != nil {
+			return fmt.Errorf("failed to update cpuset of vcpu: %v", err)
+		}
+	}
+
+	if needUpdateCpuShare(*old.CPUWeight, *updated.CPUWeight) {
+		err := c.me.UpdateCPUShare(*updated.CPUWeight)
+		if err != nil {
+			return fmt.Errorf("failed to set a different cpu weight for %s: %v", c.id, err)
+		}
 	}
 
 	if needUpdateVCpus(*old.Vcpu, *updated.Vcpu) {
-
-	}
-
-	if needUpdateCpuSet(old.ClientCpuSet, updated.ClientCpuSet) {
-
+		old, newer, err := c.me.UpdateVCPUNum(*updated.Vcpu)
+		if err != nil {
+			log.Warnf("failed to update vcpu number: %v", err)
+		}
+		log.Infof("update vcpu number from %d to %d", old, newer)
 	}
 
 	return nil 
 }
 
 func needUpdateCpuCap(old, updated uint32) bool {
+	if old == updated {
+		return false
+	}
 	return true
 }
 
@@ -226,6 +261,11 @@ func needUpdateVCpus(old, updated uint32) bool {
 }
 
 func needUpdateCpuSet(old, updated string) bool {
+	return true
+}
+
+
+func needUpdateCpuShare(old, updated uint32) bool {
 
 	return true
 }

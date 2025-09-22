@@ -6,4 +6,6 @@ type PedTraits interface {
 	GeneratePedConf() (PedConfigString, error)
 	// only support pinning all vcpu to another cpuset
 	PinVCPU(shortId, cpus string)
+	MemLowThreshold() uint32
+	MemHighThreshold() uint32
 }
