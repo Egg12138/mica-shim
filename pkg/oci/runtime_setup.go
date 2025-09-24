@@ -73,10 +73,6 @@ type RuntimeConfig struct {
 	MinContainerMemMB          uint32 // Minimum memory for containers
 	HugePageSupport      bool
 	StaticResourceManagement bool
-	// TODO: not implement
-	CPUSchedulerPolicy string
-	// TODO: not implement
-	MemoryOvercommit   bool
 
 	// MICA-specific configurations
 	ImagePath   string
@@ -129,7 +125,6 @@ func (r *RuntimeConfig) convertRawConfig(raw map[string]string) {
 	r.SetStateDir(raw[KeyStateDir])
 }
 
-func filterRuntimeItems() bool {return true}
 
 func (r *RuntimeConfig) SetDebug(debugStr string) {
 	debug, err := strconv.ParseBool(debugStr)
@@ -167,7 +162,7 @@ func (r *RuntimeConfig) SetMaxContainerCPUs(cpuString string) {
 func (r *RuntimeConfig) SetMaxContainerMemMB(memString string) {
 	mem, err := strconv.ParseUint(memString, 10, 32)
 	if err != nil || memoryOutOfRange(uint32(mem)){
-		log.Warnf("Failed to parse max container memory %v into uint32 or out or range", memString, err)
+		log.Warnf("Failed to parse max container memory %v into uint32 or out or range: %v", memString, err)
 		r.MaxContainerMemMB = thredsholdMemHigh
 		return
 	}
@@ -186,18 +181,6 @@ func (r *RuntimeConfig) SetMinContainerMemMB(memString string) {
 	r.MinContainerMemMB = uint32(mem)
 }
 
-func (r *RuntimeConfig) SetCPUSchedulerPolicy(policy string) {
-	r.CPUSchedulerPolicy = policy
-}
-
-func (r *RuntimeConfig) SetMemoryOvercommit(allowStr string) {
-	allow, err := strconv.ParseBool(allowStr)
-	if err != nil {
-		log.Debugf("Failed to parse memory overcommit %v into bool", allowStr, err)
-		allow = false
-	}
-	r.MemoryOvercommit = allow
-}
 
 
 func (r *RuntimeConfig) SetHugePageSupport(hugePageStr string) {
@@ -277,9 +260,9 @@ func (cfg *RuntimeConfig) ParseRuntimeConfigFromAnno(annotations map[string]stri
 		case "runtime.max_container_memory":
 			cfg.SetMaxContainerMemMB(value)
 		case "runtime.cpu_scheduler_policy":
-			cfg.SetCPUSchedulerPolicy(value)
+			log.Debugf("CPU scheduler policy not implemented, ignoring: %s", value)
 		case "runtime.memory_overcommit":
-			cfg.SetMemoryOvercommit(value)
+			log.Debugf("Memory overcommit not implemented, ignoring: %s", value)
 		case "runtime.pause":
 			cfg.SetPauseImage(value)
 		}

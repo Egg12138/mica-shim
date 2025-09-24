@@ -23,8 +23,8 @@ import (
 	crioption "github.com/containerd/containerd/pkg/runtimeoptions/v1"
 )
 
-func create(ctx context.Context, s *shimService, r *taskAPI.CreateTaskRequest) (*container, error) {
-	err := setupMicranStateDir()
+func create(ctx context.Context, s *shimService, r *taskAPI.CreateTaskRequest) (_ *container, err error) {
+	err = setupMicranStateDir()
 	if err != nil {
 		log.Debugf("failed to setup micran state directory: %w", err)
 	}
@@ -181,7 +181,7 @@ func getConfigPathFromOptions(options typeurl.Any) (string, error) {
 }
 
 // toml or ini
-// TODO: Implement actual config file loading
+// BUG: Implement actual config file loading
 func loadConfigFromFile(configPath string) (*oci.RuntimeConfig, error) {
 	// For now, create default config and enhance with file-specific settings
 	empty := &oci.RuntimeConfig{}

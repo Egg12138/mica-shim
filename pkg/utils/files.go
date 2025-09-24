@@ -213,7 +213,7 @@ func Backup(srcDir string) error {
 	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			log.Debugf("Warning: skipping %s due to error: %v\n", path, err)
-			return nil // Continue with other files
+			return nil
 		}
 		
 		if !IsRegular(path) && !info.IsDir(){

@@ -101,6 +101,16 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 	}
 
 	pedtype := cntr.HostPedType
+	if pedAnnotation, ok := ocispec.Annotations[defs.Pedtype]; ok {
+		parsedType := pedestal.ParsePedType(pedAnnotation)
+		if parsedType != pedestal.Unsupported {
+			pedtype = parsedType
+			log.Debugf("Found pedestal type annotation: %s", pedAnnotation)
+		} else {
+			log.Warnf("Unknown pedestal type '%s', using default", pedAnnotation)
+		}
+	}
+
 	var pedconf string
 	if pedtype == pedestal.Xen {
 		if cfg, ok := micaConf[defs.PedCfg]; ok && cfg != "" {
@@ -113,25 +123,45 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 	}
 
 	// Read OS from annotation
-	os := "zephyr" // default
-	if osAnnotation, ok := ocispec.Annotations[defs.MicraAnnotationPrefix]; ok {
-		os = osAnnotation
-		log.Debugf("Found OS annotation: %s", os)
+	osName := "zephyr" // default
+	if osAnnotation, ok := ocispec.Annotations[defs.OSAnnotation]; ok {
+		osName = osAnnotation
+		log.Debugf("Found OS annotation: %s", osName)
 	}
 
 	// Debug: Log the parsed mica configuration
 	log.Debugf("Parsed micaConf: %+v", micaConf)
-	log.Debugf("Looking for ElfPath key '%s', found value: '%s'", defs.ElfPath, micaConf[defs.ElfPath])
+	log.Debugf("Looking for clientpath key '%s', found value: '%s'", defs.ElfPath, micaConf[defs.ElfPath])
+
+	// Validate ElfPath - critical for RTOS execution
+	elfPath := micaConf[defs.ElfPath]
+	if elfPath == "" {
+		// Try default paths
+		defaultElfPath := filepath.Join(bundleRootfs(bundle), "zephyr.elf")
+		if _, err := os.Stat(defaultElfPath); err == nil {
+			elfPath = defaultElfPath
+			log.Debugf("Using default elf path: %s", elfPath)
+		} else {
+			// Last resort - look for any .elf file in rootfs
+			elfFiles, _ := filepath.Glob(filepath.Join(bundleRootfs(bundle), "*.elf"))
+			if len(elfFiles) > 0 {
+				elfPath = elfFiles[0]
+				log.Debugf("Found elf file: %s", elfPath)
+			} else {
+				return nil, fmt.Errorf("no elf file found in container rootfs and no clientpath specified in %s", defs.DefaultClientConf)
+			}
+		}
+	}
 
 	// init
 	config := &cntr.ContainerConfig{
 		// Container ID
 		ID:           id,
 		// OCI and bundle info
-		ElfPath:      micaConf[defs.ElfPath],
+		ElfPath:      elfPath,
 		PedestalType: pedtype,
 		PedestalConf: pedconf,
-		OS:           os,
+		OS:           osName,
 		PCPUNum:         1,
 		CpuLimit:     0,
 		CpusetCpus:   "",

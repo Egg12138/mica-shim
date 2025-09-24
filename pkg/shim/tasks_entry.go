@@ -37,9 +37,6 @@ func (s *shimService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) 
 	log.Debugf("*** TASK CREATE: Request details - Bundle: %s, Stdin: %s, Stdout: %s, Stderr: %s, Terminal: %v",
 		r.Bundle, r.Stdin, r.Stdout, r.Stderr, r.Terminal)
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if err := utils.ValidContainerID(r.ID); err != nil {
 		return nil, er.ErrInvalidCID
 	}
@@ -63,8 +60,12 @@ func (s *shimService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) 
 			return nil, res.err
 		}
 		container := res.container
+
+		// lock when updating shared state
+		s.mu.Lock()
 		container.status = task.Status_CREATED
 		s.containers[r.ID] = container
+		s.mu.Unlock()
 
 		s.send(&events.TaskCreate{
 			ContainerID: r.ID,
@@ -462,8 +463,6 @@ func (s *shimService) Connect(ctx context.Context, r *taskAPI.ConnectRequest) (*
 //	there is no any sandbox in mica daemon scope
 func (s *shimService) Shutdown(ctx context.Context, r *taskAPI.ShutdownRequest) (*ptypes.Empty, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if len(s.containers) != 0 {
 		s.mu.Unlock()
 		return emptyResponse, nil

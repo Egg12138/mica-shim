@@ -890,7 +890,7 @@ func createSandbox(ctx context.Context, config *SandboxConfig) (*Sandbox, error)
 // 1. createSandboxFromConfig instance, and setup
 // 2. cleanup if error happens
 // 3.
-func createSandboxFromConfig(ctx context.Context, config *SandboxConfig) (*Sandbox, error) {
+func createSandboxFromConfig(ctx context.Context, config *SandboxConfig) (_ *Sandbox, err error) {
 	s, err := createSandbox(ctx, config)
 
 	defer func() {
@@ -1197,5 +1197,3 @@ func (s *Sandbox) pinVCPU(cpuSet cpuset.CPUSet) error {
 	}
 	return ret
 }
-
-func (s *Sandbox) alignVcpuMapping()

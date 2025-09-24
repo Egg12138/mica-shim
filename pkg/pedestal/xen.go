@@ -220,17 +220,23 @@ func parseXlInfo(output string) (*XlInfo, error) {
 		case "machine":
 			info.machine = value
 		case "nr_cpus":
-			if nrCpus, err := strconv.ParseUint(value, 10, 32); err == nil {
-				info.nrCpus = uint32(nrCpus)
+			nrCpus, err := strconv.ParseUint(value, 10, 32)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse nr_cpus: %v", err)
 			}
+			info.nrCpus = uint32(nrCpus)
 		case "total_memory":
-			if totalMemory, err := strconv.ParseUint(value, 10, 32); err == nil {
-				info.totalMemoryMB = uint32(totalMemory)
+			totalMemory, err := strconv.ParseUint(value, 10, 32)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse total_memory: %v", err)
 			}
+			info.totalMemoryMB = uint32(totalMemory)
 		case "free_memory":
-			if freeMemory, err := strconv.ParseUint(value, 10, 32); err == nil {
-				info.freeMemoryMB = uint32(freeMemory)
+			freeMemory, err := strconv.ParseUint(value, 10, 32)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse free_memory: %v", err)
 			}
+			info.freeMemoryMB = uint32(freeMemory)
 		case "xen_major":
 			// Build xl version
 			info.xlver = value
@@ -244,60 +250,80 @@ func parseXlInfo(output string) (*XlInfo, error) {
 			}
 			
 		case "max_cpu_id":
-			if maxCpuId, err := strconv.ParseUint(value, 10, 32); err == nil {
-				info.maxCpuId = uint32(maxCpuId)
+			maxCpuId, err := strconv.ParseUint(value, 10, 32)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse max_cpu_id: %v", err)
 			}
+			info.maxCpuId = uint32(maxCpuId)
 		case "cores_per_socket":
-			if coresPerSocket, err := strconv.ParseUint(value, 10, 32); err == nil {
-				info.coresPerSocket = uint32(coresPerSocket)
+			coresPerSocket, err := strconv.ParseUint(value, 10, 32)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse cores_per_socket: %v", err)
 			}
+			info.coresPerSocket = uint32(coresPerSocket)
 		case "threads_per_core":
-			if threadsPerCore, err := strconv.ParseUint(value, 10, 32); err == nil {
-				info.threadsPerCore = uint32(threadsPerCore)
+			threadsPerCore, err := strconv.ParseUint(value, 10, 32)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse threads_per_core: %v", err)
 			}
+			info.threadsPerCore = uint32(threadsPerCore)
 		case "cpu_mhz":
-			if cpuMhz, err := strconv.ParseFloat(value, 64); err == nil {
-				info.cpuMhz = cpuMhz
+			cpuMhz, err := strconv.ParseFloat(value, 64)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse cpu_mhz: %v", err)
 			}
+			info.cpuMhz = cpuMhz
 
 		case "free_cpus":
-			if freeCpus, err := strconv.ParseUint(value, 10, 32); err == nil {
-				info.freeCpus = uint32(freeCpus)
+			freeCpus, err := strconv.ParseUint(value, 10, 32)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse free_cpus: %v", err)
 			}
+			info.freeCpus = uint32(freeCpus)
 			
 		case "xen_caps":
 			info.xenCaps = value
 		case "xen_scheduler":
 			info.xenScheduler = value
 		case "xen_pagesize":
-			if xenPagesize, err := strconv.ParseUint(value, 10, 32); err == nil {
-				info.xenPagesize = uint32(xenPagesize)
+			xenPagesize, err := strconv.ParseUint(value, 10, 32)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse xen_pagesize: %v", err)
 			}
+			info.xenPagesize = uint32(xenPagesize)
 		case "virt_caps":
 			info.virtCaps = value
-			
+
 		case "outstanding_claims":
-			if outstandingClaims, err := strconv.ParseUint(value, 10, 64); err == nil {
-				info.outstandingClaims = outstandingClaims
+			outstandingClaims, err := strconv.ParseUint(value, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse outstanding_claims: %v", err)
 			}
+			info.outstandingClaims = outstandingClaims
 		case "sharing_freed_memory":
-			if sharingFreedMemory, err := strconv.ParseUint(value, 10, 64); err == nil {
-				info.sharingFreedMemory = sharingFreedMemory
+			sharingFreedMemory, err := strconv.ParseUint(value, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse sharing_freed_memory: %v", err)
 			}
+			info.sharingFreedMemory = sharingFreedMemory
 		case "sharing_used_memory":
-			if sharingUsedMemory, err := strconv.ParseUint(value, 10, 64); err == nil {
-				info.sharingUsedMemory = sharingUsedMemory
+			sharingUsedMemory, err := strconv.ParseUint(value, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse sharing_used_memory: %v", err)
 			}
-			
+			info.sharingUsedMemory = sharingUsedMemory
+
 		case "platform_params":
 			info.platformParams = value
 		case "xen_commandline":
 			info.xenCommandline = value
-			
+
 		case "arm_sve_vector_length":
-			if armSVEVectorLength, err := strconv.ParseUint(value, 10, 32); err == nil {
-				info.armSVEVectorLength = uint32(armSVEVectorLength)
+			armSVEVectorLength, err := strconv.ParseUint(value, 10, 32)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse arm_sve_vector_length: %v", err)
 			}
+			info.armSVEVectorLength = uint32(armSVEVectorLength)
 		}
 	}
 
