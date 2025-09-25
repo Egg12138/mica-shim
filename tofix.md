@@ -157,6 +157,7 @@ type PedTraits interface {
 - [ ] 让镜像所需的 rpmsg, 探测等组件都作为一个agent。统一构建出来
 - [ ] 当前 sandbox 不太方便将多个 Domain 的vcpu统一起来，只能管理一个pcpu pool，因此没法
 在sandbox scope设置某个vcpu的亲和性，只能对每个容器的vcpu进行设置
+- [ ] 加入config items allowlist
 
 
 # performance

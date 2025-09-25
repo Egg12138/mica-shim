@@ -93,6 +93,7 @@ func NewRuntimeConfig() *RuntimeConfig {
 	spec := RuntimeConfig{
 		// MICA defaults
 		StaticResourceManagement: staticResource,
+		PauseImage:               defs.PauseImage,
 	}
 	return &spec
 }
@@ -241,7 +242,6 @@ func (r *RuntimeConfig) SetStateDir(stateDir string) {
 // Annotations holds highest priority for values
 // TODO: match these dummy config items with actual implementation, define prefix in package definitions
 func (cfg *RuntimeConfig) ParseRuntimeConfigFromAnno(annotations map[string]string) *RuntimeConfig {
-	cfg.PauseImage = defs.PauseImage
 	// Parse runtime-level annotations with mica annotation prefix
 	for key, value := range annotations {
 		if !strings.HasPrefix(key, defs.MicraAnnotationPrefix) || value == "" {
@@ -251,19 +251,19 @@ func (cfg *RuntimeConfig) ParseRuntimeConfigFromAnno(annotations map[string]stri
 		switch key {
 		case defs.RuntimeDebug:
 			cfg.SetDebug(value)
-		case "runtime.sandbox.cpus":
+		case defs.RuntimePrefix + "sandbox.cpus":
 			cfg.SetSandboxCPUs(value)
-		case "runtime.sandbox.memory":
+		case defs.RuntimePrefix + "sandbox.memory":
 			cfg.SetSandboxMemMB(value)
-		case "runtime.max_container_cpus":
+		case defs.RuntimePrefix + "max_container_cpus":
 			cfg.SetMaxContainerCPUs(value)
-		case "runtime.max_container_memory":
+		case defs.RuntimePrefix + "max_container_memory":
 			cfg.SetMaxContainerMemMB(value)
-		case "runtime.cpu_scheduler_policy":
+		case defs.RuntimePrefix + "cpu_scheduler_policy":
 			log.Debugf("CPU scheduler policy not implemented, ignoring: %s", value)
-		case "runtime.memory_overcommit":
+		case defs.RuntimePrefix + "memory_overcommit":
 			log.Debugf("Memory overcommit not implemented, ignoring: %s", value)
-		case "runtime.pause":
+		case defs.RuntimePrefix + "pause":
 			cfg.SetPauseImage(value)
 		}
 	}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	defs "mica-shim/definitions"
@@ -253,6 +254,7 @@ func SandboxConfig(ocispec *specs.Spec, rc RuntimeConfig, bundle, sbContainerID 
 	}
 
 
+	applySandboxAnnotations(*ocispec, &sandboxConfig)
 	return sandboxConfig, nil
 }
 
@@ -339,6 +341,50 @@ func formatBytes(bytes int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+func applySandboxAnnotations(ocispec specs.Spec, cfg *cntr.SandboxConfig) {
+	if ocispec.Annotations == nil || cfg == nil {
+		return
+	}
+	if cfg.Annotations == nil {
+		cfg.Annotations = make(map[string]string)
+	}
+
+	for key, value := range ocispec.Annotations {
+		if !strings.HasPrefix(key, defs.MicraAnnotationPrefix) || value == "" {
+			continue
+		}
+		switch key {
+		// allowlist: only handle known, safe sandbox-level toggles
+		case defs.RuntimePrefix + "enable_vcpus_pinning":
+			if b, err := strconv.ParseBool(value); err == nil {
+				cfg.EnableVCPUsPining = b
+			} else {
+				log.Debugf("invalid bool for %s: %s", key, value)
+			}
+			cfg.Annotations[key] = value
+
+		case defs.RuntimePrefix + "static_resource":
+			if b, err := strconv.ParseBool(value); err == nil {
+				cfg.StaticResourceMgmt = b
+			} else {
+				log.Debugf("invalid bool for %s: %s", key, value)
+			}
+			cfg.Annotations[key] = value
+
+		case defs.RuntimePrefix + "hugepage_enable":
+			if b, err := strconv.ParseBool(value); err == nil {
+				cfg.HugePageSupport = b
+			} else {
+				log.Debugf("invalid bool for %s: %s", key, value)
+			}
+			cfg.Annotations[key] = value
+
+		default:
+			// ignore other annotations at sandbox level for now
+		}
+	}
 }
 
 func GetContainerSpec(annotations map[string]string) (specs.Spec, error) {

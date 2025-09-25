@@ -2,7 +2,6 @@ package shim
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	defs "mica-shim/definitions"
 	log "mica-shim/logger"
@@ -14,7 +13,6 @@ import (
 
 	taskAPI "github.com/containerd/containerd/api/runtime/task/v2"
 	"github.com/containerd/containerd/api/types"
-	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/mount"
 	"github.com/containerd/typeurl/v2"
 	"github.com/opencontainers/runtime-spec/specs-go"
@@ -129,40 +127,65 @@ func create(ctx context.Context, s *shimService, r *taskAPI.CreateTaskRequest) (
 }
 
 func loadRuntimeConfig(s *shimService, r *taskAPI.CreateTaskRequest, annotations map[string]string) (*oci.RuntimeConfig, error) {
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.config != nil {
 		return s.config, nil
 	}
 
-	configPath := oci.GetSandboxConfigPath(annotations)
+	// Config path precedence (high -> low): annotations > CRI options > env
+	var (
+		configPath string
+		source     string // "annotation" | "options" | "env"
+	)
 
-	if configPath == "" && r.Options != nil {
-		var err error
-		configPath, err = getConfigPathFromOptions(r.Options)
+	if v := oci.GetSandboxConfigPath(annotations); v != "" {
+		configPath = v
+		source = "annotation"
+	} else if r.Options != nil {
+		p, err := getConfigPathFromOptions(r.Options)
 		if err != nil {
 			return nil, err
 		}
-		log.Debugf("parsed config path from options: %s", configPath)
-	}
-
-	// Try to get the config file from the environment
-	if configPath == "" {
-		configPath = os.Getenv(defs.MicranConfEnv)
-	}
-
-	// use default configuration when configPath is not set
-	// TODO:  
-	if configPath != "" {
-		if _, err := loadConfigFromFile(configPath); errors.Is(err, errdefs.ErrNotImplemented) {
-			log.Warnf("loading config from file is not implemented yet")
+		if p != "" {
+			configPath = p
+			source = "options"
+			log.Debugf("parsed config path from options: %s", configPath)
 		}
 	}
 
-	if s.config == nil {
-		s.config = oci.NewRuntimeConfig()
+	if configPath == "" {
+		if v := os.Getenv(defs.MicranConfEnv); v != "" {
+			configPath = v
+			source = "env"
+		}
 	}
 
-	// Default: parse runtime config from annotations
-	return parseRuntimeConfigFromAnnotations(annotations), nil
+	// Build base config from file if provided. Fail-fast if user explicitly provided
+	// path via annotations or CRI options. Env-provided path failure falls back.
+	var cfg *oci.RuntimeConfig
+	if configPath != "" {
+		parsed, err := loadConfigFromFile(configPath)
+		if err != nil {
+			if source == "env" {
+				log.Warnf("failed to load runtime config from %s (env): %v; using defaults", configPath, err)
+				cfg = oci.NewRuntimeConfig()
+			} else {
+				return nil, fmt.Errorf("failed to load runtime config from %s (%s): %w", configPath, source, err)
+			}
+		} else {
+			cfg = parsed
+		}
+	} else {
+		cfg = oci.NewRuntimeConfig()
+	}
+
+	// Apply annotations on top (higher precedence overrides)
+	cfg.ParseRuntimeConfigFromAnno(annotations)
+
+	s.config = cfg
+	return s.config, nil
 }
 
 func getConfigPathFromOptions(options typeurl.Any) (string, error) {
@@ -171,10 +194,14 @@ func getConfigPathFromOptions(options typeurl.Any) (string, error) {
 		return "", err
 	}
 
-	// Try CRI options format
-	option, ok := v.(*crioption.Options)
-	if ok {
+	// Try current CRI options format
+	if option, ok := v.(*crioption.Options); ok {
 		return option.ConfigPath, nil
+	}
+
+	// Optional backward compatibility via build tag 'oldcri'
+	if p, ok := getConfigPathFromOldCRI(v); ok {
+		return p, nil
 	}
 
 	return "", nil
@@ -183,16 +210,11 @@ func getConfigPathFromOptions(options typeurl.Any) (string, error) {
 // toml or ini
 // BUG: Implement actual config file loading
 func loadConfigFromFile(configPath string) (*oci.RuntimeConfig, error) {
-	// For now, create default config and enhance with file-specific settings
-	empty := &oci.RuntimeConfig{}
-	config := oci.NewRuntimeConfig()
-
-	err := config.ParseRuntimeFromFile(configPath)
-	if err != nil {
-		return empty, err
+	cfg := oci.NewRuntimeConfig()
+	if err := cfg.ParseRuntimeFromFile(configPath); err != nil {
+		return nil, err
 	}
-
-	return config, errdefs.ErrNotImplemented
+	return cfg, nil
 }
 
 func parseRuntimeConfigFromAnnotations(annotations map[string]string) *oci.RuntimeConfig {
