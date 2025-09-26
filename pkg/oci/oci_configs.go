@@ -2,14 +2,16 @@ package oci
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	defs "mica-shim/definitions"
 	log "mica-shim/logger"
-	"mica-shim/pkg/fileutils"
 	cntr "mica-shim/pkg/micantainer"
 	"mica-shim/pkg/pedestal"
+	"mica-shim/pkg/utils"
 
 	ctrAnnotations "github.com/containerd/containerd/pkg/cri/annotations"
 	podmanAnnotations "github.com/containers/podman/v4/pkg/annotations"
@@ -78,20 +80,90 @@ func bundleRootfs(bundle string) string {
 	return filepath.Join(bundle, "rootfs")
 }
 
+
+
 func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerType, detach bool) (*cntr.ContainerConfig, error) {
 	configPath := filepath.Join(bundleRootfs(bundle), defs.DefaultClientConf)
-	micaConf, err := fileutils.ParseConfigINI(configPath)
+	log.Debugf("config path = %s", configPath)
+	micaConf, err := utils.ParseConfigINI(configPath, defs.OKSectionList[:])
+	log.Pretty("mica config: %v", micaConf)
+	
+	// Debug: Check if file exists and list all parsed keys
+	if _, err := os.Stat(configPath); err == nil {
+		log.Debugf("Parsed %d keys from client.conf:", len(micaConf))
+		for k, v := range micaConf {
+			log.Debugf("  '%s' = '%s'", k, v)
+		}
+	} else {
+		log.Debugf("%s file does not exist at: %s", defs.DefaultClientConf, configPath)
+	}
 	if err != nil {
 		return nil, err
 	}
 
+	pedtype := cntr.HostPedType
+	if pedAnnotation, ok := ocispec.Annotations[defs.Pedtype]; ok {
+		parsedType := pedestal.ParsePedType(pedAnnotation)
+		if parsedType != pedestal.Unsupported {
+			pedtype = parsedType
+			log.Debugf("found pedestal type annotation: %s", pedAnnotation)
+		} else {
+			log.Warnf("unknown pedestal type '%s', using default", pedAnnotation)
+		}
+	}
+
+	var pedconf string
+	if pedtype == pedestal.Xen {
+		if cfg, ok := micaConf[defs.PedCfg]; ok && cfg != "" {
+			pedconf = cfg
+			log.Debugf("pedestal config for xen is the location of <image.bin>: %s", pedconf)
+		} else {
+			log.Debugf("use default pedestal config for xen <image.bin>: %s", pedconf)
+			pedconf = pedestal.XenDefaultPedConf()
+		}
+	}
+
+	// Read OS from annotation
+	osName := "zephyr" // default
+	if osAnnotation, ok := ocispec.Annotations[defs.OSAnnotation]; ok {
+		osName = osAnnotation
+		log.Debugf("found OS annotation: %s", osName)
+	}
+
+	// Debug: Log the parsed mica configuration
+	log.Debugf("parsed micaConf: %+v", micaConf)
+	log.Debugf("looking for clientpath key '%s', found value: '%s'", defs.ElfPath, micaConf[defs.ElfPath])
+
+	// Validate ElfPath - critical for RTOS execution
+	elfPath := micaConf[defs.ElfPath]
+	if elfPath == "" {
+		// Try default paths
+		defaultElfPath := filepath.Join(bundleRootfs(bundle), "zephyr.elf")
+		if _, err := os.Stat(defaultElfPath); err == nil {
+			elfPath = defaultElfPath
+			log.Debugf("using default elf path: %s", elfPath)
+		} else {
+			// Last resort - look for any .elf file in rootfs
+			elfFiles, _ := filepath.Glob(filepath.Join(bundleRootfs(bundle), "*.elf"))
+			if len(elfFiles) > 0 {
+				elfPath = elfFiles[0]
+				log.Debugf("found elf file: %s", elfPath)
+			} else {
+				return nil, fmt.Errorf("no elf file found in container rootfs and no clientpath specified in %s", defs.DefaultClientConf)
+			}
+		}
+	}
+
+	// init
 	config := &cntr.ContainerConfig{
+		// Container ID
+		ID:           id,
 		// OCI and bundle info
-		ElfPath:      micaConf[defs.ElfPath],
-		PedestalType: pedestal.Unsupported,
-		PedestalConf: "",
-		OS:           "",
-		NCpu:         1,
+		ElfPath:      elfPath,
+		PedestalType: pedtype,
+		PedestalConf: pedconf,
+		OS:           osName,
+		PCPUNum:         1,
 		CpuLimit:     0,
 		CpusetCpus:   "",
 		CpuShares:    0,
@@ -99,14 +171,15 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 		CpuPeriod:    0,
 
 		// Memory defaults
-		MemoryLimit:       0,
-		MemoryReservation: 0,
-		MemorySwap:        0,
-		MemoryKernel:      0,
-		MemorySwappiness:  nil,
+		MemoryLimitMB:       0,
+		MemoryReservationMB: 0,
+		MemorySwapMB:        0,
+		MemoryKernelMB:      0,
+		MemorySwappinessMB:  nil,
 		OomKillDisable:    false,
 	}
 
+	// TODO: remove the duplicated parsing
 	if err := config.ParseOCICPUResources(&ocispec); err != nil {
 		return nil, err
 	}
@@ -117,18 +190,15 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 
 	// Validate resource limits against system constraints
 	if err := cntr.ValidateResourceLimits(config); err != nil {
-		log.Warnf("Resource validation warning: %v", err)
+		log.Warnf("resource validation warning: %v", err)
 		// Don't fail the container creation for resource validation warnings
 		// but log them for visibility
 	}
 
-	// Set default OS if not specified
-	if config.OS == "" {
-		log.Warn("os is not set, default to zephyr")
-		config.OS = "zephyr"
-	}
+	// OS is already set from annotation or default above
+	log.Infof("container OS: %s", config.OS)
 
-	log.Infof("Container resource limits - CPU: %s, Memory: %s",
+	log.Infof("container resource limits - CPU: %s, Memory: %s",
 		formatCPULimit(config), formatMemoryLimit(config))
 	return config, nil
 }
@@ -145,13 +215,27 @@ func SandboxConfig(ocispec *specs.Spec, rc RuntimeConfig, bundle, sbContainerID 
 	ped := cntr.HostPedType
 	if ped == pedestal.Xen {
 		pedcfg := filepath.Join(bundleRootfs(bundle), defs.DefaultXenBin)
-		log.Debugf("pedestal config for xen is the location of <image>.bin: %s", pedcfg)
+		log.Debugf("pedestal config for xen is the location of <image.bin>: %s", pedcfg)
+	}
+
+	staticResMngt := rc.StaticResourceManagement
+	hugePage := pedestal.HugePageSupport(staticResMngt)
+
+
+	// update container resource for openamp-based client is out of plan
+	
+	if pedestal.GetHostPed() == pedestal.OpenAMP {
+		staticResMngt = true
 	}
 
 	sandboxConfig := cntr.SandboxConfig{
 		ID:       sbContainerID,
 		Hostname: ocispec.Hostname,
-		PedType:  cntr.HostPedType,
+		PedConfig:  pedestal.PedestalConfig{
+			PedType:       pedestal.GetHostPed(),
+			PedConfig: "",
+			MiniVCPUNum:   rc.MiniVCPUNum,
+		},
 		ContainerConfigs: map[string]*cntr.ContainerConfig{
 			sbContainerID: containerConfig,
 		},
@@ -164,9 +248,13 @@ func SandboxConfig(ocispec *specs.Spec, rc RuntimeConfig, bundle, sbContainerID 
 			WorkloadMemMB: rc.SandboxMemMB,
 		},
 
+		StaticResourceMgmt: staticResMngt,
+		HugePageSupport: hugePage,
 		EnableVCPUsPining: false,
 	}
 
+
+	applySandboxAnnotations(*ocispec, &sandboxConfig)
 	return sandboxConfig, nil
 }
 
@@ -210,24 +298,24 @@ func formatMemoryLimit(config *cntr.ContainerConfig) string {
 
 	parts := []string{}
 
-	if config.MemoryLimit > 0 {
-		parts = append(parts, fmt.Sprintf("limit=%s", formatBytes(config.MemoryLimit)))
+	if config.MemoryLimitMB > 0 {
+		parts = append(parts, fmt.Sprintf("limit=%s", formatBytes(int64(config.MemoryLimitMB)*1024*1024)))
 	}
 
-	if config.MemoryReservation > 0 {
-		parts = append(parts, fmt.Sprintf("reservation=%s", formatBytes(config.MemoryReservation)))
+	if config.MemoryReservationMB > 0 {
+		parts = append(parts, fmt.Sprintf("reservation=%s", formatBytes(int64(config.MemoryReservationMB)*1024*1024)))
 	}
 
-	if config.MemorySwap > 0 {
-		parts = append(parts, fmt.Sprintf("swap=%s", formatBytes(config.MemorySwap)))
+	if config.MemorySwapMB > 0 {
+		parts = append(parts, fmt.Sprintf("swap=%s", formatBytes(int64(config.MemorySwapMB)*1024*1024)))
 	}
 
-	if config.MemoryKernel > 0 {
-		parts = append(parts, fmt.Sprintf("kernel=%s", formatBytes(config.MemoryKernel)))
+	if config.MemoryKernelMB > 0 {
+		parts = append(parts, fmt.Sprintf("kernel=%s", formatBytes(int64(config.MemoryKernelMB)*1024*1024)))
 	}
 
-	if config.MemorySwappiness != nil {
-		parts = append(parts, fmt.Sprintf("swappiness=%d", *config.MemorySwappiness))
+	if config.MemorySwappinessMB != nil {
+		parts = append(parts, fmt.Sprintf("swappiness=%d", *config.MemorySwappinessMB))
 	}
 
 	if config.OomKillDisable {
@@ -255,12 +343,56 @@ func formatBytes(bytes int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
 
+func applySandboxAnnotations(ocispec specs.Spec, cfg *cntr.SandboxConfig) {
+	if ocispec.Annotations == nil || cfg == nil {
+		return
+	}
+	if cfg.Annotations == nil {
+		cfg.Annotations = make(map[string]string)
+	}
+
+	for key, value := range ocispec.Annotations {
+		if !strings.HasPrefix(key, defs.MicraAnnotationPrefix) || value == "" {
+			continue
+		}
+		switch key {
+		// allowlist: only handle known, safe sandbox-level toggles
+		case defs.RuntimePrefix + "enable_vcpus_pinning":
+			if b, err := strconv.ParseBool(value); err == nil {
+				cfg.EnableVCPUsPining = b
+			} else {
+				log.Debugf("invalid bool for %s: %s", key, value)
+			}
+			cfg.Annotations[key] = value
+
+		case defs.RuntimePrefix + "static_resource":
+			if b, err := strconv.ParseBool(value); err == nil {
+				cfg.StaticResourceMgmt = b
+			} else {
+				log.Debugf("invalid bool for %s: %s", key, value)
+			}
+			cfg.Annotations[key] = value
+
+		case defs.RuntimePrefix + "hugepage_enable":
+			if b, err := strconv.ParseBool(value); err == nil {
+				cfg.HugePageSupport = b
+			} else {
+				log.Debugf("invalid bool for %s: %s", key, value)
+			}
+			cfg.Annotations[key] = value
+
+		default:
+			// ignore other annotations at sandbox level for now
+		}
+	}
+}
+
 func GetContainerSpec(annotations map[string]string) (specs.Spec, error) {
 	if bundlePath, ok := annotations[defs.BundlePathKey]; ok {
 		return parseConfigJSON(bundlePath)
 	}
 
-	log.Debugf("Annotations[%s] not found, cannot find container spec",
+	log.Debugf("annotations[%s] not found, cannot find container spec",
 		defs.BundlePathKey)
 	return specs.Spec{}, fmt.Errorf("Could not find container spec")
 }

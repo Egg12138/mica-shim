@@ -48,6 +48,11 @@
 
 #define INFO(fmt, ...) printf("[INFO] " fmt "\n", ##__VA_ARGS__)
 #define WARN(fmt, ...) printf("!WARN! " fmt "\n", ##__VA_ARGS__)
+#define FATAL(fmt, ...) do {\
+	printf("!ERROR! " fmt "\n", ##__VA_ARGS__);\
+	exit(EXIT_FAILURE);\
+} while(0)
+
 
 /* Message format matching mica.py's CreateMsg */
 // Updated to match the new MicaClientConf structure
@@ -140,6 +145,7 @@ static void handle_client(int client_fd);
 static void handle_client_ctrl(int client_fd, struct listen_unit *unit);
 static int remove_socket(const char *client_name);
 static void cleanup_listeners(void);
+static void show_time(void);
 
 /* RTOS IO Function prototypes */
 static int create_rtos_instance(const char *name, uint32_t cpu_id);
@@ -911,6 +917,27 @@ static void destroy_rtos_instance(const char *name)
 	printf("RTOS instance '%s' destroyed\n", name);
 }
 
+#define TSZ 64
+static void show_time(void)
+{
+	time_t current_time;
+	struct tm *local_time_info;
+	char time_string[TSZ];
+	current_time = time(NULL);
+	if (current_time == (time_t) - 1)
+		FATAL("failed to get current time");
+
+	local_time_info  = localtime(&current_time);
+	if (local_time_info == NULL)
+		FATAL("failed to get local time");
+	
+
+	size_t bytes = strftime(time_string, TSZ, "%H:%M:%S", local_time_info);
+	if (bytes == 0	)
+		FATAL("failed to format time string");
+	INFO("********%s********", time_string);
+}
+
 static void cleanup_listeners(void)
 {
 	struct listen_unit *current, *next;
@@ -1037,15 +1064,16 @@ static void handle_client(int client_fd)
 		return;
 	}
 
+	show_time();
 	print_hex_dump(buffer, bytes_received);
 	
 	/* Always display input as string */
 	print_as_string(buffer, bytes_received);
 
-	/* Size matched */
+	/* Check if received enough data for the struct */
 	printf("bytes_received: %ld\n", bytes_received);
 	printf("sizeof(struct create_msg): %ld\n", sizeof(struct create_msg));
-	if (bytes_received == sizeof(struct create_msg)) {
+	if (bytes_received >= offsetof(struct create_msg, debug) + sizeof(bool)) {
 		struct create_msg *msg = (struct create_msg *)buffer;
 		print_create_msg(msg);
 
@@ -1059,7 +1087,8 @@ static void handle_client(int client_fd)
 		if (client_exists(client_name)) {
 			printf("Client '%s' already exists, do not register it\n", client_name);
 			if (send_response) {
-				safe_send(client_fd, RESPONSE_FAILED, strlen(RESPONSE_FAILED));
+				// safe_send(client_fd, RESPONSE_FAILED, strlen(RESPONSE_FAILED));
+				safe_send(client_fd, RESPONSE_SUCCESS, strlen(RESPONSE_SUCCESS));
 			}
 			return;
 		} else {

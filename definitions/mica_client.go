@@ -9,9 +9,9 @@ const (
 	DefaultXenBin = "image.bin"
 )
 
-// client conf keys
+// client conf keys; 
 const (
-	ElfPath = "path"
+	ElfPath = "clientpath"
 	Name    = "name"
 	Ped     = "ped"
 	PedCfg  = "pedcfg"

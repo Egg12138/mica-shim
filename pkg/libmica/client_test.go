@@ -1,6 +1,7 @@
 package libmica
 
 import (
+	"mica-shim/pkg/pedestal"
 	"reflect"
 	"testing"
 )
@@ -276,6 +277,180 @@ func findSubstring(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestMicaExecutor_ReadResource(t *testing.T) {
+	tests := []struct {
+		name     string
+		executor MicaExecutor
+		want     *pedestal.EssentialResource
+	}{
+		{
+			name: "all fields populated",
+			executor: MicaExecutor{
+				records: MicaClientConf{
+					vcpuNum:     4,
+					cpuWeight:   1024,
+					cpuCapacity: 50,
+					memoryMB:      256,
+					cpuStr:      [MaxCPUStringLen]byte{'0', '-', '3', ',', '5'},
+				},
+				Id: "test-container",
+			},
+			want: &pedestal.EssentialResource{
+				CpuPeriod:     func() *uint64 { v := uint64(10000); return &v }(),
+				CpuQuota:      func() *int64 { v := int64(0); return &v }(),
+				CpuCpacity:    func() *uint32 { v := uint32(50); return &v }(), // From records.cpuCapacity
+				Vcpu:          func() *uint32 { v := uint32(4); return &v }(),
+				CPUWeight:     func() *uint32 { v := uint32(1024); return &v }(),
+				MemoryLimitMB: func() *uint32 { v := uint32(256); return &v }(),
+				ClientCpuSet:  "0-3,5",
+				MemoryMinMB:   32,
+			},
+		},
+		{
+			name: "zero values - no pointers set",
+			executor: MicaExecutor{
+				records: MicaClientConf{
+					vcpuNum:     0,
+					cpuWeight:   0,
+					cpuCapacity: 0,
+					memoryMB:      0,
+					cpuStr:      [MaxCPUStringLen]byte{},
+				},
+				Id: "test-container-zero",
+			},
+			want: &pedestal.EssentialResource{
+				CpuPeriod:    func() *uint64 { v := uint64(10000); return &v }(),
+				CpuQuota:     func() *int64 { v := int64(0); return &v }(),
+				CpuCpacity:   func() *uint32 { v := uint32(0); return &v }(),
+				Vcpu:         func() *uint32 { v := uint32(1); return &v }(), // default from InitResource
+				ClientCpuSet: "",
+				MemoryMinMB:  32,
+			},
+		},
+		{
+			name: "partial fields - only some pointers set",
+			executor: MicaExecutor{
+				records: MicaClientConf{
+					vcpuNum:     2,
+					cpuWeight:   0, // zero, so not set
+					cpuCapacity: 75,
+					memoryMB:      0, // zero, so not set
+					cpuStr:      [MaxCPUStringLen]byte{'1', ',', '2'},
+				},
+				Id: "test-container-partial",
+			},
+			want: &pedestal.EssentialResource{
+				CpuPeriod:    func() *uint64 { v := uint64(10000); return &v }(),
+				CpuQuota:     func() *int64 { v := int64(0); return &v }(),
+				CpuCpacity:   func() *uint32 { v := uint32(75); return &v }(), // From records.cpuCapacity
+				Vcpu:         func() *uint32 { v := uint32(2); return &v }(),
+				CPUWeight:    nil, // not set because cpuWeight is 0
+				MemoryLimitMB: nil, // not set because memory is 0
+				ClientCpuSet: "1,2",
+				MemoryMinMB:  32,
+			},
+		},
+		{
+			name: "cpu string with null bytes",
+			executor: MicaExecutor{
+				records: MicaClientConf{
+					vcpuNum:     1,
+					cpuWeight:   512,
+					cpuCapacity: 25,
+					memoryMB:      128,
+					cpuStr:      [MaxCPUStringLen]byte{'0', '-', '7', 0, 0, 0}, // with null bytes
+				},
+				Id: "test-container-null",
+			},
+			want: &pedestal.EssentialResource{
+				CpuPeriod:     func() *uint64 { v := uint64(10000); return &v }(),
+				CpuQuota:      func() *int64 { v := int64(0); return &v }(),
+				CpuCpacity:    func() *uint32 { v := uint32(25); return &v }(), // From records.cpuCapacity
+				Vcpu:          func() *uint32 { v := uint32(1); return &v }(),
+				CPUWeight:     func() *uint32 { v := uint32(512); return &v }(),
+				MemoryLimitMB: func() *uint32 { v := uint32(128); return &v }(),
+				ClientCpuSet:  "0-7", // null bytes trimmed
+				MemoryMinMB:   32,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.executor.ReadResource()
+
+			// Compare CpuPeriod
+			if got.CpuPeriod == nil || tt.want.CpuPeriod == nil {
+				if got.CpuPeriod != tt.want.CpuPeriod {
+					t.Errorf("ReadResource().CpuPeriod = %v, want %v", got.CpuPeriod, tt.want.CpuPeriod)
+				}
+			} else if *got.CpuPeriod != *tt.want.CpuPeriod {
+				t.Errorf("ReadResource().CpuPeriod = %v, want %v", *got.CpuPeriod, *tt.want.CpuPeriod)
+			}
+
+			// Compare CpuQuota
+			if got.CpuQuota == nil || tt.want.CpuQuota == nil {
+				if got.CpuQuota != tt.want.CpuQuota {
+					t.Errorf("ReadResource().CpuQuota = %v, want %v", got.CpuQuota, tt.want.CpuQuota)
+				}
+			} else if *got.CpuQuota != *tt.want.CpuQuota {
+				t.Errorf("ReadResource().CpuQuota = %v, want %v", *got.CpuQuota, *tt.want.CpuQuota)
+			}
+
+			// Compare CpuCpacity
+			if got.CpuCpacity == nil || tt.want.CpuCpacity == nil {
+				if got.CpuCpacity != tt.want.CpuCpacity {
+					t.Errorf("ReadResource().CpuCpacity = %v, want %v", got.CpuCpacity, tt.want.CpuCpacity)
+				}
+			} else if *got.CpuCpacity != *tt.want.CpuCpacity {
+				t.Errorf("ReadResource().CpuCpacity = %v, want %v", *got.CpuCpacity, *tt.want.CpuCpacity)
+			}
+
+			// Compare Vcpu
+			if got.Vcpu == nil || tt.want.Vcpu == nil {
+				if got.Vcpu != tt.want.Vcpu {
+					t.Errorf("ReadResource().Vcpu = %v, want %v", got.Vcpu, tt.want.Vcpu)
+				}
+			} else if *got.Vcpu != *tt.want.Vcpu {
+				t.Errorf("ReadResource().Vcpu = %v, want %v", *got.Vcpu, *tt.want.Vcpu)
+			}
+
+			// Compare CPUWeight
+			if got.CPUWeight == nil || tt.want.CPUWeight == nil {
+				if got.CPUWeight != tt.want.CPUWeight {
+					t.Errorf("ReadResource().CPUWeight = %v, want %v", got.CPUWeight, tt.want.CPUWeight)
+				}
+			} else if *got.CPUWeight != *tt.want.CPUWeight {
+				t.Errorf("ReadResource().CPUWeight = %v, want %v", *got.CPUWeight, *tt.want.CPUWeight)
+			}
+
+			// Compare MemoryLimitMB
+			if got.MemoryLimitMB == nil || tt.want.MemoryLimitMB == nil {
+				if got.MemoryLimitMB != tt.want.MemoryLimitMB {
+					t.Errorf("ReadResource().MemoryLimitMB = %v, want %v", got.MemoryLimitMB, tt.want.MemoryLimitMB)
+				}
+			} else if *got.MemoryLimitMB != *tt.want.MemoryLimitMB {
+				t.Errorf("ReadResource().MemoryLimitMB = %v, want %v", *got.MemoryLimitMB, *tt.want.MemoryLimitMB)
+			}
+
+			// Compare ClientCpuSet
+			if got.ClientCpuSet != tt.want.ClientCpuSet {
+				t.Errorf("ReadResource().ClientCpuSet = %v, want %v", got.ClientCpuSet, tt.want.ClientCpuSet)
+			}
+
+			// Compare MemoryMinMB
+			if got.MemoryMinMB != tt.want.MemoryMinMB {
+				t.Errorf("ReadResource().MemoryMinMB = %v, want %v", got.MemoryMinMB, tt.want.MemoryMinMB)
+			}
+
+			// VIF should be empty slice
+			if len(got.VIF) != 0 {
+				t.Errorf("ReadResource().VIF = %v, want empty slice", got.VIF)
+			}
+		})
+	}
 }
 
 func TestBoundaryConditions(t *testing.T) {

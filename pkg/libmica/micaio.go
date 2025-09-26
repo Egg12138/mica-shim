@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"sync"
 	"syscall"
@@ -44,8 +43,6 @@ type MicaIO struct {
 	started bool
 
 	mu sync.RWMutex
-
-	micaClientConn net.Conn
 
 	// Direct FIFO path for stdin forwarding
 	stdinFIFOPath string
@@ -153,14 +150,14 @@ func (r *stdinFIFOReader) Close() error {
 // MicaIO methods
 // discoverPTYDevice discovers PTY device created by micad
 func (mio *MicaIO) discoverPTYDevice() (*PTYDiscoveryResult, error) {
-	log.Debugf("Starting PTY device discovery for task %s", mio.taskID)
+	log.Debugf("starting PTY device discovery for task %s", mio.taskID)
 
 	existingDevices := mio.scanExistingPTYDevices()
 
 	// Use first available device (TODO: implement proper task-to-PTY mapping)
 	if len(existingDevices) > 0 {
 		selectedDevice := existingDevices[0]
-		log.Debugf("Selected PTY device %s for task %s", selectedDevice, mio.taskID)
+		log.Debugf("selected PTY device %s for task %s", selectedDevice, mio.taskID)
 		return &PTYDiscoveryResult{
 			DevicePath: selectedDevice,
 			Error:      nil,
@@ -182,7 +179,7 @@ func (mio *MicaIO) scanExistingPTYDevices() []string {
 		if stat, err := os.Stat(ptyPath); err == nil {
 			if stat.Mode()&os.ModeCharDevice != 0 {
 				devices = append(devices, ptyPath)
-				log.Debugf("Found PTY device: %s", ptyPath)
+				log.Debugf("found PTY device: %s", ptyPath)
 			}
 		}
 	}
@@ -192,7 +189,7 @@ func (mio *MicaIO) scanExistingPTYDevices() []string {
 
 // waitForPTYDeviceCreation waits for micad to create PTY devices
 func (mio *MicaIO) waitForPTYDeviceCreation() error {
-	log.Debugf("Waiting for PTY device creation for task %s", mio.taskID)
+	log.Debugf("waiting for PTY device creation for task %s", mio.taskID)
 
 	timeout := time.After(PTYWaitTimeout)
 	ticker := time.NewTicker(PTYDiscoveryInterval)
@@ -236,7 +233,7 @@ func (mio *MicaIO) connectToPTY() error {
 	}
 
 	mio.ptyFile = ptyFile
-	log.Infof("Successfully connected to PTY device %s for task %s", mio.ptyDevice, mio.taskID)
+	log.Infof("successfully connected to PTY device %s for task %s", mio.ptyDevice, mio.taskID)
 	return nil
 }
 
@@ -249,7 +246,7 @@ func (mio *MicaIO) Start() error {
 		return fmt.Errorf("MicaIO already started for task %s", mio.taskID)
 	}
 
-	log.Debugf("Starting MicaIO for task %s", mio.taskID)
+	log.Debugf("starting MicaIO for task %s", mio.taskID)
 
 	if err := mio.connectToPTY(); err != nil {
 		return fmt.Errorf("connecting to PTY: %w", err)
@@ -329,7 +326,7 @@ func (mio *MicaIO) forwardPTYToStdout() error {
 		return nil
 	}
 
-	log.Debugf("Starting PTY->stdout forwarding for task %s", mio.taskID)
+	log.Debugf("starting PTY->stdout forwarding for task %s", mio.taskID)
 
 	buf := make([]byte, 4096)
 	writer := mio.stdout.Writer()
@@ -352,7 +349,7 @@ func (mio *MicaIO) forwardPTYToStdout() error {
 			}
 
 			if n > 0 {
-				log.Debugf("Forwarding %d bytes from PTY to stdout for task %s", n, mio.taskID)
+				log.Debugf("forwarding %d bytes from PTY to stdout for task %s", n, mio.taskID)
 				if _, err := writer.Write(buf[:n]); err != nil {
 					return fmt.Errorf("writing to stdout: %w", err)
 				}
@@ -368,7 +365,7 @@ func (mio *MicaIO) forwardPTYToStderr() error {
 	}
 
 	// Stderr is typically combined with stdout in terminal mode
-	log.Debugf("Stderr forwarding not implemented for task %s (terminal mode: %v)", mio.taskID, mio.terminal)
+	log.Debugf("stderr forwarding not implemented for task %s (terminal mode: %v)", mio.taskID, mio.terminal)
 	return nil
 }
 
@@ -378,7 +375,7 @@ func (mio *MicaIO) forwardStdinToPTY() error {
 		return nil
 	}
 
-	log.Debugf("Starting stdin->PTY forwarding for task %s", mio.taskID)
+	log.Debugf("starting stdin->PTY forwarding for task %s", mio.taskID)
 
 	stdinReader, err := newStdinFIFOReader(mio.stdinFIFOPath, mio.taskID)
 	if err != nil {
@@ -409,7 +406,7 @@ func (mio *MicaIO) forwardStdinToPTY() error {
 			}
 
 			if n > 0 {
-				log.Debugf("Forwarding %d bytes from stdin to PTY for task %s", n, mio.taskID)
+				log.Debugf("forwarding %d bytes from stdin to PTY for task %s", n, mio.taskID)
 
 				// Write to PTY with retry mechanism
 				written := 0
@@ -427,7 +424,7 @@ func (mio *MicaIO) forwardStdinToPTY() error {
 					written += bytesWritten
 				}
 
-				log.Debugf("Successfully wrote %d bytes to PTY for task %s", written, mio.taskID)
+				log.Debugf("successfully wrote %d bytes to PTY for task %s", written, mio.taskID)
 			}
 		}
 	}
@@ -440,7 +437,7 @@ func (mio *MicaIO) Wait() {
 
 // Close closes all IO resources
 func (mio *MicaIO) Close() error {
-	log.Debugf("Closing MicaIO for task %s", mio.taskID)
+	log.Debugf("closing MicaIO for task %s", mio.taskID)
 
 	mio.cancel()
 

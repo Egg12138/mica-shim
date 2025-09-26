@@ -33,7 +33,8 @@ const (
 	UnexpectedStatus
 	IOClose
 	NotSuppoted
-	MicadDown
+	MicadAbnormal
+	ParseFailed
 )
 
 // Pre-defined errors.
@@ -50,8 +51,12 @@ var (
 	ErrIOClose           = new(IOClose, "io closed")
 	ErrNotRunning        = new(UnexpectedStatus, "container is not running")
 
+	ErrPedestalMismatch = new(Invalid, "host pedestal type mismatch with image pedestal type")
+	ErrCommandOutputParse = new(ParseFailed, "failed to parse command output")
+
 	ErrMicadFailed     = new(MicadFailed, "mica operation failed")
-	ErrMicadNotRunning = new(MicadDown, "mica daemon is not running")
+	ErrMicadNotRunning = new(MicadAbnormal, "mica daemon is not running")
+	ErrMicaCreatSock = new(MicadAbnormal, "mica-create socket is not alive")
 	ErrNotSuppoted     = new(NotSuppoted, "micran or mica does not support this")
 	ErrInvalidSig      = new(Invalid, "invalid signal for client os")
 )
@@ -67,4 +72,5 @@ var (
 
 var (
 	FlexibleTaskUnsupported = new(MicadFailed, "micran does not support exec task, task are immutable inside client os")
+	ContainerVCPUNotPined = new(MicadFailed, "container's vcpus are not pinned")
 )

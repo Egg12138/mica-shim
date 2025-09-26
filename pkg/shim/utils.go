@@ -5,14 +5,15 @@ import (
 	"fmt"
 	defs "mica-shim/definitions"
 	log "mica-shim/logger"
-	"mica-shim/pkg/fileutils"
 	"mica-shim/pkg/libmica"
 	cntr "mica-shim/pkg/micantainer"
 	"mica-shim/pkg/oci"
+	"mica-shim/pkg/utils"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/containerd/cgroups"
 	"github.com/containerd/containerd/api/types/task"
 	"github.com/containerd/containerd/mount"
 	shimv2 "github.com/containerd/containerd/runtime/v2/shim"
@@ -31,7 +32,7 @@ func validBundle(containerID, bundlePath string) (string, error) {
 	}
 
 	// resolve path first to handle symlinks before other checks
-	resolved, err := fileutils.ResolvePath(bundlePath)
+	resolved, err := utils.ResolvePath(bundlePath)
 	if err != nil {
 		return "", err
 	}
@@ -73,7 +74,7 @@ func setInternalRootfs(bundle string) error {
 	rootfs := filepath.Join(bundle, "rootfs")
 
 	// TODO: recursively chmod 0555
-	if err := fileutils.SetReadonly(rootfs); err != nil {
+	if err := utils.SetReadonly(rootfs); err != nil {
 		return fmt.Errorf("failed to chmod rootfs: %w", err)
 	}
 	os.Chdir(bundle)
@@ -183,11 +184,11 @@ func watchSandbox(ctx context.Context, s *shimService) {
 	log.Debugf("trying to clean up containers resource inside sandbox %s", s.sandbox.SandboxID())
 	err = s.sandbox.Stop(ctx, true)
 	if err != nil {
-		log.Warnf("stop sandbox failed: %w", err)
+		log.Warnf("stop sandbox failed: %v", err)
 	}
 	err = s.sandbox.Delete(ctx)
 	if err != nil {
-		log.Warnf("delete sandbox failed: %w", err)
+		log.Warnf("delete sandbox failed: %v", err)
 	}
 
 	for _, c := range s.containers {
@@ -235,4 +236,14 @@ func loadSpec(id, bundle string) (*specs.Spec, string, error) {
 
 	return &spec, bundle, nil
 
+}
+
+func cgroupV1() (bool, error) {
+	if cgroups.Mode() == cgroups.Legacy || cgroups.Mode() == cgroups.Hybrid {
+		return true, nil
+	} else if cgroups.Mode() == cgroups.Unified {
+		return false, nil
+	} else {
+		return false, fmt.Errorf("get unknown cgroup mode")
+	}
 }

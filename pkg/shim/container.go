@@ -1,3 +1,4 @@
+// Package shim provides the implementation of the containerd shim v2 interface for micran.
 package shim
 
 import (
@@ -21,6 +22,7 @@ import (
 	"golang.org/x/sys/execabs"
 )
 
+// container holds the shim's representation of a container instance.
 type container struct {
 	s           *shimService
 	ttyio       *ttyIO
@@ -32,21 +34,20 @@ type container struct {
 	exitCh      chan uint32
 	id          string
 	stdin       string
-	// stdout, stderr => consoleOut
-	stdout string
-	stderr string
-	bundle string
-	cType  cntr.ContainerType
-	// exit status code
-	exit     uint32
-	status   task.Status
-	terminal bool
-	mounted  bool
+	stdout      string // All output from the RTOS console is directed here.
+	stderr      string
+	bundle      string
+	cType       cntr.ContainerType
+	exit        uint32 // The exit status code.
+	status      task.Status
+	terminal    bool
+	mounted     bool
 }
 
+// newContainer creates a new container object for the shim.
 func newContainer(s *shimService, r *taskAPI.CreateTaskRequest, cType cntr.ContainerType, ocispec *specs.Spec, mounted bool) (*container, error) {
 	if r == nil {
-		return nil, errdefs.ToGRPCf(errdefs.ErrInvalidArgument, " CreateTaskRequest points to nil")
+		return nil, errdefs.ToGRPCf(errdefs.ErrInvalidArgument, "CreateTaskRequest points to nil")
 	}
 
 	if ocispec == nil {
@@ -73,6 +74,7 @@ func newContainer(s *shimService, r *taskAPI.CreateTaskRequest, cType cntr.Conta
 	return c, nil
 }
 
+// stdio defines the standard IO paths for a container.
 type stdio struct {
 	Stdin    string
 	Stdout   string
@@ -80,18 +82,16 @@ type stdio struct {
 	Terminal bool
 }
 
-// caller:
-// io.Stdout().Write(data)
-// io.Close() => close all resources of current stream
+// IO defines the interface for handling container IO streams.
 type IO interface {
-	// close all resources of current stream
 	io.Closer
 	Stdin() io.ReadCloser
-	// temporary: stdout() and stderr() are the same writer for our all io components
+	// NOTE: stdout() and stderr() are the same writer for our current IO components.
 	Stdout() io.Writer
 	Stderr() io.Writer
 }
 
+// ttyIO manages the TTY and IO streams for a container.
 type ttyIO struct {
 	io     IO
 	stream *stdio
@@ -101,10 +101,11 @@ func (tty *ttyIO) close() {
 	tty.io.Close()
 }
 
+// newTtyIO creates a new TTY IO handler based on the provided URI scheme.
 func newTtyIO(ctx context.Context, id, stdin, stdout, stderr string, terminal bool) (*ttyIO, error) {
-	// TODO implement
+	// TODO: Implement this function.
 	var err error
-	var io IO
+	var ioImpl IO
 	stream := &stdio{
 		Stdin:    stdin,
 		Stdout:   stdout,
@@ -112,7 +113,7 @@ func newTtyIO(ctx context.Context, id, stdin, stdout, stderr string, terminal bo
 		Terminal: terminal,
 	}
 
-	// containerd default io uri is fifo
+	// Containerd's default IO URI is fifo.
 	uri, err := url.Parse(stdout)
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse stdout uri: %w", err)
@@ -122,16 +123,16 @@ func newTtyIO(ctx context.Context, id, stdin, stdout, stderr string, terminal bo
 		uri.Scheme = "fifo"
 	}
 
-	log.Debugf("uri parsed => %+v", uri)
+	log.Debugf("URI parsed => %+v", uri)
 	switch uri.Scheme {
 	case "fifo":
-		io, err = newPipeIO(ctx, stream)
+		ioImpl, err = newPipeIO(ctx, stream)
 	case "binary":
 		log.Debugf("************ binary io ************")
-		io, err = newBinaryIO(ctx, id, uri)
+		ioImpl, err = newBinaryIO(ctx, id, uri)
 	case "file":
 		log.Debugf("************ file io ************")
-		io, err = newFileIO(ctx, stream, uri)
+		ioImpl, err = newFileIO(ctx, stream, uri)
 	default:
 		return nil, fmt.Errorf("unknown STDIO scheme %s", uri.Scheme)
 	}
@@ -141,7 +142,7 @@ func newTtyIO(ctx context.Context, id, stdin, stdout, stderr string, terminal bo
 	}
 
 	return &ttyIO{
-		io:     io,
+		io:     ioImpl,
 		stream: stream,
 	}, nil
 }
@@ -152,32 +153,33 @@ var (
 	_ IO = &fileIO{}
 )
 
+// pipeIO implements IO for FIFO pipes.
 type pipeIO struct {
 	in  io.ReadCloser
 	out io.WriteCloser
 }
 
-// binaryIO related code is from https://github.com/containerd/containerd/blob/v1.6.6/pkg/process/io.go#L311
+// binaryIO implements IO by running a custom binary for logging.
+// NOTE: Related code is from https://github.com/containerd/containerd/blob/v1.6.6/pkg/process/io.go#L311
 type binaryIO struct {
 	cmd *execabs.Cmd
 	out *pipe
 }
 
-// fileIO only support write both stdout/stderr to the same file
+// fileIO implements IO for files, supporting writing stdout/stderr to the same file.
 type fileIO struct {
 	out io.WriteCloser
-	// file path
-	in string
+	in  string // File path.
 }
 
+// newPipeIO creates a new pipe-based IO handler.
 func newPipeIO(ctx context.Context, stdio *stdio) (*pipeIO, error) {
 	var in io.ReadCloser
 	var out io.WriteCloser
 	var err error
 	if stdio.Stdin != "" {
 		fifoFlags := syscall.O_RDONLY | syscall.O_NONBLOCK
-		// default perm, let perm set by containerd
-		perm := os.FileMode(0)
+		perm := os.FileMode(0) // Default perm, let containerd set it.
 		in, err = fifo.OpenFifo(ctx, stdio.Stdin, fifoFlags, perm)
 		if err != nil {
 			return nil, err
@@ -197,28 +199,15 @@ func newPipeIO(ctx context.Context, stdio *stdio) (*pipeIO, error) {
 	}
 
 	return pipeIO, nil
-
 }
 
 func newFileIO(ctx context.Context, stdio *stdio, uri *url.URL) (*fileIO, error) {
 	return nil, errdefs.ErrNotImplemented
 }
 
-// NewBinaryIO runs a custom binary process for pluggable shim logging
-// func NewBinaryIO(ctx context.Context, id string, uri *url.URL) (_ runc.IO, err error) {
-//
-//	type IO interface {
-//		io.Closer
-//		Stdin() io.WriteCloser
-//		Stdout() io.ReadCloser
-//		Stderr() io.ReadCloser
-//		Set(*exec.Cmd)
-//	}
 func newBinaryIO(ctx context.Context, id string, uri *url.URL) (bio *binaryIO, err error) {
 	return nil, errdefs.ErrNotImplemented
 }
-
-// interface implementations"
 
 func (p *pipeIO) Close() error {
 	var err error
@@ -291,6 +280,7 @@ func (f *fileIO) Stderr() io.Writer {
 	return f.out
 }
 
+// newPipe creates a new OS pipe.
 func newPipe() (*pipe, error) {
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -302,6 +292,7 @@ func newPipe() (*pipe, error) {
 	}, nil
 }
 
+// pipe is a wrapper around an OS pipe.
 type pipe struct {
 	r *os.File
 	w *os.File
@@ -313,49 +304,55 @@ func (p *pipe) Close() error {
 	return errors.Join(errw, errr)
 }
 
-// Terminal <-> Containerd <-> shim ::tty.io.Stdin() <-> pipe
+// ioCopy manages copying data between the container's IO streams and the PTY.
 func ioCopy(exitch, stdinCloser chan struct{}, tty *ttyIO, stdinPipe io.WriteCloser, stdoutPipe io.Reader) {
 	var wg sync.WaitGroup
 
 	if tty.io.Stdin() != nil {
 		wg.Add(1)
 		go func() {
-			log.Debug("Starting stdin copy from containerd to PTY")
-			// TALK: maybe CopyBuffer, using a buffer pool is a better choice?
+			log.Debug("Starting stdin copy from containerd to PTY.")
+			// TALK: Maybe CopyBuffer with a buffer pool is a better choice?
 			io.Copy(stdinPipe, tty.io.Stdin())
-			log.Debug("Stdin copy completed")
+			log.Debug("Stdin copy completed.")
 			close(stdinCloser)
 			wg.Done()
-			log.Info("stdin io stream copy exited")
+			log.Info("Stdin io stream copy exited.")
 		}()
 	}
 
-	// stdout: client -> pipe -> shim ::tty.io.Stdout() -> containerd -> Terminal
-	// stderr: Since RTOS doesn't distinguish stderr, we also copy from PTY stdout
-	// This ensures containerd receives the same output on both streams
+	// Since the RTOS doesn't distinguish stderr, we copy from the PTY stdout
+	// to both stdout and stderr to ensure containerd receives the same output on both streams.
 	if tty.io.Stdout() != nil {
 		wg.Add(1)
 		go func() {
-			log.Debug("Starting stdout copy from PTY to containerd")
+			log.Debug("Starting stdout copy from PTY to containerd.")
 			io.Copy(tty.io.Stdout(), stdoutPipe)
-			log.Debug("Stdout copy completed")
+			log.Debug("Stdout copy completed.")
 			wg.Done()
 			if tty.io.Stdin() != nil {
 				tty.io.Stdin().Close()
 			}
-			log.Info("out stream copy exited")
+			log.Info("Out stream copy exited.")
 		}()
 	}
 
 	wg.Wait()
 	close(exitch)
-	log.Debug("All IO copies completed")
+	log.Debug("All IO copies completed.")
 }
 
+// waitContainerExit waits for the container to exit and updates its status.
 func waitContainerExit(ctx context.Context, s *shimService, c *container) (int32, error) {
-	// Wait for IO streams to close
-	<-c.exitIOch
-	log.WithField("container", c.id).Debug("The container IO streams closed")
+	// Wait for IO streams to close, or mock an exit after a timeout since micad
+	// cannot yet detect client OS exit.
+	const mockExitTimeout = 5 * time.Second
+	select {
+	case <-c.exitIOch:
+		log.WithField("container", c.id).Debug("The container IO streams closed.")
+	case <-time.After(mockExitTimeout):
+		log.WithField("container", c.id).Infof("No IO activity; mock exit after %s.", mockExitTimeout)
+	}
 
 	ret, err := s.sandbox.WaitTaskExit(ctx, c.id, c.id)
 	if err != nil {
@@ -367,25 +364,25 @@ func waitContainerExit(ctx context.Context, s *shimService, c *container) (int32
 	timeStamp := time.Now()
 
 	s.mu.Lock()
-	// Update container status and exit information
+	// Update container status and exit information.
 	if c.cType.CanBeSandbox() {
 		if s.monitor != nil {
 			s.monitor <- nil
 		}
 
 		if err = s.sandbox.Stop(ctx, true); err != nil {
-			log.Debugf("failed to stop sandbox %s", s.sandbox.SandboxID())
-			log.Errorf("failed to stop sandbox %s", s.sandbox.SandboxID())
+			log.Debugf("Failed to stop sandbox %s.", s.sandbox.SandboxID())
+			log.Errorf("Failed to stop sandbox %s.", s.sandbox.SandboxID())
 		}
 
 		if err = s.sandbox.Delete(ctx); err != nil {
-			log.Debugf("failed to delete sandbox %s", s.sandbox.SandboxID())
-			log.Errorf("failed to delete sandbox %s", s.sandbox.SandboxID())
+			log.Debugf("Failed to delete sandbox %s.", s.sandbox.SandboxID())
+			log.Errorf("Failed to delete sandbox %s.", s.sandbox.SandboxID())
 		}
 	} else {
 		if _, err := s.sandbox.StopContainer(ctx, c.id, true); err != nil {
-			log.Debugf("failed to stop pod container %s", c.id)
-			log.Errorf("failed to stop pod container %s", c.id)
+			log.Debugf("Failed to stop pod container %s.", c.id)
+			log.Errorf("Failed to stop pod container %s.", c.id)
 		}
 	}
 	c.status = task.Status_STOPPED
@@ -393,7 +390,7 @@ func waitContainerExit(ctx context.Context, s *shimService, c *container) (int32
 	c.exitTime = timeStamp
 
 	c.exitCh <- uint32(ret)
-	log.WithField("container", c.id).Debug("The container status is StatusStopped")
+	log.WithField("container", c.id).Debug("The container status is StatusStopped.")
 	s.mu.Unlock()
 
 	go func() {
@@ -401,7 +398,7 @@ func waitContainerExit(ctx context.Context, s *shimService, c *container) (int32
 			ts:     timeStamp,
 			cid:    c.id,
 			execid: "",
-			pid:    s.shimPid,
+			pid:    shimPid,
 			status: int(ret),
 		}
 	}()

@@ -2,8 +2,8 @@ package libmica
 
 import (
 	"fmt"
+	er "mica-shim/errors"
 	log "mica-shim/logger"
-	er "mica-shim/pkg/errors"
 	"os"
 	"os/exec"
 	"strconv"

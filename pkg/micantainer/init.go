@@ -5,12 +5,14 @@ import (
 	ped "mica-shim/pkg/pedestal"
 )
 
-var HostPedType ped.PedType
+var (
+	HostPedType ped.PedType
+)
 
 func init() {
-	HostPedType = ped.HostPed()
-	log.Debugf("detected host pedestal type: %s", HostPedType.String())
+	HostPedType = ped.GetHostPed()
 	if HostPedType == ped.Unsupported {
-		log.Warnf("unsupported host pedestal type")
+		log.Warnf("unsupported host ped type")
 	}
 }
+

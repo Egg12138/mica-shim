@@ -1,3 +1,4 @@
+// Package libmica provides client functionality for interacting with the MICA daemon.
 // TODO: using containerd socket utils
 package libmica
 
@@ -5,11 +6,11 @@ import (
 	"encoding/binary"
 	"fmt"
 	defs "mica-shim/definitions"
+	er "mica-shim/errors"
 	log "mica-shim/logger"
-	utils "mica-shim/pkg/fileutils"
 	"mica-shim/pkg/pedestal"
+	utils "mica-shim/pkg/utils"
 	"path/filepath"
-	"strconv"
 	"strings"
 )
 
@@ -30,6 +31,8 @@ const (
 	MPause  MicaCommand = "pause"
 	MResume MicaCommand = "resume"
 	MStatus MicaCommand = "status"
+	// miuca set <short_id> MemoryInMiB/CPUCapacity <value>
+	MUpdate MicaCommand = "set"
 
 	// TODO:
 	// Mica message field length constants
@@ -63,9 +66,14 @@ const (
 	serviceDebug MicaService = "debug"
 )
 
+type MicaExecutor struct {
+	records MicaClientConf
+	Id string
+}
+
 // Structs and Methods
 
-// MicaStatus represents the complete status of a MICA client
+// MicaStatus represents the complete status of a MICA client.
 // TODO: remove Raw field in the future for space saving
 type MicaStatus struct {
 	Name     string        `json:"name"`
@@ -117,16 +125,19 @@ type mcsFS struct {
 
 // MicaClientConfCreateOptions is an intermediate layer to pass configurations to MicaClientConf
 type MicaClientConfCreateOptions struct {
-	CPU         []int
+	CPU         string
 	Name        string
 	Path        string
 	Ped         string
 	PedCfg      string
 	Debug       bool
-	VCPU        int
+	VCPUs       int
+	MaxVCPUs    int
 	CPUWeight   int
 	CPUCapacity int
-	Memory      int
+	// TODO: add maxmem
+	MemoryMB    int
+	MaxMemMB   	int
 	Network     string
 }
 
@@ -147,9 +158,11 @@ type MicaClientConfCreateOptions struct {
 // /*optional configs for pedestal */
 // char cpu str[MAX CPUSTR LEN];
 // int vcpu num;
+// int maxvcpus num;
 // int cpu weight;
 // int cpu capacity;
-// int memory;
+// int memory; // in MB
+// int maxmem; // in MB
 // char network[MAX NETWORK LEN];
 // };
 type MicaClientConf struct {
@@ -171,8 +184,8 @@ type MicaClientConf struct {
 	cpuWeight int
 	// cpuCapacity is the capacity of cpu
 	cpuCapacity int
-	// memory size
-	memory int
+	// memoryMB size in MiB
+	memoryMB int
 	// network config
 	network [MaxNetworkLen]byte
 }
@@ -182,69 +195,9 @@ func dummyCPUArr() []int {
 	return []int{1, 4, 5}
 }
 
-// ParseCPUArr translates CPU array to CPU string format
-// Example: [1,4,5] -> "1,4-5"
-func ParseCPUArr(cpus []int) string {
-	if len(cpus) == 0 {
-		return ""
-	}
-
-	// Sort the CPU array
-	sorted := make([]int, len(cpus))
-	copy(sorted, cpus)
-
-	// Simple bubble sort for small arrays
-	for i := 0; i < len(sorted)-1; i++ {
-		for j := 0; j < len(sorted)-i-1; j++ {
-			if sorted[j] > sorted[j+1] {
-				sorted[j], sorted[j+1] = sorted[j+1], sorted[j]
-			}
-		}
-	}
-
-	// Convert to string format
-	var result strings.Builder
-	start := sorted[0]
-	end := sorted[0]
-
-	for i := 1; i < len(sorted); i++ {
-		if sorted[i] == end+1 {
-			// Continue the range
-			end = sorted[i]
-		} else {
-			// End the current range and start a new one
-			if start == end {
-				result.WriteString(strconv.Itoa(start))
-			} else {
-				result.WriteString(strconv.Itoa(start))
-				result.WriteString("-")
-				result.WriteString(strconv.Itoa(end))
-			}
-			result.WriteString(",")
-			start = sorted[i]
-			end = sorted[i]
-		}
-	}
-
-	// Add the last range
-	if start == end {
-		result.WriteString(strconv.Itoa(start))
-	} else {
-		result.WriteString(strconv.Itoa(start))
-		result.WriteString("-")
-		result.WriteString(strconv.Itoa(end))
-	}
-
-	return result.String()
-}
-
-// autoBoot is a dummy function that always returns false
-func autoBoot() bool {
-	return false
-}
 
 // Deprecated: Use InitWithOpts instead for new implementations.
-func (m *MicaClientConf) Init(cpu uint32, name string, path string, ped string, pedCfg string, debug bool) {
+func (m *MicaClientConf) MockInit(cpu uint32, name string, path string, ped string, pedCfg string, debug bool) {
 	name = utils.ShortID(name)
 	copy(m.name[:], name)
 	copy(m.path[:], path)
@@ -254,13 +207,13 @@ func (m *MicaClientConf) Init(cpu uint32, name string, path string, ped string, 
 
 	// Set default values for new fields
 	// Use dummy CPU array and convert to string
-	cpuStr := ParseCPUArr(dummyCPUArr())
+	cpuStr := pedestal.ParseCPUArr(dummyCPUArr())
 	copy(m.cpuStr[:], cpuStr)
 
 	m.vcpuNum = 0
 	m.cpuWeight = 0
 	m.cpuCapacity = 0
-	m.memory = 0
+	m.memoryMB = 0
 
 	// Clear network field
 	for i := range m.network {
@@ -278,14 +231,15 @@ func (m *MicaClientConf) InitWithOpts(opts MicaClientConfCreateOptions) {
 	m.debug = opts.Debug
 
 	// Convert CPU array to string
-	cpuStr := ParseCPUArr(opts.CPU)
+	// cpuStr := pedestal.ParseCPUArr(opts.CPU)
+	cpuStr := opts.CPU
 	copy(m.cpuStr[:], cpuStr)
 
 	// Set other fields
-	m.vcpuNum = opts.VCPU
+	m.vcpuNum = opts.VCPUs
 	m.cpuWeight = opts.CPUWeight
 	m.cpuCapacity = opts.CPUCapacity
-	m.memory = opts.Memory
+	m.memoryMB = opts.MemoryMB
 	copy(m.network[:], opts.Network)
 }
 
@@ -320,7 +274,7 @@ func (m *MicaClientConf) pack() []byte {
 	offset += 4
 	binary.LittleEndian.PutUint32(buf[offset:], uint32(m.cpuCapacity))
 	offset += 4
-	binary.LittleEndian.PutUint32(buf[offset:], uint32(m.memory))
+	binary.LittleEndian.PutUint32(buf[offset:], uint32(m.memoryMB))
 	offset += 4
 	copy(buf[offset:offset+MaxNetworkLen], m.network[:])
 
@@ -341,16 +295,16 @@ func NewMicaCreateMsg(cpu uint32, name string, path string, ped string, pedCfg s
 	msg := MicaClientConf{}
 	// Convert simple parameters to the new options format
 	opts := MicaClientConfCreateOptions{
-		CPU:         dummyCPUArr(), // Use dummy CPU array as default
+		CPU:         pedestal.ParseCPUArr(dummyCPUArr()),
 		Name:        name,
 		Path:        path,
 		Ped:         ped,
 		PedCfg:      pedCfg,
 		Debug:       debug,
-		VCPU:        0,
+		VCPUs:        0,
 		CPUWeight:   0,
 		CPUCapacity: 0,
-		Memory:      0,
+		MemoryMB:      0,
 		Network:     "",
 	}
 	msg.InitWithOpts(opts)
@@ -381,9 +335,10 @@ func CreateMicaClient(conf MicaClientConf) error {
 	return nil
 }
 
-func MicaCtl(cmd MicaCommand, rawId string) error {
+// TODO: consider better way to parse variable parameters
+func micaCtl(cmd MicaCommand, rawId string, opts... string) error {
 	if !validSocketPath(defs.MicaCreatSocketPath) {
-		return fmt.Errorf("mica socket directory does not exist, please check if micad is running")
+		return er.ErrMicadNotRunning
 	}
 	// workaround: pause => stop
 	switch cmd {
@@ -391,27 +346,34 @@ func MicaCtl(cmd MicaCommand, rawId string) error {
 		cmd = MStop
 	case MResume:
 		cmd = MStart
-	default:
-		cmd = cmd
 	}
 	shortId := utils.ShortID(rawId)
 	clientSocketPath := filepath.Join(defs.MicaStateDir, shortId+".socket")
-	s := newMicaSocket(clientSocketPath)
+	var s *micaSocket
+	if defs.IsMock {
+		s = newMicaSocket(defs.MicaCreatSocketPath)
+	} else {
+		s = newMicaSocket(clientSocketPath)
+	}
 	msg := string(cmd)
 	return s.handleMsg([]byte(msg))
 }
 
 func Start(id string) error {
-	if err := MicaCtl(MStart, id); err != nil {
+	if err := micaCtl(MStart, id); err != nil {
 		return fmt.Errorf("failed to start container %s", id)
 	}
 	return nil
 }
 
 // TODO: Extend mica response data, loading more information
-// BUG: mica daemon stop command does not handle error, always return success
+// TODO: if client.socket does not exist, return nil; the logic is in dangerous, 
+// we have to make sure that client os is down really
 func Stop(id string) error {
-	if err := MicaCtl(MStop, id); err != nil {
+	if completelyDown(id) {
+		log.Infof("%s is already down, not need to stop it", id)
+	}
+	if err := micaCtl(MStop, id); err != nil {
 		return fmt.Errorf("failed to stop mica client %s %w", id, err)
 	}
 	return nil
@@ -420,25 +382,34 @@ func Stop(id string) error {
 // TALK: xen supports pause, but mica...
 // TODO: might passthrough mica, directly to ped?
 func Pause(id string) error {
-	if err := MicaCtl(MPause, id); err != nil {
-		return fmt.Errorf("failed to pause mica client %s %w", id, err)
+	if pedestal.GetHostPed() == pedestal.Xen {
+		return pedestal.Pause(utils.ShortID(id))	
+	} else {
+		if err := micaCtl(MPause, id); err != nil {
+			return fmt.Errorf("failed to pause mica client %s %w", id, err)
+		}
+		return nil
 	}
-	return nil
 }
 
 // TODO: mica may not support, we handle this via ped directly
 func Resume(id string) error {
-	log.Debugf("resuming %s", id)
-	shortId := utils.ShortID(id)
-	return pedestal.Resume(shortId)
+	if pedestal.GetHostPed() == pedestal.Xen {
+		return pedestal.Resume(utils.ShortID(id))	
+	} else {
+		if err := micaCtl(MResume, id); err != nil {
+			return fmt.Errorf("failed to pause mica client %s %w", id, err)
+		}
+		return nil
+	}
 }
 
 func Remove(id string) error {
-	return MicaCtl(MRemove, id)
+	return micaCtl(MRemove, id)
 }
 
 // Status returns structured status information for a specific client
-// TODO: adapt return type to containerd-compatible status type
+// TODO: support filter?
 func Status(id string, filter Filter) (*MicaStatus, error) {
 	res, err := queryStatus(id)
 	if err != nil {
@@ -494,222 +465,4 @@ func FilterStatuses(statuses []*MicaStatus, nameFilter string, stateFilter MicaS
 	}
 
 	return filtered
-}
-
-// Private Helpers
-
-// validStatusResponse validates if the response string contains valid status information
-// This function is kept for backward compatibility, but new code should use parseMicaStatus
-// Consider this case: communication with mica daemon failed due to incorrect disconnection
-// but status information is received	from mica daemon.
-func validStatusResponse(res string) bool {
-	if res == "" {
-		return false
-	}
-
-	// Use the new parsing logic for validation
-	status, err := parseMicaStatus(res)
-	if err != nil {
-		return false
-	}
-
-	return status.isValid()
-}
-
-func queryStatus(id string) (string, error) {
-	// MicaCtl will construct the path to the client's specific control socket:
-	// e.g., /tmp/mica/<socketId>.socket
-	// It will then send the MStatus command to this socket.
-	// BUG: micactl status will write status information directly to stdout!!!!
-	// we have to manually parse status
-	if err := MicaCtl(MStatus, id); err != nil {
-		// MicaCtl might already return a detailed error.
-		// We can add more context here if needed.
-		return "", fmt.Errorf("failed to query status for client %s via MicaCtl: %w", id, err)
-	}
-	return "", nil
-}
-
-// parseMicaStatus parses the raw status response from micad into MicaStatus struct
-// Format: "name                          cpu                state               services"
-func parseMicaStatus(rawOutput string) (*MicaStatus, error) {
-	if rawOutput == "" {
-		return nil, fmt.Errorf("empty response")
-	}
-
-	// Check for error responses
-	if strings.Contains(rawOutput, defs.MicaFailed) || strings.Contains(rawOutput, "Error") {
-		return nil, fmt.Errorf("error response: %s", rawOutput)
-	}
-
-	// Parse the formatted response
-	// Expected format: "name                          cpu                state               services"
-	fields := strings.Fields(rawOutput)
-	if len(fields) < 3 {
-		return nil, fmt.Errorf("invalid status format: %s", rawOutput)
-	}
-
-	// Parse CPU field - now supports multi-core format like
-	// "1-3,5" and empty string
-	cpuStr := fields[1]
-	if !isValidCPUString(cpuStr) {
-		return nil, fmt.Errorf("invalid CPU field format: %s", cpuStr)
-	}
-
-	// If CPU string is empty, use MaxCPUNum() as fallback
-	if cpuStr == "" {
-		maxCPU := MaxCPUNum()
-		if maxCPU > 0 {
-			// Convert to range format (e.g., "0-3" for 4 CPUs)
-			cpuStr = fmt.Sprintf("0-%d", maxCPU-1)
-		} else {
-			return nil, fmt.Errorf("failed to get max CPU number for empty CPU string")
-		}
-	}
-
-	// Parse state
-	state := parseMicaState(fields[2])
-	if state == unknown {
-		return nil, fmt.Errorf("unknown state: %s", fields[2])
-	}
-
-	// Parse services (if any)
-	services := parseMicaServices(fields[3:])
-
-	return &MicaStatus{
-		Name:     fields[0],
-		CPU:      cpuStr,
-		State:    state,
-		Services: services,
-		Raw:      rawOutput,
-	}, nil
-}
-
-// parseMicaState converts string to MicaState
-func parseMicaState(stateStr string) MicaState {
-	switch stateStr {
-	case "Offline":
-		return offline
-	case "Configured":
-		return configured
-	case "Ready":
-		return ready
-	case "Running":
-		return running
-	case "Suspended":
-		return suspended
-	case "Stopped":
-		return stopped
-	case "Error":
-		return stateErr
-	// Add more states as needed
-	default:
-		return unknown
-	}
-}
-
-// parseMicaServices extracts service information from response fields
-func parseMicaServices(fields []string) []MicaService {
-	var services []MicaService
-
-	for _, field := range fields {
-		serviceStr := strings.ToLower(field)
-		switch {
-		case strings.Contains(serviceStr, "pty"):
-			services = append(services, servicePTY)
-		case strings.Contains(serviceStr, "rpc"):
-			services = append(services, serviceRPC)
-		case strings.Contains(serviceStr, "umt"):
-			services = append(services, serviceUMT)
-		case strings.Contains(serviceStr, "debug"):
-			services = append(services, serviceDebug)
-		}
-	}
-
-	return services
-}
-
-// isValidCPUString validates the CPU string format
-// Supports formats: "1", "1-3", "2-3,15", "1,13,5", ""(empty is All)
-// NOTICE: Xen-related validation function
-func isValidCPUString(cpuStr string) bool {
-	// cpuStr == "" means all physical CPUs which are not pinned to Dom0
-	if cpuStr == "" {
-		return true
-	}
-
-	// Split by comma for multiple groups
-	groups := strings.Split(cpuStr, ",")
-
-	for _, group := range groups {
-		group = strings.TrimSpace(group)
-		if group == "" {
-			return false
-		}
-
-		// Check if it's a range (contains dash)
-		if strings.Contains(group, "-") {
-			parts := strings.Split(group, "-")
-			if len(parts) != 2 {
-				return false
-			}
-
-			// Validate both parts are integers
-			start, err1 := strconv.Atoi(strings.TrimSpace(parts[0]))
-			end, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
-
-			if err1 != nil || err2 != nil || start < 0 || end < 0 || start > end {
-				return false
-			}
-		} else {
-			// Single CPU number
-			if _, err := strconv.Atoi(group); err != nil {
-				return false
-			}
-		}
-	}
-
-	return true
-}
-
-// ParseCPUString parses the CPU string format and returns individual CPU cores
-// Examples: "1-3" -> [1,2,3], "2-3,5" -> [2,3,5], "1,3,5" -> [1,3,5]
-func ParseCPUString(cpuStr string) ([]int, error) {
-	if !isValidCPUString(cpuStr) {
-		return nil, fmt.Errorf("invalid CPU string format: %s", cpuStr)
-	}
-
-	var cpus []int
-
-	// Empty string means no specific CPUs
-	if cpuStr == "" {
-		return cpus, nil
-	}
-
-	groups := strings.Split(cpuStr, ",")
-
-	for _, group := range groups {
-		group = strings.TrimSpace(group)
-
-		if strings.Contains(group, "-") {
-			// Range format: "1-3"
-			parts := strings.Split(group, "-")
-			start, _ := strconv.Atoi(strings.TrimSpace(parts[0]))
-			end, _ := strconv.Atoi(strings.TrimSpace(parts[1]))
-
-			for i := start; i <= end; i++ {
-				cpus = append(cpus, i)
-			}
-		} else {
-			// Single CPU: "5"
-			cpu, _ := strconv.Atoi(group)
-			cpus = append(cpus, cpu)
-		}
-	}
-
-	return cpus, nil
-}
-
-func success(res string) bool {
-	return res != "" && !strings.Contains(res, defs.MicaFailed) && !strings.Contains(res, "Error")
 }

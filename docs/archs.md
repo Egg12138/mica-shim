@@ -2,41 +2,143 @@
 
 ### Design
 
+#### mica control flow
+
+```mermaid
+---
+config:
+  layout: elk
+---
+flowchart TB
+ subgraph IF["PedestalTraits"]
+        Compatibility["Compatibility"]
+        SRF["Statisitc Resources Usage function family"]
+        STF["Static Resource management functions family"]
+        DTF["Dynamic Resource Managemnent functions family"]
+  end
+ subgraph pedestalTypes["pedestalTypes"]
+        Xen["Xen:static/dyn"]
+        OpenAMP["OpenAMP:static resource"]
+        Jailhouse["Jailhouse:static resource"]
+  end
+ subgraph MH["Micacommand handler"]
+        ST["stop"]
+        CR["create"]
+        PA["pause"]
+        RS["resume"]
+        RM["remove"]
+        SS["status"]
+        MC["monitor"]
+        UP["update"]
+  end
+ subgraph MicaExecutor["MicaExecutor"]
+        CreateClient["CreateClient"]
+        StartClient["StartClient"]
+        PauseClient["PauseClient"]
+        ResumeClient["ResumeClient"]
+        DeleteClient["DeleteClient"]
+        StatusClient["StatusClient"]
+        StatusSandbox["StatusSandbox"]
+        MonitorClient["MonitorClient"]
+        UPR["Resource managment functions"]
+  end
+ subgraph libmica["libmica"]
+        MicaExecutor
+        MH
+  end
+    A["Shim"] --> MicaExecutor
+    Xen -.- impl["impl"]
+    impl -.-> IF & IF & IF
+    OpenAMP -.- impl
+    Jailhouse -.- impl
+    CreateClient --> CR
+    StartClient --> ST
+    PauseClient --> PA
+    ResumeClient --> RS
+    DeleteClient --> RM
+    StatusClient L_StatusClient_SS_0@--> SS
+    StatusSandbox -- **bypass mica** --> IF
+    MonitorClient -- **bypass mica** --> IF
+    UPR --> UP
+    MH -- **if mica unsupports, workaround: bypass micad** --> IF
+    MH -- **if mica supports, via micad** --> MICAD["MICAD"]
+    impl@{ shape: rect}
+     A:::Class_01
+     MICAD:::Aqua
+    classDef Aqua stroke-width:1px, stroke-dasharray:none, stroke:#46EDC8, fill:#DEFFF8, color:#378E7A
+    classDef Class_01 fill:#FFF9C4
+    style MicaExecutor stroke:#FFF9C4,fill:transparent
+    style MH stroke:#000000,fill:transparent
+    style impl stroke-width:4px,stroke-dasharray: 5
+    style IF fill:#FFCDD2
+    style libmica stroke:none,fill:#BBDEFB
+    L_StatusClient_SS_0@{ animation: none }
+```
+
+![control flow](./images/micran-mica-controlflow.png)
+
 #### configs
 
-k8s侧: pod annotations
-  ↓
-控制层: container spec
-  ↓
-应用层: RuntimeConfig 
-  ↓
-配置层: SandboxConfig/ContainerConfig (期望状态)
-  ↓
-运行层: SandboxState/ContainerState (实际状态)
-  ↓
-持久层: 直接JSON序列化存储 (Direct JSON serialization)
+![config flow](./images/micranConfigFlow.png)
 
-1. 容器注解 (Annotations) - 最高优先级
-    ↓
-2. Drop-in 配置文件 (未来计划，和mica同步扩展)
-    ↓
-3. 主配置文件 (/etc/micran/config.toml + /etc/micran/config.d/*.toml)
-    ↓
-4. 环境变量 (MICRAN_CONF_FILE SCHED_CORE)
-    ↓
-5. 默认配置路径 (client.conf inside bundle) - 最低优先级
-
-
+```mermaid
+graph TD
+    A[Kubernetes Pod YAML] -->|annotations| B[CRI Interface]
+    B --> C[containerd CRI Plugin]
+    C --> D[OCI Spec config.json]
+    D -->|Annotations| E[MicRan]
+    E --> F[oci: addAnnotations]
+    F --> H[Runtime Config]
+    F --> I[Client Config]
+    I --> L[cntr.Container]
+    L --> mica[libmica.MicaConf]
+    H --> mica[libmica.MicaConf]
+    M[OCI Image] -->|Built-in annotations| D
+    N[containerd config] -->|pod_annotations| C
 ```
-  OCI Spec (config.json)
-      ↓
-  RuntimeConfig (from files/annotations/env)
-      ↓
-  ┌─────────────────┐
-  │  SandboxConfig  │ ←── ContainerConfig
-  └─────────────────┘
-      ↓
-  Sandbox & Containers
+
+![detailed (unstable)](./images/micranConfigFlowDetailed.png)
+
+```mermaid
+flowchart TD
+ subgraph subGraph0["Kubernetes Control Plane"]
+        A["Kubernetes Pod YAML"]
+        S["Pod Annotations"]
+  end
+ subgraph subGraph1["Containerd/Other container endpoint"]
+        B["CRI Interface"]
+        C["containerd CRI Plugin"]
+        D["Pod Sandbox Container"]
+  end
+ subgraph subGraph2["OCI Bundle"]
+        E["OCI Spec config.json"]
+        BC["client.conf"]
+        PC["pedestal conf"]
+        N["OCI image"]
+  end
+ subgraph MicRan["MicRan"]
+        F["MicRan shim"]
+        I["Runtime Config"]
+        J["Client Config"]
+  end
+
+    A -- annotations --> B
+    B --> C
+    C --> D
+    D --> E
+    BC & PC --> F
+    E -- Annotations --> F
+    F --"dispatch annotations"--> I & J
+    LM["libmica"]
+    J --> LM
+    EC[MICRAN_CONF_DIR] --"micran configurations"--> F
+    N -- "Built-in annotations" --> E
+    O["containerd config"] -- pod_annotations --> C
+    S -- "io.kubernetes.cri.*" --> D
+    T["Container Annotations"] -- "defs.MicranAnnotationPrefix.*" --> E
+    U["Sandbox Config"]
+    U --> F
+    EC & E --> U
 ```
 
 #### 详细解析流程

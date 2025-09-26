@@ -25,8 +25,7 @@ import (
 	shimv2 "github.com/containerd/containerd/runtime/v2/shim"
 )
 
-// github.com/containerd/containerd/api/events/task.pb.go
-// TaskExit: ContainerID => cid, ID => id, Pid
+// exit represents a container exit event.
 type exit struct {
 	ts  time.Time
 	cid string
@@ -40,7 +39,6 @@ type exit struct {
 type shimService struct {
 	sandbox    cntr.SandboxTraits
 	containers map[string]*container
-	shimPid    uint32
 	micadPid   uint32
 	// context:
 	ctx context.Context
@@ -64,6 +62,10 @@ type shimService struct {
 
 var (
 	_ taskAPI.TaskService = (*shimService)(nil)
+
+	// shimPid is the process ID of the shim.
+	// It's initialized once when the package is loaded.
+	shimPid = uint32(os.Getpid())
 )
 
 const (
@@ -92,7 +94,6 @@ func New(ctx context.Context, id string, publisher shimv2.Publisher, shutdown fu
 	s := &shimService{
 		id:         id,
 		micadPid:   micadPid,
-		shimPid:    uint32(os.Getpid()),
 		namespace:  ns,
 		ctx:        ctx,
 		containers: make(map[string]*container),
@@ -150,14 +151,7 @@ func newCommand(ctx context.Context, opts shimv2.StartOpts, cwd string) (*exec.C
 	return cmd, nil
 }
 
-// Containerd:
-//   - Shim server interface
-//   - (2.0): Remove unified shim interface
-//   - type Shim interface {
-//     shimapi.TaskService
-//     Cleanup(ctx context.Context) (*shimapi.DeleteResponse, error)
-//     StartShim(ctx context.Context, opts StartOpts) (string, error)
-//     }
+// Cleanup handles container cleanup operations for different container types.
 func (s *shimService) Cleanup(ctx context.Context) (*taskAPI.DeleteResponse, error) {
 
 	cwd, err := os.Getwd()
@@ -179,6 +173,7 @@ func (s *shimService) Cleanup(ctx context.Context) (*taskAPI.DeleteResponse, err
 		return nil, err
 	}
 
+	log.Debugf("container type: %s, trying to cleanup it", ctype)
 	switch ctype {
 	case cntr.PodSandbox, cntr.SingleContainer:
 		err = cleanupContainer(ctx, s.id, s.id, cwd)
@@ -205,10 +200,10 @@ func (s *shimService) Cleanup(ctx context.Context) (*taskAPI.DeleteResponse, err
 
 }
 
-// Cleanup a Container instance from a pod
 func cleanupContainer(ctx context.Context, sandboxID, containerID, bundle string) error {
+	log.Debugf("cleanup container from sandbox %s, and remove rootfs of container %s", sandboxID, containerID)
 	if err := cntr.CleanupContainer(ctx, sandboxID, containerID, false); err != nil {
-		return fmt.Errorf("failed to cleanup container %s: %w")
+		return fmt.Errorf("failed to cleanup container %s: %w", containerID, err)
 	}
 
 	rootfs := filepath.Join(bundle, "rootfs")
@@ -357,7 +352,7 @@ func getTopic(e interface{}) string {
 	return cdruntime.TaskUnknownTopic
 }
 
-// eventsForwarder handles forwarding events from the shim to containerd
+// eventsForwarder handles forwarding events from the shim to containerd.
 type eventsForwarder struct {
 	service   *shimService
 	context   context.Context
@@ -376,12 +371,6 @@ func (s *shimService) newEventsForwarder(ctx context.Context, publisher shimv2.P
 // forward listens for events and publishes them to containerd/isulad
 func (ef *eventsForwarder) forward() {
 	for e := range ef.service.events {
-		ctx, cancel := context.WithTimeout(ef.context, timeOut)
-		err := ef.publisher.Publish(ctx, getTopic(e), e)
-		cancel()
-		if err != nil {
-			log.Errorf("failed to post event, %w", err)
-		}
 		topic := getTopic(e)
 		if topic == cdruntime.TaskUnknownTopic {
 			log.Warnf("unknown event type, skipping: %v", e)
@@ -389,10 +378,12 @@ func (ef *eventsForwarder) forward() {
 		}
 
 		// Publish the event to containerd
-		if err := ef.publisher.Publish(ef.context, topic, e); err != nil {
+		ctx, cancel := context.WithTimeout(ef.context, timeOut)
+		if err := ef.publisher.Publish(ctx, topic, e); err != nil {
 			log.Errorf("failed to publish event topic=%s: %v", topic, err)
 		} else {
 			log.Debugf("Successfully forwarded event topic=%s", topic)
 		}
+		cancel()
 	}
 }

@@ -6,16 +6,18 @@ import (
 	"fmt"
 	"io"
 	defs "mica-shim/definitions"
+	er "mica-shim/errors"
 	log "mica-shim/logger"
-	er "mica-shim/pkg/errors"
-	"mica-shim/pkg/fileutils"
 	"mica-shim/pkg/libmica"
 	ped "mica-shim/pkg/pedestal"
+	"mica-shim/pkg/utils"
 	"os"
 	"path/filepath"
 	"sync"
 	"syscall"
 
+	"github.com/hashicorp/go-multierror"
+	"github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/cpuset"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 )
@@ -40,14 +42,14 @@ type SandboxConfig struct {
 	ID                string
 	Hostname          string
 	NetworkConfig     NetworkConfig
-	PedType           ped.PedType
-	PedConfig         ped.PedConfig
+	PedConfig         ped.PedestalConfig
 	ContainerConfigs  map[string]*ContainerConfig
 	Annotations       map[string]string
 	SharedMemorySize  uint64
 	SandboxResources  SandboxResourceSizing
-	EnableVCPUsPining bool
-	// TALK: consider static management
+	EnableVCPUsPining  bool
+	StaticResourceMgmt bool
+	HugePageSupport bool
 }
 
 func (sc *SandboxConfig) valid() bool {
@@ -56,7 +58,7 @@ func (sc *SandboxConfig) valid() bool {
 		return false
 	}
 
-	if sc.PedType == ped.Unsupported {
+	if sc.PedConfig.PedType == ped.Unsupported {
 		log.Warn("pedestal type is unsupported")
 		return false
 	}
@@ -99,7 +101,7 @@ func (s *SandboxState) Valid() bool {
 }
 
 func (s *SandboxState) Transition(old StateString, new StateString) error {
-	if s.Valid() {
+	if !s.Valid() {
 		return fmt.Errorf("invalid state: %v", s)
 	}
 
@@ -119,10 +121,14 @@ func (s *StateString) valid() bool {
 
 func (s *StateString) validTransition(old StateString, new StateString) error {
 	if *s != old {
-		return fmt.Errorf("invalid state: %v (expected: %v)", s, old)
+		return fmt.Errorf("invalid state: %s (expected: %v)", *s, old)
 	}
 
 	switch *s {
+	case StateCreating:
+		if new == StateStopped {
+			return nil
+		}
 	case StateReady:
 		if new == StateRunning || new == StateStopped {
 			return nil
@@ -154,12 +160,14 @@ type Sandbox struct {
 	sync.Mutex
 	// fs, storage, devices, volumes...
 	// monitor
-	agent      RealAgent
-	config     SandboxConfig
+	resManager      SandboxAgent
+	config     *SandboxConfig
 	containers map[string]*Container
 	id         string
 	network    Network
 	state      SandboxState
+
+	vcpuAlreadyPinned bool
 
 	annotaLock *sync.RWMutex
 	wg         *sync.WaitGroup
@@ -167,7 +175,7 @@ type Sandbox struct {
 
 // impl SandboxTraits for Sandbox
 func (s *Sandbox) GetAllContainers() []ContainerTraits {
-	list := make([]ContainerTraits, len(s.containers))
+	list := make([]ContainerTraits, 0, len(s.containers))
 	for _, c := range s.containers {
 		list = append(list, c)
 	}
@@ -214,7 +222,6 @@ func (s *Sandbox) DaemonState() *libmica.MicaDaemonState {
 }
 
 func (s *Sandbox) Monitor() {
-	return
 }
 
 func (s *Sandbox) GetNetNamespace() string {
@@ -227,14 +234,45 @@ func (s *Sandbox) GetContainer(id string) ContainerTraits {
 
 // status of containers and sandbox itself;
 func (s *Sandbox) Start(ctx context.Context) error {
-	if err := s.state.Transition(StateReady, StateRunning); err != nil {
+	cur := s.state.State
+	log.Infof("Start(): current sandbox state=%s", cur)
+
+	// If restored as 'creating', normalize to 'ready' before starting
+	if cur == StateCreating {
+		if err := s.setSandboxState(StateReady); err != nil {
+			return err
+		}
+		cur = s.state.State
+	}
+
+	// If already running, ensure all containers are running
+	if cur == StateRunning {
+		log.Infof("sandbox %s is already running; ensuring containers are running", s.id)
+		for _, c := range s.containers {
+			if c.state.State != StateRunning {
+				if err := c.start(ctx); err != nil {
+					return err
+				}
+			}
+		}
+		if err := s.StoreSandbox(ctx); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	// Perform state transition based on actual current state
+	if err := s.state.Transition(cur, StateRunning); err != nil {
+		log.Infof("transition error: from=%s to=%s", cur, StateRunning)
 		return err
 	}
 
-	oldState := s.state.State
+	oldState := cur
 	if err := s.setSandboxState(StateRunning); err != nil {
+		log.Info("setstate error")
 		return err
 	}
+	log.Infof("1, state from %s => %s", oldState, s.state.State)
 
 	var startErr error
 	defer func() {
@@ -248,6 +286,7 @@ func (s *Sandbox) Start(ctx context.Context) error {
 		}
 	}
 
+	log.Info("2.")
 	if err := s.StoreSandbox(ctx); err != nil {
 		return err
 	}
@@ -285,7 +324,7 @@ func (s *Sandbox) Stop(ctx context.Context, force bool) error {
 		return err
 	}
 
-	if err := s.removeNetwork(ctx); err != nil && !force {
+	if err := s.removeNetwork(); err != nil && !force {
 		return err
 	}
 
@@ -335,6 +374,15 @@ func (s *Sandbox) CreateContainer(ctx context.Context, config ContainerConfig) (
 	}()
 
 	c, err := newContainer(ctx, s, newc)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Validate the container after creation but before starting
+	if !c.validMicaContainer() {
+		return nil, fmt.Errorf("invalid mica container: %v", c)
+	}
+	
 	if err = c.create(ctx); err != nil {
 		return nil, err
 	}
@@ -393,6 +441,7 @@ func (s *Sandbox) Status() SandboxStatus {
 }
 
 func (s *Sandbox) removeContainer(containerID string) error {
+	log.Debugf("remove container %s", containerID)
 	if s == nil {
 		return fmt.Errorf("sandbox is nil")
 	}
@@ -407,11 +456,11 @@ func (s *Sandbox) removeContainer(containerID string) error {
 	}
 
 	delete(s.containers, containerID)
-	delete(s.config.ContainerConfigs, containerID)
 	return nil
 }
 
 func (s *Sandbox) DeleteContainer(ctx context.Context, id string) (ContainerTraits, error) {
+	log.Debugf("delete container %s from sandbox", id)
 	if s == nil {
 		return nil, er.ErrSandboxNil
 	}
@@ -423,9 +472,12 @@ func (s *Sandbox) DeleteContainer(ctx context.Context, id string) (ContainerTrai
 	if !ok {
 		return nil, er.ErrContainerNotFound
 	}
+
 	if err := c.delete(ctx); err != nil {
 		return nil, err
 	}
+
+	delete(s.config.ContainerConfigs, id)
 
 	if err := s.checkVCPUsPinning(ctx); err != nil {
 		return nil, err
@@ -488,6 +540,7 @@ func (s *Sandbox) KillContainer(ctx context.Context, id string) (ContainerTraits
 func (s *Sandbox) StatusContainer(id string) (ContainerStatus, error) {
 	cs := ContainerStatus{}
 	if id == "" {
+		log.Debugf("status container: empty id")
 		return cs, er.ErrEmptyContainerID
 	}
 
@@ -527,14 +580,7 @@ func (s *Sandbox) StatsContainer(ctx context.Context, id string) (ContainerStats
 
 func (s *Sandbox) Stats(ctx context.Context) (SandboxStats, error) {
 	stats := SandboxStats{}
-
-	// BUG: logic leaks
-	vCpuNum, err := s.agent.vcpuSet(ctx)
-	if err != nil {
-		log.Errorf("failed to get vcpu number: %v", err)
-		return stats, err
-	}
-	stats.Cpus = int(vCpuNum)
+	stats.Cpus = int(s.resManager.VcpuNum)
 	return stats, nil
 }
 
@@ -559,6 +605,13 @@ func (s *Sandbox) GetOOMEvent(ctx context.Context) (string, error) {
 // TODO: aftet unified micran and micad, we can achive sending signals to RTOS clients
 // NOTICE: container == task == RTOS Client
 func (s *Sandbox) WaitTaskExit(ctx context.Context, containerID string, taskid string) (int32, error) {
+	// In mock mode, don't block or attempt to stop the client here.
+	// Let the shim's waitContainerExit drive lifecycle and timing.
+	if defs.IsMock {
+		log.Infof("WaitTaskExit(mock): container=%s task=%s", containerID, taskid)
+		return ok0, nil
+	}
+
 	if s.state.State != StateRunning {
 		return ok0, er.ErrSandboxDown
 	}
@@ -634,6 +687,31 @@ func (s *Sandbox) ResumeContainer(ctx context.Context, id string) error {
 
 func (s *Sandbox) UpdateContainer(ctx context.Context, id string, resources specs.LinuxResources) error {
 	log.Debugf("Updated container %v resources", resources)
+
+	if s.config.StaticResourceMgmt {
+		return fmt.Errorf("container resources cannot be updated in static resource management mode")
+	}
+
+	c, ok := s.containers[id]
+	if !ok {
+		return er.ErrContainerNotFound
+	}
+
+	if err := c.update(ctx, resources); err != nil {
+		log.Errorf("failed to update container resources: %v", resources)
+		return err
+	}
+
+	if err := s.checkVCPUsPinning(ctx); err != nil {
+		log.Errorf("failed to check vcpus pinning: %v", err)
+		return err
+	}
+
+	if err := s.StoreSandbox(ctx); err != nil {
+		log.Error("failed to store sandbox after update container resource")
+		return err
+	}
+
 	return nil
 }
 
@@ -650,6 +728,7 @@ func (s *Sandbox) setSandboxState(state StateString) error {
 // store sandbox information to disk
 func (s *Sandbox) StoreSandbox(ctx context.Context) error {
 	target, err := s.newSandboxStoragePath()
+	log.Debugf("store sandbx ==> %s", target)
 	if err != nil {
 		return err
 	}
@@ -658,7 +737,7 @@ func (s *Sandbox) StoreSandbox(ctx context.Context) error {
 	serializable := SandboxStorage{
 		ID:     s.id,
 		State:  s.state,
-		Config: s.config,
+		Config: *s.config,
 	}
 
 	// Get network config if needed
@@ -669,7 +748,7 @@ func (s *Sandbox) StoreSandbox(ctx context.Context) error {
 		}
 	}
 
-	if err := fileutils.SaveStructToJSON(target, serializable); err != nil {
+	if err := utils.SaveStructToJSON(target, serializable); err != nil {
 		return err
 	}
 	return nil
@@ -708,7 +787,7 @@ func (s *Sandbox) cleanSandboxStorage() error {
 	return nil
 
 }
-func (s *Sandbox) removeNetwork(ctx context.Context) error {
+func (s *Sandbox) removeNetwork() error {
 	log.Infof("removed network of sandbox %s", s.id)
 	log.Debugf("remove network for sandbox %s", s.id)
 	return nil
@@ -716,7 +795,7 @@ func (s *Sandbox) removeNetwork(ctx context.Context) error {
 
 func (s *Sandbox) stopClient(ctx context.Context) error {
 	log.Debugf("stop sandbox %s", s.id)
-	if err := s.agent.stopSandbox(ctx, s); err != nil {
+	if err := s.resManager.stopSandbox(s); err != nil {
 		log.Errorf("failed to stop sandbox %s: %v", s.id, err)
 		return err
 	}
@@ -740,33 +819,28 @@ func DummySandboxConfig(cid string, spec *specs.Spec) (*SandboxConfig, error) {
 			WorkloadMemMB: 128,
 			BaseMemMB:     64,
 		},
+		StaticResourceMgmt: false,
 	}, nil
 }
 
 // setup sandbox
 func CreateSandbox(ctx context.Context, cfg *SandboxConfig) (*Sandbox, error) {
 	s, err := createSandboxFromConfig(ctx, cfg)
-	log.Pretty("sandbox created %v", s)
 	if err != nil {
 		return nil, err
-	}
-
-	if s.state.State != "" {
-		return s, nil
 	}
 
 	return s, nil
 }
 
-func createSandbox(ctx context.Context, config *SandboxConfig) (*Sandbox, error) {
+func newSandbox(ctx context.Context, config SandboxConfig) (sb *Sandbox, retErr error) {
 	if !config.valid() {
 		return nil, fmt.Errorf("invalid sandbox configuration")
 	}
-
-	// TODO: setup network namespace
+	network := DummyNetwork{}
 	s := &Sandbox{
 		ctx:        ctx,
-		config:     *config,
+		config:     &config,
 		containers: make(map[string]*Container),
 		id:         config.ID,
 		state: SandboxState{
@@ -774,8 +848,8 @@ func createSandbox(ctx context.Context, config *SandboxConfig) (*Sandbox, error)
 			Ped:     HostPedType.String(),
 			Version: defs.SandboxVersion,
 		},
-		network:    &DummyNetwork{},
-		agent:      *NewAgent(),
+		network:    &network,
+		resManager:      *NewAgent(),
 		wg:         &sync.WaitGroup{},
 		annotaLock: &sync.RWMutex{},
 	}
@@ -783,7 +857,21 @@ func createSandbox(ctx context.Context, config *SandboxConfig) (*Sandbox, error)
 	if err := s.Restore(); err != nil {
 		log.Debugf("failed to restore sandbox %s: %v", s.id, err)
 	}
+	return s, nil
+}
 
+
+func createSandbox(ctx context.Context, config *SandboxConfig) (*Sandbox, error) {
+
+	s, err := newSandbox(ctx, *config)
+	if err != nil {
+		return nil, err
+	}
+
+	if s.state.State == StateReady || s.state.State == StateRunning {
+		log.Debugf("sandbox already in ready/running state, creation finished.")
+		return s, nil
+	}
 
 	hostname := s.config.Hostname
 	if len(hostname) > maxHostnameLength {
@@ -802,11 +890,12 @@ func createSandbox(ctx context.Context, config *SandboxConfig) (*Sandbox, error)
 // 1. createSandboxFromConfig instance, and setup
 // 2. cleanup if error happens
 // 3.
-func createSandboxFromConfig(ctx context.Context, config *SandboxConfig) (*Sandbox, error) {
+func createSandboxFromConfig(ctx context.Context, config *SandboxConfig) (_ *Sandbox, err error) {
 	s, err := createSandbox(ctx, config)
 
 	defer func() {
 		if err != nil {
+			log.Debugf("hooked delete sandbox!")
 			s.Delete(ctx)
 		}
 	}()
@@ -817,7 +906,7 @@ func createSandboxFromConfig(ctx context.Context, config *SandboxConfig) (*Sandb
 
 	defer func() {
 		if err != nil {
-			s.removeNetwork(ctx)
+			s.removeNetwork()
 		}
 	}()
 
@@ -832,27 +921,27 @@ func createSandboxFromConfig(ctx context.Context, config *SandboxConfig) (*Sandb
 
 func (s *Sandbox) Restore() error {
 	ss, err := RestoreSandbox(s.ctx, s.id)
-	if ss != nil {
-		log.Pretty("%v", ss)
-	}
+
 	if err != nil {
-		log.Debugf("failed to restore sandbox state: %v", err)
+		log.Warnf("failed to restore sandbox state: %v", err)
+		return nil
 	}
 
-	if ss.ID != s.id {
-		log.Debugf("sandbox ID mismatch: %v != %v", ss.ID, s.id)
-		log.Pretty("%v", ss)
-		return fmt.Errorf("sandbox ID mismatch: %v != %v", ss.ID, s.id)
-	}
+	if ss != nil {
+		if ss.ID != s.id {
+			log.Debugf("sandbox ID mismatch: %v != %v", ss.ID, s.id)
+			log.Pretty("%v", ss)
+			return fmt.Errorf("sandbox ID mismatch: %v != %v", ss.ID, s.id)
+		}
 
-	s.state.Ped = ss.State.Ped
-	s.state.Version = ss.State.Version
-	s.state.State = ss.State.State
-	s.config = ss.Config
-	s.network = &ss.Network
+		s.state.Ped = ss.State.Ped
+		s.state.Version = ss.State.Version
+		s.state.State = ss.State.State
+		s.config = &ss.Config
+		s.network = &ss.Network
+	}
 
 	return nil
-
 }
 
 // Define the structure that matches what we store
@@ -870,8 +959,12 @@ func RestoreSandbox(ctx context.Context, id string) (*SandboxStorage, error) {
 	sandboxDir := filepath.Join(defs.SandboxDataDir, id)
 	configPath := filepath.Join(sandboxDir, defs.SandboxStateFile)
 
-	raw, err := fileutils.RestoreStructFromJSON(configPath)
+	raw, err := utils.RestoreStructFromJSON(configPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			log.Debugf("not found sandbox state file: %s, a new one should be created", configPath)
+			return nil, err
+		}
 		return nil, fmt.Errorf("failed to load sandbox state from %s: %w", configPath, err)
 	}
 
@@ -890,78 +983,6 @@ func RestoreSandbox(ctx context.Context, id string) (*SandboxStorage, error) {
 	return &storage, nil
 }
 
-// __RestoreSandbox loads an existing sandbox from storage, by sandbox id
-func __RestoreSandbox(ctx context.Context, id string) (*Sandbox, error) {
-	// Load sandbox configuration from storage
-	sandboxDir := filepath.Join(defs.SandboxDataDir, id)
-	configPath := filepath.Join(sandboxDir, defs.SandboxStateFile)
-
-	// Define the structure that matches what we store
-	type SandboxStorage struct {
-		ID         string                `json:"id"`
-		State      SandboxState          `json:"state"`
-		Config     SandboxConfig         `json:"config"`
-		Network    NetworkConfig         `json:"network"`
-		Containers map[string]*Container `json:"containers"`
-	}
-
-	raw, err := fileutils.RestoreStructFromJSON(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load sandbox state from %s: %w", configPath, err)
-	}
-
-	// Convert to JSON and then unmarshal into our struct
-	jsonBytes, err := json.Marshal(raw)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal raw data: %w", err)
-	}
-
-	var storage SandboxStorage
-	if err := json.Unmarshal(jsonBytes, &storage); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal sandbox storage: %w", err)
-	}
-
-	// Create network from saved config - DummyNetwork doesn't store state
-	var network Network = &DummyNetwork{}
-
-	// Create the sandbox
-	s := &Sandbox{
-		ctx:        ctx,
-		containers: make(map[string]*Container),
-		id:         storage.ID,
-		config:     storage.Config,
-		state:      storage.State,
-		network:    network,
-		agent:      *NewAgent(),
-	}
-
-	// Restore containers
-	for containerID, container := range storage.Containers {
-		// Set the sandbox reference for each container
-		container.ctx = ctx
-		container.sandbox = s
-		container.sandboxId = s.id
-
-		s.containers[containerID] = container
-
-		// Also ensure the container config is in sandbox config
-		if s.config.ContainerConfigs == nil {
-			s.config.ContainerConfigs = make(map[string]*ContainerConfig)
-		}
-		s.config.ContainerConfigs[containerID] = container.config
-	}
-
-	// Initialize agent if needed
-	if s.state.State == StateRunning {
-		if _, err := s.agent.init(ctx, s); err != nil {
-			log.Warnf("failed to initialize agent during restore: %v", err)
-		}
-	}
-
-	log.Infof("Successfully restored sandbox %s with %d containers", id, len(s.containers))
-	return s, nil
-}
-
 // sandbox is not ready for being operated
 func (s *Sandbox) notOperational() bool {
 	return s.state.State != StateReady && s.state.State != StateRunning
@@ -973,15 +994,25 @@ func (s *Sandbox) createNetwork(ctx context.Context) error {
 }
 
 func (s *Sandbox) postNetworkCreated() error {
-	return s.network.(*NetworkConfig).postCreated()
+	if netConfig, ok := s.network.(*NetworkConfig); ok {
+		return netConfig.postCreated()
+	}
+	return nil
 }
 
+// add containers to sandbox
 func (s *Sandbox) initContainers(ctx context.Context) error {
 	for _, cc := range s.config.ContainerConfigs {
 		c, err := newContainer(ctx, s, cc)
 		if err != nil {
 			return err
 		}
+		
+		// Validate the container after creation but before starting
+		if !c.validMicaContainer() {
+			return fmt.Errorf("invalid mica container: %v", c)
+		}
+		
 		if err := c.create(ctx); err != nil {
 			return err
 		}
@@ -1005,12 +1036,122 @@ func (s *Sandbox) initContainers(ctx context.Context) error {
 	return nil
 }
 
-// TODO: considering pinning vCPUs on different pedestal
+// TODO: universe pinning vCPUs for different pedestal in Libmica
+// if pinning: 
+// * Container:VCPU = 1:N; VCPU:PCU = 1:1; Container CpuSet ∈ CpuPool (CpuPool = MergedCPUSet)
+// if not pinning:
+// * Container:VCPU = 1:N; VCPU:PCU = N:M (affinity not set); Container CpuSet ∈ CpuPool (CpuPool = MergedCPUSet)
 func (s *Sandbox) checkVCPUsPinning(ctx context.Context) error {
+	if s.config == nil {
+		return fmt.Errorf("no sandbox config found")
+	}
+
+	if !s.config.EnableVCPUsPining {
+		return nil
+	}
+
+
+	cpus, _, err := s.getSandboxCpusetStr()
+	if err != nil {
+		return fmt.Errorf("failed to get CPUSet string: %v", err)
+	}
+
+	cpuSet, err := cpuset.Parse(cpus)
+	if err != nil {
+		return fmt.Errorf("failed to parse CPUSet string %s: %v", cpus, err)
+	}
+	cpuList := cpuSet.ToSlice()
+	
+	match := true
+
+	if outOfRange, overrange := CpusetRangeValid(cpuList); outOfRange {
+		match = false
+		log.Debugf("these cpus are out of range: %v", overrange)
+		// TODO: handle the overrange cpus
+	}
+
+	numVCPUs, numCPUs := int(s.resManager.VcpuNum), len(cpuList)
+	if numCPUs != numVCPUs {
+		match = false
+		log.Debugf("the number of cpusets %d is not equal to the number of vcpus %d", numCPUs, numVCPUs)
+	}
+
+	if !match {
+		if s.vcpuAlreadyPinned {
+			s.vcpuAlreadyPinned = false
+			log.Debugf("the sandbox is already pinned to cpusets")
+		}
+	}
+
+	if err := s.pinVCPU(cpuSet); err != nil {
+		log.Warnf("failed to pin vcpu: %v", err)
+		return err
+	}
+
+	s.vcpuAlreadyPinned = true
 	return nil
 }
 
+// merge all cpusets of containers in the sandbox
+// ocispec load memory nodes part and cpus part of cpuset in field of Linux.Resource.CPU.{Mems, Cpus}
+// string format cpuset is expected by mica
+// ref: kata-containers/src/runtime/virtcontainers/sandbox.go
+func (s *Sandbox) getSandboxCpusetStr() (string, string, error) {
+	if s.config == nil {
+		return "", "", nil
+	}
+
+	cpuResult := cpuset.NewCPUSet()
+	memResult := cpuset.NewCPUSet()
+	for _, cfg := range s.config.ContainerConfigs {
+		resource := cfg.Resources
+		if resource != nil {
+			currCPUSet, err := cpuset.Parse(resource.CPU.Cpus)
+			if err != nil {
+				return "", "", fmt.Errorf("unable to parse CPUset.cpus for container %s: %v", cfg.ID, err)
+			}
+			cpuResult = cpuResult.Union(currCPUSet)
+
+			currMemSet, err := cpuset.Parse(resource.CPU.Mems)
+			if err != nil {
+				return "", "", fmt.Errorf("unable to parse CPUset.mems for container %s: %v", cfg.ID, err)
+			}
+			memResult = memResult.Union(currMemSet)
+		}
+	}
+
+	return cpuResult.String(), memResult.String(), nil
+}
+
+// recalculate resources pool for clients and call pedestal to resize
 func (s *Sandbox) updateResources(ctx context.Context) error {
+	if s == nil {
+		return er.ErrSandboxNil
+	}
+
+	if s.config == nil {
+		return fmt.Errorf("sandbox config is nil")
+	}
+
+	if s.config.StaticResourceMgmt {
+		log.Debug("static resource management is enabled, updating resource is not supported")
+	}
+
+	sandboxVCPUs, err := calculateSandboxVCPUs(s)
+	if err != nil {
+		return err
+	}
+
+	sandboxVCPUs += s.config.PedConfig.MiniVCPUNum
+
+	newSandboxMemoryMB := calculateSandboxMemory(s)
+
+	oldVCPUs, newVCPUs := s.resManager.resizeVCPUs(sandboxVCPUs)
+	log.Infof("sandbox total vcpu number from %d to %d", oldVCPUs, newVCPUs)
+
+	oldMemBytes, newMemBytes := s.resManager.resizeMemory(newSandboxMemoryMB)
+	log.Infof("sandbox total memory usage from %d to %d", oldMemBytes, newMemBytes)
+
 	return nil
 }
 
@@ -1033,4 +1174,26 @@ func (s *Sandbox) loadContainersToSandbox(ctx context.Context) error {
 
 	return nil
 
+}
+
+// update cpu affinity for sandbox vcpu
+// repin vcpus in vcpuList to the cpupool
+func (s *Sandbox) pinVCPU(cpuSet cpuset.CPUSet) error { 
+	var result *multierror.Error
+	pcpuList := cpuSet.ToSlice()
+	for cid, c := range s.containers {
+		log.Infof("try to pin container %s vcpu affinity to cpuset %v", cid, pcpuList)
+		if err := c.setVcpuAffinity(cpuSet); err != nil {
+			result = multierror.Append(result, err)
+		} else {
+			s.resManager.ContainerCpuSets[cid] = cpuSet
+		}
+	}
+
+	ret := result.ErrorOrNil()
+	if ret == nil {
+		s.resManager.VcpuNum = uint32(cpuSet.Size())
+		s.resManager.setNewPCpuList(pcpuList)
+	}
+	return ret
 }

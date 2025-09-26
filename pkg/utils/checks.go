@@ -1,4 +1,4 @@
-package fileutils
+package utils
 
 import (
 	"errors"
@@ -18,7 +18,7 @@ func ValidContainerID(id string) error {
 	}
 
 	if len(id) > MAX_ID_LENGTH {
-		log.Debugf("container is %s too long, we will return a new shorted ID[future]", id)
+		log.Debugf("container is %s too long, we will pass a new shorted ID %s to micad", id, ShortID(id))
 	}
 
 	pattern := regexp.MustCompile(validCIDRegex)
