@@ -324,7 +324,7 @@ func (s *Sandbox) Stop(ctx context.Context, force bool) error {
 		return err
 	}
 
-	if err := s.removeNetwork(ctx); err != nil && !force {
+	if err := s.removeNetwork(); err != nil && !force {
 		return err
 	}
 
@@ -787,7 +787,7 @@ func (s *Sandbox) cleanSandboxStorage() error {
 	return nil
 
 }
-func (s *Sandbox) removeNetwork(ctx context.Context) error {
+func (s *Sandbox) removeNetwork() error {
 	log.Infof("removed network of sandbox %s", s.id)
 	log.Debugf("remove network for sandbox %s", s.id)
 	return nil
@@ -795,7 +795,7 @@ func (s *Sandbox) removeNetwork(ctx context.Context) error {
 
 func (s *Sandbox) stopClient(ctx context.Context) error {
 	log.Debugf("stop sandbox %s", s.id)
-	if err := s.resManager.stopSandbox(ctx, s); err != nil {
+	if err := s.resManager.stopSandbox(s); err != nil {
 		log.Errorf("failed to stop sandbox %s: %v", s.id, err)
 		return err
 	}
@@ -906,7 +906,7 @@ func createSandboxFromConfig(ctx context.Context, config *SandboxConfig) (_ *San
 
 	defer func() {
 		if err != nil {
-			s.removeNetwork(ctx)
+			s.removeNetwork()
 		}
 	}()
 

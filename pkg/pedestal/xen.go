@@ -1,4 +1,4 @@
-// pakcage pedestal currently is basically a XEN package!
+// Package pedestal provides functionality for interacting with different pedestal hypervisors.
 // TODO: re-orgnize the package for better construction
 package pedestal
 
@@ -419,6 +419,7 @@ func (xi *XlInfo) nodePhysicalCPUNum() uint32 {
 	return xi.nrCpus
 }
 
+// MemoryMB returns the amount of free and total memory in MB.
 func MemoryMB() (free, total uint32) {
 	v, _ := mem.VirtualMemory()
 	free = uint32(v.Free >> 20) // Convert bytes to MB
@@ -436,6 +437,7 @@ func MemoryMB() (free, total uint32) {
 	return free, total
 }
 
+// MaxCPUNum returns the maximum number of CPUs available on the physical machine.
 // TODO: make this function a FnOnce for lower cost
 func MaxCPUNum() uint32 {
 	if defs.IsMock {
@@ -480,6 +482,7 @@ func XenDefaultPedConf() string {
 }
 
 
+// LinuxResource2Essential converts Linux OCI resource specifications to essential resources for MICA.
 func LinuxResource2Essential(spec *specs.Spec) *EssentialResource {
 	r := InitResource()
 	// cpu

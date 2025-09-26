@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// stripQuotes removes surrounding quotes from a string if both start and end quotes match
+// stripQuotes removes surrounding quotes from a string if both start and end quotes match.
 func stripQuotes(s string) string {
 	if len(s) >= 2 {
 		if (s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'') {
@@ -21,7 +21,7 @@ func stripQuotes(s string) string {
 // filter for non-empty lines
 type sectionFilter func(string) bool
 
-// a faster ini parsing method, by reading line by line
+// ParseConfigINI performs a faster INI parsing method by reading line by line.
 // Add checks for new syntax: "1,3-5"
 func ParseConfigINI(configPath string, whiteList []string) (map[string]string, error) {
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {

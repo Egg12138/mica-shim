@@ -6,12 +6,14 @@ require (
 	github.com/containerd/cgroups v1.1.0
 	github.com/containerd/containerd v1.7.27
 	github.com/containerd/containerd/api v1.8.0
+	github.com/containerd/cri-containerd v1.19.0
 	github.com/containerd/errdefs v0.3.0
 	github.com/containerd/fifo v1.1.0
 	github.com/containerd/typeurl/v2 v2.1.1
 	github.com/containers/podman/v4 v4.9.3
 	github.com/gogo/protobuf v1.3.2
 	github.com/gookit/ini/v2 v2.3.2
+	github.com/hashicorp/go-multierror v1.1.1
 	github.com/kata-containers/kata-containers/src/runtime v0.0.0-20250711211413-4a79c2520d05
 	github.com/kr/pretty v0.3.1
 	github.com/opencontainers/runtime-spec v1.2.0
@@ -75,7 +77,6 @@ require (
 	github.com/gookit/goutil v0.7.1 // indirect
 	github.com/gopherjs/gopherjs v1.17.2 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
-	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/intel-go/cpuid v0.0.0-20210602155658-5747e5cec0d9 // indirect
 	github.com/intel/goresctrl v0.6.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect

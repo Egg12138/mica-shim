@@ -28,13 +28,11 @@ const (
 
 var emptyResponse = &ptypes.Empty{}
 
-// Create creates a new containerd task and **setup rtos Client**
-// The init process is now a true init process :
-// 1. satisfy containerd's requirements
-// 2. as an agent, managing something needed in future(may be removed or not)
-// TALK: the init process receives signals from containerd,
+// Create creates a new containerd task and sets up the RTOS client.
+// The init process satisfies containerd's requirements and acts as an agent for future needs.
+// TALK: The init process receives signals from containerd.
 func (s *shimService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) (*taskAPI.CreateTaskResponse, error) {
-	log.Debugf("*** TASK CREATE: Request details - Bundle: %s, Stdin: %s, Stdout: %s, Stderr: %s, Terminal: %v",
+	log.Debugf("task create request details - bundle: %s, stdin: %s, stdout: %s, stderr: %s, terminal: %v",
 		r.Bundle, r.Stdin, r.Stdout, r.Stderr, r.Terminal)
 
 	if err := utils.ValidContainerID(r.ID); err != nil {
@@ -90,12 +88,12 @@ func (s *shimService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) 
 }
 
 func (s *shimService) Start(ctx context.Context, r *taskAPI.StartRequest) (*taskAPI.StartResponse, error) {
-	log.Infof("shim Start() container %s", r.ID)
+	log.Infof("starting container %s", r.ID)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, found := s.containers[r.ID]
 	if c == nil || !found {
-		log.Debugf("container %s not found in shimservice storage", r.ID)
+		log.Debugf("container %s not found in shim service storage", r.ID)
 		return nil, er.ErrContainerNotFound
 	}
 
@@ -127,7 +125,7 @@ func (s *shimService) Start(ctx context.Context, r *taskAPI.StartRequest) (*task
 	}, nil
 }
 
-// Delete alwasy delete container
+// Delete always deletes the container.
 func (s *shimService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*taskAPI.DeleteResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -135,7 +133,7 @@ func (s *shimService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*ta
 
 	c, found := s.containers[r.ID]
 	if c == nil || !found {
-		log.Debugf("container %s not found in shimservice storage", r.ID)
+		log.Debugf("container %s not found in shim service storage", r.ID)
 		return &taskAPI.DeleteResponse{
 			ExitStatus: okExitCode,
 			ExitedAt:   timestamppb.Now(),
@@ -172,7 +170,7 @@ func (s *shimService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*ta
 }
 
 func (s *shimService) Pids(ctx context.Context, r *taskAPI.PidsRequest) (*taskAPI.PidsResponse, error) {
-	log.Debugf("Pids() start")
+	log.Debugf("pids() start")
 	info := task.ProcessInfo{
 		Pid: shimPid,
 	}
@@ -202,10 +200,10 @@ func (s *shimService) Pause(ctx context.Context, r *taskAPI.PauseRequest) (*ptyp
 
 	status, err := s.getContainerStatus(c.id)
 	if err != nil {
-		log.Debugf("failed to getcontaienr status, now status is %s, due to %v", status, err)
-		c.status = task.Status_UNKNOWN
-	} else {
-		log.Debugf("succeffully getcontaienr status, now status is %s", status)
+	log.Debugf("failed to get container status, current status: %s, error: %v", status, err)
+	c.status = task.Status_UNKNOWN
+} else {
+	log.Debugf("successfully got container status: %s", status)
 		c.status = status
 	}
 
@@ -213,11 +211,8 @@ func (s *shimService) Pause(ctx context.Context, r *taskAPI.PauseRequest) (*ptyp
 
 }
 
-// NOTICE:mica differs from other isolation strategies (like namespace, cgroup, VM, etc.) - mica launches a client OS via pedestal
-// to execute a highly secure application; this application's lifecycle is completely aligned with the client OS
-// This OS is typically a realtime OS, where pause/resume operations are generally not desired, so we implement pause as stop
-// and resume as client OS boot.
-// Additionally, current mica client registration has some overhead, so we recommend users restart client OS via `ctr task resume`.
+// NOTICE: Mica uses client OS via pedestal for isolation, with application lifecycle aligned to client OS.
+// Pause/resume operations are implemented as stop/boot due to realtime OS constraints.
 func (s *shimService) Resume(ctx context.Context, r *taskAPI.ResumeRequest) (*ptypes.Empty, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -246,7 +241,7 @@ func (s *shimService) Resume(ctx context.Context, r *taskAPI.ResumeRequest) (*pt
 
 }
 
-// convert some POSIX signals into sandbox operations, and apply the operation to the task
+// Kill converts POSIX signals into sandbox operations and applies them to the task.
 func (s *shimService) Kill(ctx context.Context, r *taskAPI.KillRequest) (*ptypes.Empty, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -277,7 +272,7 @@ func (s *shimService) Kill(ctx context.Context, r *taskAPI.KillRequest) (*ptypes
 			log.Pretty("kill container failed %v", err)
 			st, err1 := s.getContainerStatus(c.id)
 			if err1 != nil {
-				log.Debugf("failed to get Container status: %v, mark status to UNKNOWN", err1)
+				log.Debugf("failed to get container status: %v, marking status as UNKNOWN", err1)
 				c.status = task.Status_UNKNOWN
 			} else {
 				c.status = st
@@ -308,7 +303,7 @@ func (s *shimService) Kill(ctx context.Context, r *taskAPI.KillRequest) (*ptypes
 	return emptyResponse, nil
 }
 
-// really passing signals to sandbox
+// KillBySignal passes signals directly to the sandbox.
 func (s *shimService) KillBySignal(ctx context.Context, r *taskAPI.KillRequest) (*ptypes.Empty, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -339,7 +334,7 @@ func (s *shimService) Exec(ctx context.Context, r *taskAPI.ExecProcessRequest) (
 	return emptyResponse, nil
 }
 
-// NOTICE: always consider resizepty request is to contaienr, whatever r.ExecID is
+// NOTICE: Always consider resizepty request is to container, whatever r.ExecID is.
 func (s *shimService) ResizePty(ctx context.Context, r *taskAPI.ResizePtyRequest) (*ptypes.Empty, error) {
 	log.Debugf("resize pty: (%d, %d)", r.Height, r.Width)
 	c, found := s.containers[r.ID]
@@ -354,7 +349,7 @@ func (s *shimService) ResizePty(ctx context.Context, r *taskAPI.ResizePtyRequest
 	return emptyResponse, nil
 }
 
-// closeIO closes the IO streams for a client os
+// CloseIO closes the IO streams for a client OS.
 func (s *shimService) CloseIO(ctx context.Context, r *taskAPI.CloseIORequest) (*ptypes.Empty, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -383,7 +378,7 @@ func (s *shimService) Checkpoint(ctx context.Context, r *taskAPI.CheckpointTaskR
 	return nil, errdefs.ToGRPCf(errdefs.ErrNotImplemented, "service Checkpoint")
 }
 
-// URGE: implement update task
+// URGE: Implement update task.
 func (s *shimService) Update(ctx context.Context, r *taskAPI.UpdateTaskRequest) (*ptypes.Empty, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -456,11 +451,9 @@ func (s *shimService) Connect(ctx context.Context, r *taskAPI.ConnectRequest) (*
 	}, nil
 }
 
-// shutdown shimv2 but keep mica dameon active, when no containers in sandbox
-// NOTICE: micran have no permission to manage the life cycle of mica daemon
-// TALK:   in future, after micran embedded into mica, shutdown will close mica daemon when
-//
-//	there is no any sandbox in mica daemon scope
+// Shutdown shuts down shimv2 but keeps mica daemon active when no containers are in sandbox.
+// NOTICE: Micran has no permission to manage the lifecycle of mica daemon.
+// TALK: In future, after micran embedded into mica, shutdown will close mica daemon when there is no sandbox in mica daemon scope.
 func (s *shimService) Shutdown(ctx context.Context, r *taskAPI.ShutdownRequest) (*ptypes.Empty, error) {
 	s.mu.Lock()
 	if len(s.containers) != 0 {

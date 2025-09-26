@@ -7,7 +7,7 @@ import (
 	shimv2 "github.com/containerd/containerd/runtime/v2/shim"
 )
 
-// injected in Makefile
+// ShimName injected in Makefile.
 var ShimName string
 
 func main() {

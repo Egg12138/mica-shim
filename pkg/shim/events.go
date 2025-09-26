@@ -1,3 +1,4 @@
+// Package shim provides the implementation of the containerd shim v2 interface for micran.
 package shim
 
 import (
@@ -13,13 +14,14 @@ const (
 	contdShimEnvShedCore = "SCHED_CORE"
 )
 
-// shimService methods related to event handling
+// listenAndReportExits listens for exit events on a channel and reports them.
 func (s *shimService) listenAndReportExits() {
 	for e := range s.ec {
 		s.reportExit(e)
 	}
 }
 
+// reportExit sends a TaskExit event to containerd.
 func (s *shimService) reportExit(e exit) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -38,6 +40,7 @@ func (s *shimService) reportExit(e exit) {
 	})
 }
 
+// send places an event on the events channel for forwarding.
 func (s *shimService) send(ev any) {
 	if s.events != nil {
 		s.events <- ev

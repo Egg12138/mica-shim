@@ -14,28 +14,19 @@ import (
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
-// configurations keys
+// Configuration keys for runtime settings.
 const (
-	// default=true
-	KeyStaticResource = "static_resource"
-	// default=0, unlimited
-	KeyClientLimit = "max_client_number"
-	// default=false
-	KeyLinuxContainer = "enable_host_container"
-	KeyDebug = "debug"
-	// default=defs.StateDir
-	KeyStateDir = "state_dir"
-	// default=defs.PauseImage
-	KeyPauseImg = "pause_image"
-	// default=0, unlimited
-	KeyMaxContainerVCPU = "max_container_vcpu"
-	// default=1
-	KeySandboxMinVCPU = "sandbox_minimum_vcpu"
-	// only for Xen; default=false
-	KeyHugePage = "hugepage_enable"
-	// default base memory for container
-	KeyMinMemory = "container_minmem"
-	KeyMaxMemory = "container_maxmem"
+	KeyStaticResource   = "static_resource"        // default=true
+	KeyClientLimit      = "max_client_number"      // default=0, unlimited
+	KeyLinuxContainer   = "enable_host_container"  // default=false
+	KeyDebug            = "debug"                  // default=false
+	KeyStateDir         = "state_dir"              // default=defs.StateDir
+	KeyPauseImg         = "pause_image"            // default=defs.PauseImage
+	KeyMaxContainerVCPU = "max_container_vcpu"     // default=0, unlimited
+	KeySandboxMinVCPU   = "sandbox_minimum_vcpu"   // default=1
+	KeyHugePage         = "hugepage_enable"        // only for Xen; default=false
+	KeyMinMemory        = "container_minmem"       // default base memory for container
+	KeyMaxMemory        = "container_maxmem"       // default max memory for container
 )
 
 
@@ -82,7 +73,7 @@ type RuntimeConfig struct {
 	MiniVCPUNum uint32
 }
 
-// return a default RuntimeConfig
+// NewRuntimeConfig returns a default RuntimeConfig.
 func NewRuntimeConfig() *RuntimeConfig {
 	ped := pedestal.GetHostPed()
 	var staticResource bool
@@ -130,7 +121,7 @@ func (r *RuntimeConfig) convertRawConfig(raw map[string]string) {
 func (r *RuntimeConfig) SetDebug(debugStr string) {
 	debug, err := strconv.ParseBool(debugStr)
 	if err != nil {
-		log.Debugf("Failed to parse debug %v into bool", debugStr, err)
+		log.Debugf("failed to parse debug value %v into bool: %v", debugStr, err)
 		debug = false
 	}
 	r.Debug = debug
@@ -139,7 +130,7 @@ func (r *RuntimeConfig) SetDebug(debugStr string) {
 func (r *RuntimeConfig) SetSandboxCPUs(cpuString string) {
 	cpu, err := strconv.ParseUint(cpuString, 10, 32)
 	if err != nil {
-		log.Debugf("Failed to parse sandbox cpus %v into uint32", cpuString, err)
+		log.Debugf("failed to parse sandbox cpus %v into uint32", cpuString, err)
 	}
 	r.SandboxCPUs = uint32(cpu)
 }
@@ -147,7 +138,7 @@ func (r *RuntimeConfig) SetSandboxCPUs(cpuString string) {
 func (r *RuntimeConfig) SetSandboxMemMB(memString string) {
 	mem, err := strconv.ParseUint(memString, 10, 32)
 	if err != nil {
-		log.Debugf("Failed to parse sandbox memory %v into uint32", memString, err)
+		log.Debugf("failed to parse sandbox memory %v into uint32", memString, err)
 	}
 	r.SandboxMemMB = uint32(mem)
 }
@@ -155,7 +146,7 @@ func (r *RuntimeConfig) SetSandboxMemMB(memString string) {
 func (r *RuntimeConfig) SetMaxContainerCPUs(cpuString string) {
 	cpu, err := strconv.ParseUint(cpuString, 10, 32)
 	if err != nil {
-		log.Debugf("Failed to parse max container cpus %v into uint32", cpuString, err)
+		log.Debugf("failed to parse max container cpus %v into uint32", cpuString, err)
 	}
 	r.MaxContainerCPUs = uint32(cpu)
 }
@@ -163,7 +154,7 @@ func (r *RuntimeConfig) SetMaxContainerCPUs(cpuString string) {
 func (r *RuntimeConfig) SetMaxContainerMemMB(memString string) {
 	mem, err := strconv.ParseUint(memString, 10, 32)
 	if err != nil || memoryOutOfRange(uint32(mem)){
-		log.Warnf("Failed to parse max container memory %v into uint32 or out or range: %v", memString, err)
+		log.Warnf("failed to parse max container memory %v into uint32 or out or range: %v", memString, err)
 		r.MaxContainerMemMB = thredsholdMemHigh
 		return
 	}
@@ -174,7 +165,7 @@ func (r *RuntimeConfig) SetMaxContainerMemMB(memString string) {
 func (r *RuntimeConfig) SetMinContainerMemMB(memString string) {
 	mem, err := strconv.ParseUint(memString, 10, 32)
 	if err != nil || memoryOutOfRange(uint32(mem)){
-		log.Debugf("Failed to parse min container memory %v into uint32 or out or range", memString, err)
+		log.Debugf("failed to parse min container memory %v into uint32 or out or range", memString, err)
 		r.MinContainerMemMB = thredsholdMemLow
 		return
 	}
@@ -187,7 +178,7 @@ func (r *RuntimeConfig) SetMinContainerMemMB(memString string) {
 func (r *RuntimeConfig) SetHugePageSupport(hugePageStr string) {
 	hugePage, err := strconv.ParseBool(hugePageStr)
 	if err != nil {
-		log.Debugf("Failed to parse hugepage %v into bool", hugePageStr, err)
+		log.Debugf("failed to parse hugepage %v into bool", hugePageStr, err)
 		hugePage = false
 	}
 	r.HugePageSupport = hugePage
@@ -200,7 +191,7 @@ func (r *RuntimeConfig) SetPauseImage(pauseImage string) {
 func (r *RuntimeConfig) SetStaticResourceManagement(staticResourceStr string) {
 	staticResource, err := strconv.ParseBool(staticResourceStr)
 	if err != nil {
-		log.Debugf("Failed to parse static_resource %v into bool", staticResourceStr, err)
+		log.Debugf("failed to parse static_resource %v into bool", staticResourceStr, err)
 		staticResource = false
 	}
 	r.StaticResourceManagement = staticResource
@@ -209,7 +200,7 @@ func (r *RuntimeConfig) SetStaticResourceManagement(staticResourceStr string) {
 func (r *RuntimeConfig) SetMiniVCPUNum(miniVCPUString string) {
 	miniVCPU, err := strconv.ParseUint(miniVCPUString, 10, 32)
 	if err != nil {
-		log.Debugf("Failed to parse mini vcpu %v into uint32", miniVCPUString, err)
+		log.Debugf("failed to parse mini vcpu %v into uint32", miniVCPUString, err)
 	}
 	r.MiniVCPUNum = uint32(miniVCPU)
 }
@@ -217,7 +208,7 @@ func (r *RuntimeConfig) SetMiniVCPUNum(miniVCPUString string) {
 func (r *RuntimeConfig) SetClientLimit(clientLimitString string) {
 	clientLimit, err := strconv.ParseUint(clientLimitString, 10, 32)
 	if err != nil {
-		log.Debugf("Failed to parse client limit %v into uint32", clientLimitString, err)
+		log.Debugf("failed to parse client limit %v into uint32", clientLimitString, err)
 	}
 	r.MaxClinetNum = uint32(clientLimit)
 }
@@ -225,7 +216,7 @@ func (r *RuntimeConfig) SetClientLimit(clientLimitString string) {
 func (r *RuntimeConfig) SetLinuxContainer(linuxContainerStr string) {
 	linuxContainer, err := strconv.ParseBool(linuxContainerStr)
 	if err != nil {
-		log.Debugf("Failed to parse linux container %v into bool", linuxContainerStr, err)
+		log.Debugf("failed to parse linux container %v into bool", linuxContainerStr, err)
 		linuxContainer = false
 	}
 	r.HostLinuxContainer = linuxContainer
@@ -234,13 +225,12 @@ func (r *RuntimeConfig) SetLinuxContainer(linuxContainerStr string) {
 func (r *RuntimeConfig) SetStateDir(stateDir string) {
 	// Note: This field doesn't exist in RuntimeConfig yet, but the key is defined
 	// For now, we'll just log it since it's a path configuration
-	log.Debugf("Setting state dir to: %v", stateDir)
+	log.Debugf("setting state dir to: %v", stateDir)
 }
 
 
-// ParseRuntimeConfigFromAnno parses runtime configuration from annotations
-// Annotations holds highest priority for values
-// TODO: match these dummy config items with actual implementation, define prefix in package definitions
+// ParseRuntimeConfigFromAnno parses runtime configuration from annotations.
+// Annotations hold highest priority for values.
 func (cfg *RuntimeConfig) ParseRuntimeConfigFromAnno(annotations map[string]string) *RuntimeConfig {
 	// Parse runtime-level annotations with mica annotation prefix
 	for key, value := range annotations {
@@ -262,7 +252,7 @@ func (cfg *RuntimeConfig) ParseRuntimeConfigFromAnno(annotations map[string]stri
 		case defs.RuntimePrefix + "cpu_scheduler_policy":
 			log.Debugf("CPU scheduler policy not implemented, ignoring: %s", value)
 		case defs.RuntimePrefix + "memory_overcommit":
-			log.Debugf("Memory overcommit not implemented, ignoring: %s", value)
+			log.Debugf("memory overcommit not implemented, ignoring: %s", value)
 		case defs.RuntimePrefix + "pause":
 			cfg.SetPauseImage(value)
 		}

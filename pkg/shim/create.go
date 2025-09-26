@@ -1,3 +1,4 @@
+// Package shim provides the implementation of the containerd shim v2 interface for micran.
 package shim
 
 import (
@@ -17,14 +18,15 @@ import (
 	"github.com/containerd/typeurl/v2"
 	"github.com/opencontainers/runtime-spec/specs-go"
 
-	// only register the proto type
+	// Only register the proto type.
 	crioption "github.com/containerd/containerd/pkg/runtimeoptions/v1"
 )
 
+// create is the internal implementation for the Create RPC. It handles sandbox and container creation.
 func create(ctx context.Context, s *shimService, r *taskAPI.CreateTaskRequest) (_ *container, err error) {
 	err = setupMicranStateDir()
 	if err != nil {
-		log.Debugf("failed to setup micran state directory: %w", err)
+		log.Debugf("failed to set up micran state directory: %w", err)
 	}
 
 	rootfs := cntr.RootFs{}
@@ -53,11 +55,9 @@ func create(ctx context.Context, s *shimService, r *taskAPI.CreateTaskRequest) (
 		return nil, err
 	}
 
-	// Create container based on type
+	// Create container based on its type.
 	switch containerType {
 	case cntr.PodSandbox, cntr.SingleContainer:
-		// Handle sandbox creation logic
-		// return createSandboxContainer(ctx, s, r, &ociSpec, containerType, runtimeConfig, rootfs, rootfsPath, disableOutput)
 		if s.sandbox != nil {
 			return nil, fmt.Errorf("cannot create an existing sandbox: %s", s.sandbox.SandboxID())
 		}
@@ -72,14 +72,12 @@ func create(ctx context.Context, s *shimService, r *taskAPI.CreateTaskRequest) (
 		if err := mountRootfs(rootfsPath, r.Rootfs); err != nil {
 			return nil, err
 		}
-
-
 		rootfs.Mounted = true
 
 		defer func() {
 			if err != nil && rootfs.Mounted {
 				if errUmnt := mount.UnmountAll(rootfsPath, 0); errUmnt != nil {
-					log.Warnf("failed to cleanup rootfs mount: %v", errUmnt)
+					log.Warnf("failed to clean up rootfs mount: %v", errUmnt)
 				}
 			}
 		}()
@@ -104,12 +102,12 @@ func create(ctx context.Context, s *shimService, r *taskAPI.CreateTaskRequest) (
 		defer func() {
 			if err != nil && rootfs.Mounted {
 				if errUmnt := mount.UnmountAll(rootfsPath, 0); errUmnt != nil {
-					log.Warnf("failed to cleanup rootfs mount: %v", errUmnt)
+					log.Warnf("Failed to cleanup rootfs mount: %v.", errUmnt)
 				}
 			}
 		}()
 
-		err = createContainer(ctx, s.sandbox, *ociSpec, rootfs, r.ID, bundlePath, disableOutput)
+		err = createContainerInSandbox(ctx, s.sandbox, *ociSpec, rootfs, r.ID, bundlePath, disableOutput)
 		if err != nil {
 			return nil, err
 		}
@@ -117,27 +115,25 @@ func create(ctx context.Context, s *shimService, r *taskAPI.CreateTaskRequest) (
 		return nil, fmt.Errorf("unsupported container type: %v", containerType)
 	}
 
-
 	container, err := newContainer(s, r, containerType, ociSpec, rootfs.Mounted)
 	if err != nil {
 		return nil, err
 	}
 	return container, nil
-
 }
 
+// loadRuntimeConfig loads the runtime configuration from annotations, CRI options, or environment variables.
 func loadRuntimeConfig(s *shimService, r *taskAPI.CreateTaskRequest, annotations map[string]string) (*oci.RuntimeConfig, error) {
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.config != nil {
 		return s.config, nil
 	}
 
-	// Config path precedence (high -> low): annotations > CRI options > env
+	// Config path precedence (high to low): annotations > CRI options > env.
 	var (
 		configPath string
-		source     string // "annotation" | "options" | "env"
+		source     string
 	)
 
 	if v := oci.GetSandboxConfigPath(annotations); v != "" {
@@ -151,7 +147,7 @@ func loadRuntimeConfig(s *shimService, r *taskAPI.CreateTaskRequest, annotations
 		if p != "" {
 			configPath = p
 			source = "options"
-			log.Debugf("parsed config path from options: %s", configPath)
+			log.Debugf("Parsed config path from options: %s.", configPath)
 		}
 	}
 
@@ -162,14 +158,12 @@ func loadRuntimeConfig(s *shimService, r *taskAPI.CreateTaskRequest, annotations
 		}
 	}
 
-	// Build base config from file if provided. Fail-fast if user explicitly provided
-	// path via annotations or CRI options. Env-provided path failure falls back.
 	var cfg *oci.RuntimeConfig
 	if configPath != "" {
 		parsed, err := loadConfigFromFile(configPath)
 		if err != nil {
 			if source == "env" {
-				log.Warnf("failed to load runtime config from %s (env): %v; using defaults", configPath, err)
+				log.Warnf("Failed to load runtime config from %s (env): %v; using defaults.", configPath, err)
 				cfg = oci.NewRuntimeConfig()
 			} else {
 				return nil, fmt.Errorf("failed to load runtime config from %s (%s): %w", configPath, source, err)
@@ -181,25 +175,26 @@ func loadRuntimeConfig(s *shimService, r *taskAPI.CreateTaskRequest, annotations
 		cfg = oci.NewRuntimeConfig()
 	}
 
-	// Apply annotations on top (higher precedence overrides)
+	// Apply annotations on top, as they have higher precedence.
 	cfg.ParseRuntimeConfigFromAnno(annotations)
 
 	s.config = cfg
 	return s.config, nil
 }
 
+// getConfigPathFromOptions extracts the config path from CRI options.
 func getConfigPathFromOptions(options typeurl.Any) (string, error) {
 	v, err := typeurl.UnmarshalAny(options)
 	if err != nil {
 		return "", err
 	}
 
-	// Try current CRI options format
+	// Try current CRI options format.
 	if option, ok := v.(*crioption.Options); ok {
 		return option.ConfigPath, nil
 	}
 
-	// Optional backward compatibility via build tag 'oldcri'
+	// Optional backward compatibility via build tag 'oldcri'.
 	if p, ok := getConfigPathFromOldCRI(v); ok {
 		return p, nil
 	}
@@ -207,8 +202,8 @@ func getConfigPathFromOptions(options typeurl.Any) (string, error) {
 	return "", nil
 }
 
-// toml or ini
-// BUG: Implement actual config file loading
+// loadConfigFromFile loads the runtime configuration from a TOML or INI file.
+// BUG: Implement actual config file loading.
 func loadConfigFromFile(configPath string) (*oci.RuntimeConfig, error) {
 	cfg := oci.NewRuntimeConfig()
 	if err := cfg.ParseRuntimeFromFile(configPath); err != nil {
@@ -217,19 +212,7 @@ func loadConfigFromFile(configPath string) (*oci.RuntimeConfig, error) {
 	return cfg, nil
 }
 
-func parseRuntimeConfigFromAnnotations(annotations map[string]string) *oci.RuntimeConfig {
-	rc := oci.NewRuntimeConfig()
-	return rc.ParseRuntimeConfigFromAnno(annotations)
-}
-
-// loadContainerState loads container state from various locations
-// TODO: Implement proper state loading logic
-func loadContainerState(id string) (*cntr.ContainerState, error) {
-	// Placeholder implementation - this needs to be implemented based on
-	// the actual state persistence mechanism used in micran
-	return nil, fmt.Errorf("state loading not implemented")
-}
-
+// setupMicranStateDir ensures the state directory for micran exists.
 func setupMicranStateDir() error {
 	if err := os.MkdirAll(defs.DefaultMicranStateDir, 0755); err != nil {
 		return fmt.Errorf("failed to create micran state directory: %w", err)
@@ -237,18 +220,11 @@ func setupMicranStateDir() error {
 	return nil
 }
 
-func saveContainerState(c *cntr.Container) error {
-	if err := os.MkdirAll(filepath.Join(defs.DefaultMicranStateDir, c.ID()), 0o755); err != nil {
-		log.Debugf("failed to create <%s> state directory: %v", c.ID)
-		return err
-	}
-	return c.SaveState()
-}
-
+// mountRootfs mounts the container's root filesystem.
 func mountRootfs(rootfsPath string, rootfs []*types.Mount) error {
-	// NOTICE: only support one rootfs!
+	// NOTICE: Only one rootfs is supported.
 	if len(rootfs) != 1 {
-		log.Warnf("only support one rootfs in bundle")
+		log.Warnf("Only support one rootfs in bundle.")
 	}
 
 	if err := utils.MountDirs(rootfs, rootfsPath); err != nil {
@@ -257,6 +233,7 @@ func mountRootfs(rootfsPath string, rootfs []*types.Mount) error {
 	return nil
 }
 
+// createSandbox initializes and creates a new sandbox instance.
 func createSandbox(ctx context.Context, ocispec *specs.Spec,
 	runtimeConfig *oci.RuntimeConfig, rootfs cntr.RootFs,
 	containerId, bundle string, disableOutput bool) (_ cntr.SandboxTraits, err error) {
@@ -285,7 +262,7 @@ func createSandbox(ctx context.Context, ocispec *specs.Spec,
 		ns := sandboxConfig.NetworkConfig
 		if err != nil && ns.NetworkCreated {
 			if ex := cleanupNetNS(ns.NetworkID); ex != nil {
-				log.Debugf("failed to cleanup network namespace %s", ns.NetworkID)
+				log.Debugf("Failed to cleanup network namespace %s.", ns.NetworkID)
 			}
 		}
 	}()
@@ -296,7 +273,7 @@ func createSandbox(ctx context.Context, ocispec *specs.Spec,
 	ocispec.Annotations["nerdctl/network-namespace"] = sandboxConfig.NetworkConfig.NetworkID
 	sandboxConfig.Annotations["nerdctl/network-namespace"] = ocispec.Annotations["nerdctl/network-namespace"]
 
-	// TODO: when namespace management is over, uncomment these:
+	// TODO: When namespace management is complete, uncomment these lines.
 	// ocispec.Annotations["nerdctl/network-namespace"] = sandboxConfig.NetworkConfig.NetworkID
 	// sandboxConfig.Annotations["nerdctl/network-namespace"] = ocispec.Annotations["nerdctl/network-namespace"]
 	sandbox, err := cntr.CreateSandbox(ctx, &sandboxConfig)
@@ -304,20 +281,20 @@ func createSandbox(ctx context.Context, ocispec *specs.Spec,
 		return nil, err
 	}
 
-	log.Debugf("sandbox <%s> created", sandbox.SandboxID())
+	log.Debugf("Sandbox <%s> created.", sandbox.SandboxID())
 	containers := sandbox.GetAllContainers()
 	for _, c := range containers {
-		log.Infof("detect inside sandbox <%s>: container %s", c.ID(), sandbox.SandboxID())
+		log.Infof("Detect inside sandbox <%s>: container %s.", c.ID(), sandbox.SandboxID())
 	}
 	if len(containers) != 1 {
 		return nil, fmt.Errorf("container list from sandbox is wrong, expecting only one container, got %d", len(containers))
 	}
 
 	return sandbox, nil
-
 }
 
-func createContainer(ctx context.Context, sandbox cntr.SandboxTraits,
+// createContainerInSandbox creates a container within an existing sandbox.
+func createContainerInSandbox(ctx context.Context, sandbox cntr.SandboxTraits,
 	ocispec specs.Spec, rootfs cntr.RootFs,
 	containerID, bundlePath string, disableOutput bool) error {
 

@@ -12,14 +12,6 @@ import (
 	"strings"
 )
 
-// Helper functions
-func startWithMicaPrefix(fieldName string) bool {
-	return strings.HasPrefix(fieldName, defs.MicraAnnotationPrefix)
-}
-
-func isMicaAnnotation(fieldName string) string {
-	return strings.TrimPrefix(fieldName, defs.MicraAnnotationPrefix)
-}
 
 func MaxMemMB() uint32 {
 	_, max := ped.MemoryMB()

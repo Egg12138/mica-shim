@@ -1,3 +1,4 @@
+// Package libmica provides client functionality for interacting with the MICA daemon.
 // TODO: using containerd socket utils
 package libmica
 
@@ -72,7 +73,7 @@ type MicaExecutor struct {
 
 // Structs and Methods
 
-// MicaStatus represents the complete status of a MICA client
+// MicaStatus represents the complete status of a MICA client.
 // TODO: remove Raw field in the future for space saving
 type MicaStatus struct {
 	Name     string        `json:"name"`
@@ -194,12 +195,6 @@ func dummyCPUArr() []int {
 	return []int{1, 4, 5}
 }
 
-
-
-// autoBoot is a dummy function that always returns false
-func autoBoot() bool {
-	return false
-}
 
 // Deprecated: Use InitWithOpts instead for new implementations.
 func (m *MicaClientConf) MockInit(cpu uint32, name string, path string, ped string, pedCfg string, debug bool) {

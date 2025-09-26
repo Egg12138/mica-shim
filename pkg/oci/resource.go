@@ -50,8 +50,8 @@ func CalculateSandboxSizing(spec *specs.Spec) (uint32, uint32) {
 	return clientInitResources(period, quota, memory)
 }
 
-// CalculateContainerSizing will calculate the number of CPUs and amount of memory that is needed
-// based on the provided LinuxResources
+// CalculateContainerSizing calculates the number of CPUs and amount of memory that is needed
+// based on the provided LinuxResources.
 func CalculateContainerSizing(spec *specs.Spec) (numCPU, memSizeMB uint32) {
 	var memory, quota int64
 	var period uint64
@@ -74,7 +74,7 @@ func CalculateContainerSizing(spec *specs.Spec) (numCPU, memSizeMB uint32) {
 }
 
 // NOTICE: mica now required Memory in MB
-// calculate real resource count for client initialization
+// clientInitResources calculates real resource count for client initialization.
 func clientInitResources(period uint64, quota int64, memory int64) (numCPU, memSizeMB uint32) {
 	// cooredinate with CPU calculating capacity
 	numCPU = utils.CalculateVCpusFromMilliCpus(utils.CalculateMilliCPUs(quota, period))
