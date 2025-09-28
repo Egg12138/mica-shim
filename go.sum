@@ -65,6 +65,8 @@ github.com/containers/podman/v4 v4.9.3/go.mod h1:J2qLop+mWjAOxh0QQyYPdnPA3jI6ay2
 github.com/coreos/go-systemd/v22 v22.5.1-0.20231103132048-7d375ecc2b09 h1:OoRAFlvDGCUqDLampLQjk0yeeSGdF9zzst/3G9IkBbc=
 github.com/coreos/go-systemd/v22 v22.5.1-0.20231103132048-7d375ecc2b09/go.mod h1:m2r/smMKsKwgMSAoFKHaa68ImdCSNuKE1MxvQ64xuCQ=
 github.com/creack/pty v1.1.9/go.mod h1:oKZEueFk5CKHvIhNR5MUki03XCEU+Q6VDXinZuGJ33E=
+github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=
+github.com/creack/pty v1.1.24/go.mod h1:08sCNb52WyoAwi2QDyzUCTgcvVFhUzewun7wtTfvcwE=
 github.com/cri-o/cri-o v1.30.10 h1:B7pKkOTBouVVQZJ3pNvqMG8hNjyvKLyGzJ/WMckDSh0=
 github.com/cri-o/cri-o v1.30.10/go.mod h1:IXuAIT/ik07PF9tj+BSY3TmnyexX8G+mlE/chjWb8QA=
 github.com/cyphar/filepath-securejoin v0.3.4 h1:VBWugsJh2ZxJmLFSM06/0qzQyiQX2Qs0ViKrUAcqdZ8=
