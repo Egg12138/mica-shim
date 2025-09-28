@@ -1000,7 +1000,7 @@ func (s *Sandbox) postNetworkCreated() error {
 	return nil
 }
 
-// add containers to sandbox
+// Add containers (new or restored) to sandbox
 func (s *Sandbox) initContainers(ctx context.Context) error {
 	for _, cc := range s.config.ContainerConfigs {
 		c, err := newContainer(ctx, s, cc)
@@ -1135,6 +1135,7 @@ func (s *Sandbox) updateResources(ctx context.Context) error {
 
 	if s.config.StaticResourceMgmt {
 		log.Debug("static resource management is enabled, updating resource is not supported")
+		return nil
 	}
 
 	sandboxVCPUs, err := calculateSandboxVCPUs(s)

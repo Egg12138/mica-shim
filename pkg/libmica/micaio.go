@@ -36,6 +36,9 @@ type MicaIO struct {
 	ptyDevice string   // PTY device path
 	ptyFile   *os.File // PTY device file handle
 
+	// Optional override for PTY device selection (via env MICRAN_PTY_DEVICE)
+	ptyDeviceOverride string
+
 	// Runtime state
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -72,6 +75,12 @@ func NewMicaIO(ctx context.Context, taskID string, stdin, stdout, stderr string,
 		cancel:   cancel,
 		done:     make(chan struct{}),
 		started:  false,
+	}
+
+	// Read PTY device override from environment if provided
+	if v := os.Getenv("MICRAN_PTY_DEVICE"); v != "" {
+		mio.ptyDeviceOverride = v
+		log.Debugf("MicaIO: using MICRAN_PTY_DEVICE override: %s", v)
 	}
 
 	// Store stdin FIFO path for direct access
@@ -222,8 +231,13 @@ func (mio *MicaIO) waitForPTYDeviceCreation() error {
 // connectToPTY opens PTY device for communication
 func (mio *MicaIO) connectToPTY() error {
 	if mio.ptyDevice == "" {
-		if err := mio.waitForPTYDeviceCreation(); err != nil {
-			return fmt.Errorf("waiting for PTY device creation: %w", err)
+		if mio.ptyDeviceOverride != "" {
+			mio.ptyDevice = mio.ptyDeviceOverride
+			log.Debugf("MicaIO: using PTY override device %s for task %s", mio.ptyDevice, mio.taskID)
+		} else {
+			if err := mio.waitForPTYDeviceCreation(); err != nil {
+				return fmt.Errorf("waiting for PTY device creation: %w", err)
+			}
 		}
 	}
 

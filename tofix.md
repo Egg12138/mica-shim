@@ -19,6 +19,7 @@
 - [x] duplciated config parsing
 - [x] sandbox state.json not cleaned -- after delete container
 - [ ] sandbox pod net namespace规划
+- [ ] `ttyRPMSG<id>` 在stop后会变化
 - [ ] ==我们需要MICA monitor!!==
 - [ ] kill如果正常执行，可以保证**幂等**，然而如果kill的是UNKNOWN状态的容器，会 `ontainer not found, mark status to UNKNOWN`
 - [ ] pod container corner cases
@@ -158,6 +159,8 @@ type PedTraits interface {
 - [ ] 当前 sandbox 不太方便将多个 Domain 的vcpu统一起来，只能管理一个pcpu pool，因此没法
 在sandbox scope设置某个vcpu的亲和性，只能对每个容器的vcpu进行设置
 - [ ] 加入config items allowlist
+- [ ] 当前micad的实践有很糟糕的地方： 大量使用 `micad &` 来进行后台， 这样是不合适 
+- [ ] xen DomainID 持续递增有风险
 
 
 # performance
