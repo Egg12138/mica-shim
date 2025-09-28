@@ -12,9 +12,14 @@ HOST_DRIVER := $(BIN_DIR)/host-driver
 SIM_RTOS := $(BIN_DIR)/sim_rtos
 
 # Go build flags
-GO_BUILD_FLAGS := -v
+GO_BUILD_FLAGS := 
 GO_ARM64_FLAGS := GOOS=linux GOARCH=arm64
 GO_X64_FLAGS := GOOS=linux GOARCH=amd64
+
+# Optional verbose flag (set V=1 to enable verbose output)
+ifdef V
+  GO_BUILD_FLAGS := -v
+endif
 
 # Default target
 .PHONY: all
@@ -96,9 +101,11 @@ help:
 	@echo "  help          - Show this help message"
 	@echo ""
 	@echo "Usage examples:"
-	@echo "  make native           # Build for x64 host testing"
-	@echo "  make arm64            # Build for ARM64 MCU deployment"
-	@echo "  make both             # Build both architectures"
+	@echo "  make native           # Build for x64 host testing (silent)"
+	@echo "  make native V=1       # Build for x64 host testing (verbose)"
+	@echo "  make arm64            # Build for ARM64 MCU deployment (silent)"
+	@echo "  make arm64 V=1        # Build for ARM64 MCU deployment (verbose)"
+	@echo "  make both             # Build both architectures (silent)"
 	@echo "  make test-sim         # Build and run simulation test"
 	@echo ""
 	@echo "Output binaries:"
