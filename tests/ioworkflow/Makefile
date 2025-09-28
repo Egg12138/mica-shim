@@ -21,6 +21,13 @@ ifdef V
   GO_BUILD_FLAGS := -v
 endif
 
+# Deployment configuration (read from .env file first, then environment variables)
+-include .env
+
+TARGET_HOST ?= $(DEPLOY_HOST)
+TARGET_PATH ?= $(DEPLOY_PATH)
+TARGET_PASS ?= $(DEPLOY_PASS)
+
 # Default target
 .PHONY: all
 all: native
@@ -59,6 +66,25 @@ $(SIM_RTOS)-arm64:
 .PHONY: both
 both: native arm64
 
+# Deploy ARM64 binaries to target (requires environment variables)
+.PHONY: deploy
+deploy: arm64
+	@if [ -z "$(TARGET_HOST)" ] || [ -z "$(TARGET_PATH)" ] || [ -z "$(TARGET_PASS)" ]; then \
+		echo "Error: Deployment requires environment variables:"; \
+		echo "  DEPLOY_HOST - Target host (e.g., root@192.168.7.2)"; \
+		echo "  DEPLOY_PATH - Target path (e.g., /root)"; \
+		echo "  DEPLOY_PASS - SSH password"; \
+		echo ""; \
+		echo "Usage example:"; \
+		echo "  DEPLOY_HOST=root@192.168.7.2 DEPLOY_PATH=/root DEPLOY_PASS=mypassword make deploy"; \
+		exit 1; \
+	fi
+	@echo "Deploying ARM64 binaries to $(TARGET_HOST):$(TARGET_PATH)/"
+	@sshpass -p '$(TARGET_PASS)' scp $(HOST_DRIVER)-arm64 $(TARGET_HOST):$(TARGET_PATH)/host-driver
+	@sshpass -p '$(TARGET_PASS)' scp $(SIM_RTOS)-arm64 $(TARGET_HOST):$(TARGET_PATH)/sim_rtos
+	@echo "Deployment complete."
+
+
 # Clean build artifacts
 .PHONY: clean
 clean:
@@ -94,6 +120,7 @@ help:
 	@echo "  all/native    - Build native x64 binaries for simulation testing"
 	@echo "  arm64         - Cross-compile ARM64 binaries for real MCU testing"
 	@echo "  both          - Build both native and ARM64 binaries"
+	@echo "  deploy        - Deploy ARM64 binaries to target (requires env vars)"
 	@echo "  clean         - Remove all build artifacts"
 	@echo "  setup         - Setup Go environment for China network"
 	@echo "  test-sim      - Run simulation test (requires native build)"
@@ -107,6 +134,15 @@ help:
 	@echo "  make arm64 V=1        # Build for ARM64 MCU deployment (verbose)"
 	@echo "  make both             # Build both architectures (silent)"
 	@echo "  make test-sim         # Build and run simulation test"
+	@echo "  make deploy           # Deploy ARM64 binaries (requires env vars)"
+	@echo ""
+	@echo "Deployment configuration:"
+	@echo "  The Makefile reads from .env file first, then environment variables"
+	@echo "  Copy .env.example to .env and update with your values"
+	@echo "  Required variables:"
+	@echo "    DEPLOY_HOST - Target host (e.g., root@192.168.7.2)"
+	@echo "    DEPLOY_PATH - Target path (e.g., /root)"
+	@echo "    DEPLOY_PASS - SSH password"
 	@echo ""
 	@echo "Output binaries:"
 	@echo "  bin/host-driver-native   - x64 host driver"
