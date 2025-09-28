@@ -69,19 +69,27 @@ both: native arm64
 # Deploy ARM64 binaries to target (requires environment variables)
 .PHONY: deploy
 deploy: arm64
-	@if [ -z "$(TARGET_HOST)" ] || [ -z "$(TARGET_PATH)" ] || [ -z "$(TARGET_PASS)" ]; then \
+	@if [ -z "$(TARGET_HOST)" ] || [ -z "$(TARGET_PATH)" ]; then \
 		echo "Error: Deployment requires environment variables:"; \
 		echo "  DEPLOY_HOST - Target host (e.g., root@192.168.7.2)"; \
 		echo "  DEPLOY_PATH - Target path (e.g., /root)"; \
-		echo "  DEPLOY_PASS - SSH password"; \
 		echo ""; \
-		echo "Usage example:"; \
+		echo "Optional variable:"; \
+		echo "  DEPLOY_PASS - SSH password (if using password authentication)"; \
+		echo ""; \
+		echo "Usage examples:"; \
+		echo "  DEPLOY_HOST=root@192.168.7.2 DEPLOY_PATH=/root make deploy"; \
 		echo "  DEPLOY_HOST=root@192.168.7.2 DEPLOY_PATH=/root DEPLOY_PASS=mypassword make deploy"; \
 		exit 1; \
 	fi
 	@echo "Deploying ARM64 binaries to $(TARGET_HOST):$(TARGET_PATH)/"
-	@sshpass -p '$(TARGET_PASS)' scp $(HOST_DRIVER)-arm64 $(TARGET_HOST):$(TARGET_PATH)/host-driver
-	@sshpass -p '$(TARGET_PASS)' scp $(SIM_RTOS)-arm64 $(TARGET_HOST):$(TARGET_PATH)/sim_rtos
+	@if [ -n "$(TARGET_PASS)" ]; then \
+		sshpass -p '$(TARGET_PASS)' scp $(HOST_DRIVER)-arm64 $(TARGET_HOST):$(TARGET_PATH)/host-driver; \
+		sshpass -p '$(TARGET_PASS)' scp $(SIM_RTOS)-arm64 $(TARGET_HOST):$(TARGET_PATH)/sim_rtos; \
+	else \
+		scp $(HOST_DRIVER)-arm64 $(TARGET_HOST):$(TARGET_PATH)/host-driver; \
+		scp $(SIM_RTOS)-arm64 $(TARGET_HOST):$(TARGET_PATH)/sim_rtos; \
+	fi
 	@echo "Deployment complete."
 
 
@@ -139,10 +147,10 @@ help:
 	@echo "Deployment configuration:"
 	@echo "  The Makefile reads from .env file first, then environment variables"
 	@echo "  Copy .env.example to .env and update with your values"
-	@echo "  Required variables:"
+	@echo "  Variables:"
 	@echo "    DEPLOY_HOST - Target host (e.g., root@192.168.7.2)"
 	@echo "    DEPLOY_PATH - Target path (e.g., /root)"
-	@echo "    DEPLOY_PASS - SSH password"
+	@echo "    DEPLOY_PASS - SSH password (if using password authentication)"
 	@echo ""
 	@echo "Output binaries:"
 	@echo "  bin/host-driver-native   - x64 host driver"
