@@ -6,10 +6,12 @@ BIN_DIR := bin
 OUT_DIR := out
 CMD_DIR := cmd
 SIM_DIR := sim_rtos
+LINUX_TTY_DIR := sim_linux_tty
 
 # Binaries
 HOST_DRIVER := $(BIN_DIR)/host-driver
 SIM_RTOS := $(BIN_DIR)/sim_rtos
+SIM_LINUX_TTY := $(BIN_DIR)/sim_linux_tty
 
 # Go build flags
 GO_BUILD_FLAGS := 
@@ -34,11 +36,11 @@ all: native
 
 # Native x64 build for simulation testing
 .PHONY: native
-native: $(HOST_DRIVER)-native $(SIM_RTOS)-native
+native: $(HOST_DRIVER)-native $(SIM_RTOS)-native $(SIM_LINUX_TTY)-native
 
 # ARM64 cross-compilation for real MCU testing
 .PHONY: arm64
-arm64: $(HOST_DRIVER)-arm64 $(SIM_RTOS)-arm64
+arm64: $(HOST_DRIVER)-arm64 $(SIM_RTOS)-arm64 $(SIM_LINUX_TTY)-arm64
 
 # Build host-driver for native x64
 $(HOST_DRIVER)-native:
@@ -52,6 +54,12 @@ $(SIM_RTOS)-native:
 	$(GO_X64_FLAGS) go build $(GO_BUILD_FLAGS) -o $@ ./$(SIM_DIR)
 	@ln -sf $(notdir $@) $(SIM_RTOS) 2>/dev/null || true
 
+# Build sim_linux_tty for native x64
+$(SIM_LINUX_TTY)-native:
+	@mkdir -p $(BIN_DIR)
+	$(GO_X64_FLAGS) go build $(GO_BUILD_FLAGS) -o $@ ./$(LINUX_TTY_DIR)
+	@ln -sf $(notdir $@) $(SIM_LINUX_TTY) 2>/dev/null || true
+
 # Build host-driver for ARM64
 $(HOST_DRIVER)-arm64:
 	@mkdir -p $(BIN_DIR)
@@ -61,6 +69,11 @@ $(HOST_DRIVER)-arm64:
 $(SIM_RTOS)-arm64:
 	@mkdir -p $(BIN_DIR)
 	$(GO_ARM64_FLAGS) go build $(GO_BUILD_FLAGS) -o $@ ./$(SIM_DIR)
+
+# Build sim_linux_tty for ARM64
+$(SIM_LINUX_TTY)-arm64:
+	@mkdir -p $(BIN_DIR)
+	$(GO_ARM64_FLAGS) go build $(GO_BUILD_FLAGS) -o $@ ./$(LINUX_TTY_DIR)
 
 # Build both architectures
 .PHONY: both
@@ -86,9 +99,11 @@ deploy: arm64
 	@if [ -n "$(TARGET_PASS)" ]; then \
 		sshpass -p '$(TARGET_PASS)' scp $(HOST_DRIVER)-arm64 $(TARGET_HOST):$(TARGET_PATH)/host-driver; \
 		sshpass -p '$(TARGET_PASS)' scp $(SIM_RTOS)-arm64 $(TARGET_HOST):$(TARGET_PATH)/sim_rtos; \
+		sshpass -p '$(TARGET_PASS)' scp $(SIM_LINUX_TTY)-arm64 $(TARGET_HOST):$(TARGET_PATH)/sim_linux_tty; \
 	else \
 		scp $(HOST_DRIVER)-arm64 $(TARGET_HOST):$(TARGET_PATH)/host-driver; \
 		scp $(SIM_RTOS)-arm64 $(TARGET_HOST):$(TARGET_PATH)/sim_rtos; \
+		scp $(SIM_LINUX_TTY)-arm64 $(TARGET_HOST):$(TARGET_PATH)/sim_linux_tty; \
 	fi
 	@echo "Deployment complete."
 
@@ -119,6 +134,12 @@ test-real: arm64
 	@echo "Running real RTOS test (requires ARM64 binaries)..."
 	./run_real.sh
 
+# Quick test with Linux bash shell (native build)
+.PHONY: test-linux
+test-linux: native
+	@echo "Running Linux bash shell test (requires native build)..."
+	./run_linux_tty.sh
+
 # Show help
 .PHONY: help
 help:
@@ -133,6 +154,7 @@ help:
 	@echo "  setup         - Setup Go environment for China network"
 	@echo "  test-sim      - Run simulation test (requires native build)"
 	@echo "  test-real     - Run real RTOS test (requires ARM64 build)"
+	@echo "  test-linux    - Run Linux bash shell test (requires native build)"
 	@echo "  help          - Show this help message"
 	@echo ""
 	@echo "Usage examples:"
@@ -155,7 +177,10 @@ help:
 	@echo "Output binaries:"
 	@echo "  bin/host-driver-native   - x64 host driver"
 	@echo "  bin/sim_rtos-native      - x64 simulated RTOS"
+	@echo "  bin/sim_linux_tty-native - x64 Linux bash shell PTY"
 	@echo "  bin/host-driver-arm64    - ARM64 host driver"
 	@echo "  bin/sim_rtos-arm64       - ARM64 simulated RTOS"
+	@echo "  bin/sim_linux_tty-arm64  - ARM64 Linux bash shell PTY"
 	@echo "  bin/host-driver          - Symlink to native version"
 	@echo "  bin/sim_rtos             - Symlink to native version"
+	@echo "  bin/sim_linux_tty        - Symlink to native version"

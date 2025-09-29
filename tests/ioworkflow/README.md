@@ -11,6 +11,7 @@ Contents:
   - Bridges FIFOs <-> libmica.MicaIO <-> PTY device (/dev/ttyRPMSG* or /dev/pts/N).
   - Provides a simple REPL to send input and control commands.
 - sim_rtos: A userspace pseudo-RTOS that exposes a PTY and echoes/handles simple commands. It creates a symlink /tmp/ttyRPMSG2 -> /dev/pts/N for deterministic testing.
+- sim_linux_tty: A Linux bash shell simulator that spawns a real bash process in a PTY. It creates a symlink /tmp/ttyRPMSG3 -> /dev/pts/N for testing shell interaction capabilities.
 
 Prerequisites:
 - Go toolchain, GOPROXY set for China network:
@@ -30,6 +31,7 @@ Prerequisites:
     mkdir -p tests/ioworkflow/bin
     go build -o tests/ioworkflow/bin/host-driver ./tests/ioworkflow/cmd/host-driver
     go build -o tests/ioworkflow/bin/sim_rtos ./tests/ioworkflow/sim_rtos
+    go build -o tests/ioworkflow/bin/sim_linux_tty ./tests/ioworkflow/sim_linux_tty
     ```
 
 Quick start (no containerd involved):
@@ -57,7 +59,28 @@ Notes:
 - host-driver creates stdin/stdout FIFOs under $TMPDIR/micran-iowf-<pid>. You can also pass explicit FIFO paths via flags.
 - In terminal mode (default), stderr is combined with stdout (matches typical TTY semantics). Non-terminal mode supports a separate stderr FIFO, but micran’s current MicaIO maps everything on PTY to stdout.
 
-2) Real RTOS on MCU
+2) Linux bash shell simulation (for testing shell interaction)
+- Launch sim_linux_tty with bash shell:
+  - ./tests/ioworkflow/bin/sim_linux_tty
+  - It prints:
+    - SLAVE_PATH=/dev/pts/N
+    - LINK_PATH=/tmp/ttyRPMSG3
+    - SHELL=/bin/bash --norc --noprofile
+    - HINT: export MICRAN_PTY_DEVICE=/tmp/ttyRPMSG3 (or SLAVE_PATH)
+- In another terminal, run host-driver bound to the PTY:
+  - ./tests/ioworkflow/bin/host-driver --pty=/tmp/ttyRPMSG3 --terminal=true
+- You should see a bash shell prompt (e.g., user@host:~$)
+- Type bash commands:
+  - ls -la            -> list directory contents
+  - echo "Hello"       -> print Hello
+  - pwd               -> print working directory
+  - export VAR=value  -> set environment variable
+  - cat /etc/os-release -> show OS info
+  - :quit             -> exit host-driver
+- For automated testing:
+  - make test-linux   - builds and runs the Linux TTY test
+
+3) Real RTOS on MCU
 - Ensure your RTOS client is loaded and micad presents a console PTY (commonly /dev/ttyRPMSG0).
 - Run host-driver against real PTY:
   - ./tests/ioworkflow/bin/host-driver --pty=/dev/ttyRPMSG0 --terminal=true
