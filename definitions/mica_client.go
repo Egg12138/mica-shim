@@ -7,6 +7,7 @@ const (
 	DefaultClientConf = "client.conf"
 	// pass "<bundle>/rootfs/<DefaultXenBin>" to pedestalCfg for xen-mica case
 	DefaultXenBin = "image.bin"
+	DefaultMinMemMB = 4
 )
 
 // client conf keys; 

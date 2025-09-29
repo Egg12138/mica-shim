@@ -62,13 +62,31 @@ func createMicaClientConf(container *Container) (libmica.MicaClientConf, error) 
 	if err != nil {
 		return conf, fmt.Errorf("failed to get client cpu: %w", err)
 	}
+	cpuCap := int(config.CpuLimit)
+	// Pre-calculate effective values for clarity.
+    // Use VCPUNum prepared in ContainerConfig; it already reflects cpuset policy
+    // or defaults to 1 when not specified.
+    vcpus := int(config.VCPUNum)
+    if vcpus <= 0 {
+        vcpus = 1
+    }
+    // memoryMB (initial) comes from config.MemoryMinMB; clamp to max limit if set.
+    maxMB := int(config.MemoryLimitMB)
+    memMB := int(config.MemoryMinMB)
+    if memMB <= 0 {
+        memMB = 32
+    }
+    if maxMB > 0 && memMB > maxMB {
+        memMB = maxMB
+    }
 	// MemoryLimitMB is already in MiB
 	conf.InitWithOpts(libmica.MicaClientConfCreateOptions{
-		CPU: cpus,
-		CPUCapacity: int(config.CpuLimit),
+		CPU:         cpus,
+		CPUCapacity: cpuCap,
 		CPUWeight:   int(config.CpuShares),
-		VCPUs: int(config.VCPUNum),
-		MaxMemMB: int(config.MemoryLimitMB),
+		VCPUs:       vcpus,
+        MemoryMB:    memMB,
+        MaxMemMB:    maxMB,
 		Name:        name,
 		Path:        config.ElfPath,
 		Ped:         pedestal.String(),
@@ -77,6 +95,8 @@ func createMicaClientConf(container *Container) (libmica.MicaClientConf, error) 
 	})
 	return conf, nil
 }
+
+// Removed per-request: rely on ContainerConfig.VCPUNum as single source of truth.
 
 // if not pinning, vcpus coordinates with workload.
 // Hence vcpu number for sandbox equal to sum of containers' ceil of CPU Cpucapacity
@@ -88,38 +108,51 @@ func createMicaClientConf(container *Container) (libmica.MicaClientConf, error) 
 // cpu pool 的兼容, 那么sandbox 为容器workload 申请的 vcpu number = Size(cpuSetUnion)
 //  * 如果cpuset也完全没有设置，那么我们认为这是一个best effort sandbox
 // 在算力上，应该设置capcapacity为=0,使pedestal不限制cpu用量
-func calculateSandboxVCPUs(s *Sandbox) (uint32, error) { 
-	milliCPUs := uint32(0)
-	cpuSetCount := int(0)
-	sandboxCpuset := cpuset.NewCPUSet()
-	for _, cc  := range s.config.ContainerConfigs {
-		if c, ok := s.containers[cc.ID]; ok && c.state.State == StateStopped {
-			log.Debugf("skipped stopped container %s", c.ID())
-			continue
-		}
+// calculateSandboxVCPUs returns the total VCPU count for the sandbox.
+// Without a resource pool, this is a statistic that should reflect the sum
+// of each container's configured vCPUs.
+func calculateSandboxVCPUs(s *Sandbox) (uint32, error) {
+    if s == nil || s.config == nil {
+        return 0, fmt.Errorf("sandbox or sandbox config is nil")
+    }
 
-		if cpu := cc.Resources.CPU; cpu != nil {
-			if cpu.Period != nil && cpu.Quota != nil {
-				milliCPUs += utils.CalculateMilliCPUs(*cpu.Quota, *cpu.Period)
-			}
+    total := uint32(0)
+    for _, cc := range s.config.ContainerConfigs {
+        if c, ok := s.containers[cc.ID]; ok && c.state.State == StateStopped {
+            log.Debugf("skipped stopped container %s", c.ID())
+            continue
+        }
 
-			set , err := cpuset.Parse(cpu.Cpus)
-			if err != nil {
-				return 0, nil
-			}
+        // Primary: use configured VCPUNum if set (already validated in ContainerConfig).
+        if cc.VCPUNum > 0 {
+            total += cc.VCPUNum
+            continue
+        }
 
-			sandboxCpuset = sandboxCpuset.Union(set)
+        // Fallbacks for legacy/partial configs.
+        if cpu := cc.Resources.CPU; cpu != nil {
+            if cpu.Period != nil && cpu.Quota != nil && *cpu.Period != 0 {
+                m := utils.CalculateMilliCPUs(*cpu.Quota, *cpu.Period)
+                v := utils.CalculateVCpusFromMilliCpus(m)
+                if v > 0 {
+                    total += v
+                    continue
+                }
+            }
+            if cpu.Cpus != "" {
+                set, err := cpuset.Parse(cpu.Cpus)
+                if err == nil {
+                    total += uint32(set.Size())
+                    continue
+                }
+            }
+        }
 
-		}
-		cpuSetCount = sandboxCpuset.Size()
+        // Last resort: count 1.
+        total += 1
+    }
 
-		// unconstrained cpu quota usage: limit cpu usage by size of cpuset, for example:
-		if milliCPUs == 0 && cpuSetCount > 0 {
-			return uint32(cpuSetCount), nil
-		}
-
-	}
-	return utils.CalculateVCpusFromMilliCpus(milliCPUs), nil
+    return total, nil
 }
 
 func calculateSandboxMemory(s *Sandbox) uint64 { 

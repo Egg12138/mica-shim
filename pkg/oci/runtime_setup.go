@@ -75,18 +75,18 @@ type RuntimeConfig struct {
 
 // NewRuntimeConfig returns a default RuntimeConfig.
 func NewRuntimeConfig() *RuntimeConfig {
-	ped := pedestal.GetHostPed()
-	var staticResource bool
-	if ped == pedestal.OpenAMP {
-		staticResource = true
-	}
+    ped := pedestal.GetHostPed()
+    var staticResource bool
+    if ped == pedestal.OpenAMP {
+        staticResource = true
+    }
 
-	spec := RuntimeConfig{
-		// MICA defaults
-		StaticResourceManagement: staticResource,
-		PauseImage:               defs.PauseImage,
-	}
-	return &spec
+    cfg := RuntimeConfig{
+        StaticResourceManagement: staticResource,
+        PauseImage:               defs.PauseImage,
+        MinContainerMemMB:        32,
+    }
+    return &cfg
 }
 
 

@@ -104,10 +104,10 @@ type RTOSTask struct {
 
 // ContainerConfig holds the configuration for a container.
 type ContainerConfig struct {
-	ID             string
-	Rootfs         RootFs
-	Mount          []Mount
-	ReadOnlyRootfs bool
+    ID             string
+    Rootfs         RootFs
+    Mount          []Mount
+    ReadOnlyRootfs bool
 	Pid            int // Pid is typically the shim pid.
 	Annotations    map[string]string
 	Resources      *specs.LinuxResources
@@ -132,13 +132,15 @@ type ContainerConfig struct {
 	// TODO: Implement for openAMP and Jailhouse cases.
 	PCPUNum int `json:"ncpu"`
 
-	// MemoryLimitMB is the memory limit in MiB.
-	MemoryLimitMB       uint32  `json:"memory_limit"`
-	MemoryReservationMB uint32  `json:"memory_reservation"`
-	MemorySwapMB        uint32  `json:"memory_swap"`
-	MemoryKernelMB      uint32  `json:"memory_kernel"`
-	MemorySwappinessMB  *uint32 `json:"memory_swappiness"`
-	OomKillDisable      bool    `json:"oom_kill_disable"`
+    // MemoryLimitMB is the memory limit in MiB.
+    MemoryLimitMB       uint32  `json:"memory_limit"`
+    // MemoryMinMB is the initial memory in MiB assigned at client boot.
+    MemoryMinMB         uint32  `json:"memory_min"`
+    MemoryReservationMB uint32  `json:"memory_reservation"`
+    MemorySwapMB        uint32  `json:"memory_swap"`
+    MemoryKernelMB      uint32  `json:"memory_kernel"`
+    MemorySwappinessMB  *uint32 `json:"memory_swappiness"`
+    OomKillDisable      bool    `json:"oom_kill_disable"`
 
 	// Cmdline is the boot command line for the guest.
 	Cmdline string `json:"cmdline"`
@@ -639,37 +641,19 @@ func (c *Container) setContainerState(ctx context.Context, state StateString) er
 	return nil
 }
 
-// allocCPUWithLimit allocates a CPU for the container within its limits.
-func allocCPUWithLimit(ncpu int, config *ContainerConfig) (int, error) {
-	if ncpu < 1 {
-		return 0, fmt.Errorf("ncpu must be at least 1")
-	}
-
-	maxCPU := getContainerCPULimit(config)
-	if ncpu > maxCPU {
-		return 0, fmt.Errorf("requested ncpu %d exceeds container CPU limit %d", ncpu, maxCPU)
-	}
-
-	// TODO: Implement proper cpuset.cpus parsing and allocation.
-	if config != nil && config.CpusetCpus != "" {
-		log.Infof("Container specifies cpuset.cpus: %s.", config.CpusetCpus)
-	}
-
-	// TODO: Let containerd manage CPU selection and limit the CPU perspective.
-	allocatedCPU := int(time.Now().UnixNano()) % maxCPU
-
-	log.Debugf("Allocated CPU %d for ncpu=%d (container limit: %d).", allocatedCPU, ncpu, maxCPU)
-	return allocatedCPU, nil
-}
-
+const num2CapRatio = 100
 // getContainerCPULimit returns the effective CPU limit for a container.
-func getContainerCPULimit(cfg *ContainerConfig) int {
+func (cfg *ContainerConfig) getContainerCPULimit() int {
 	// TODO: The runtime cannot detect the max number of CPUs Xen can handle.
 	systemCPUs := machineCPUNumber()
 
+	if systemCPUs <= 1 {
+		return num2CapRatio * 1
+	}
+
 	if cfg != nil {
 		log.Debugf(`cpu config:
-		cpuLimit: %d,
+		cpuLimit: %d%,
 		cpuPeriod: %d,
 		cpuQuota: %d,
 		cpuShares: %d,
@@ -677,7 +661,7 @@ func getContainerCPULimit(cfg *ContainerConfig) int {
 		`, cfg.CpuLimit, cfg.CpuPeriod, cfg.CpuQuota, cfg.CpuShares, cfg.CpusetCpus)
 	}
 	if cfg != nil && cfg.CpuLimit > 0 {
-		return min(int(cfg.CpuLimit), int(systemCPUs))
+		return min(int(cfg.CpuLimit), int(num2CapRatio * systemCPUs))
 	}
 
 	// As a fallback, use all available CPUs, but reserve one for the host.
@@ -850,6 +834,7 @@ func (c *Container) winresize(height, width uint32) error {
 	return errdefs.ErrNotImplemented
 }
 
+// firmware is the elf file of rtos
 func (c *Container) GetFirmwarePath() string {
 	return c.config.ElfPath
 }

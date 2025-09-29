@@ -43,7 +43,7 @@
 > ...
 - [ ] fields in ContainerConfig are overlapped, it would be clearer that migrate fields like `cpuShares`, `cpuset` to pedestal EssentialResources
 - [ ] micad status, micran status (in-memory), containerd status 一致性 **潜在风险**
-- [ ] VCPU Pinning 模式： 打开后， CPUs非空，默认CPUs为空，无限制绑核,绑核后 VCPUs=numCPUSet
+- [x] VCPU Pinning 模式： 打开后， CPUs非空，默认CPUs为空，无限制绑核,绑核后 VCPUs=numCPUSet
 > 目前实现是： initResource中 ContainerSize::CPU = numCPU = ceil(quota/period) = inited.VCPUs; CPUs=""
 > if EnableVCPUPinning, then VCPUS = num(CPUSet); CPUs = CPUSet
 - [ ] duplicated OCI Resource config parsing when `ContainerConfig()` and `CalculatingContainerResource()`
@@ -167,3 +167,4 @@ type PedTraits interface {
 
 
 - [x] ParseConfigINI
+- [ ] 为 dom0 预留核 - 修改计算逻辑

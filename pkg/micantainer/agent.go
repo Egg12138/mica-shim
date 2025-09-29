@@ -121,11 +121,9 @@ func (n *SandboxAgent) readTaskStdout(c *Container, taskID string, data []byte) 
 }
 
 func (n *SandboxAgent) resizeVCPUs(newNum uint32) (uint32, uint32) {
-	old := n.VcpuNum
-	if old < newNum {
-		n.VcpuNum = newNum
-	}
-	return old, n.VcpuNum
+    old := n.VcpuNum
+    n.VcpuNum = newNum
+    return old, n.VcpuNum
 }
 
 func (n *SandboxAgent) resizeMemory(newMemMB uint64) (uint64, uint64) {

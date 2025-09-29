@@ -112,16 +112,20 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 		}
 	}
 
-	var pedconf string
-	if pedtype == pedestal.Xen {
-		if cfg, ok := micaConf[defs.PedCfg]; ok && cfg != "" {
-			pedconf = cfg
-			log.Debugf("pedestal config for xen is the location of <image.bin>: %s", pedconf)
-		} else {
-			log.Debugf("use default pedestal config for xen <image.bin>: %s", pedconf)
-			pedconf = pedestal.XenDefaultPedConf()
-		}
-	}
+    var pedconf string
+    if pedtype == pedestal.Xen {
+        if cfg, ok := micaConf[defs.PedCfg]; ok && cfg != "" {
+            pedconf = cfg
+            log.Debugf("pedestal config for xen is the location of <image.bin>: %s", pedconf)
+        } else {
+            log.Debugf("use default pedestal config for xen <image.bin>: %s", pedconf)
+            pedconf = pedestal.XenDefaultPedConf()
+        }
+        // Make pedcfg absolute within bundle rootfs if necessary
+        if pedconf != "" && !filepath.IsAbs(pedconf) {
+            pedconf = filepath.Join(bundleRootfs(bundle), pedconf)
+        }
+    }
 
 	// Read OS from annotation
 	osName := "zephyr" // default
@@ -135,8 +139,8 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 	log.Debugf("looking for clientpath key '%s', found value: '%s'", defs.ElfPath, micaConf[defs.ElfPath])
 
 	// Validate ElfPath - critical for RTOS execution
-	elfPath := micaConf[defs.ElfPath]
-	if elfPath == "" {
+    elfPath := micaConf[defs.ElfPath]
+    if elfPath == "" {
 		// Try default paths
 		defaultElfPath := filepath.Join(bundleRootfs(bundle), "zephyr.elf")
 		if _, err := os.Stat(defaultElfPath); err == nil {
@@ -150,12 +154,15 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 				log.Debugf("found elf file: %s", elfPath)
 			} else {
 				return nil, fmt.Errorf("no elf file found in container rootfs and no clientpath specified in %s", defs.DefaultClientConf)
-			}
+    } else if !filepath.IsAbs(elfPath) {
+        // Make relative clientpath absolute under bundle rootfs
+        elfPath = filepath.Join(bundleRootfs(bundle), elfPath)
+    }
 		}
 	}
 
-	// init
-	config := &cntr.ContainerConfig{
+    // init
+    config := &cntr.ContainerConfig{
 		// Container ID
 		ID:           id,
 		// OCI and bundle info
@@ -170,23 +177,34 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 		CpuQuota:     0,
 		CpuPeriod:    0,
 
-		// Memory defaults
+			// Memory defaults
 		MemoryLimitMB:       0,
+		MemoryMinMB:         0,
 		MemoryReservationMB: 0,
 		MemorySwapMB:        0,
 		MemoryKernelMB:      0,
 		MemorySwappinessMB:  nil,
 		OomKillDisable:    false,
-	}
+    }
 
 	// TODO: remove the duplicated parsing
 	if err := config.ParseOCICPUResources(&ocispec); err != nil {
 		return nil, err
 	}
 
-	if err := config.ParseOCIMemoryResources(&ocispec); err != nil {
-		return nil, err
-	}
+    if err := config.ParseOCIMemoryResources(&ocispec); err != nil {
+        return nil, err
+    }
+
+    // Container-level min memory via annotation (MiB). Defaulting and clamping
+    // will be applied in SandboxConfig (with RuntimeConfig) or later at send time.
+    if v, ok := ocispec.Annotations[defs.ContainerMinMemMB]; ok && v != "" {
+        if mb, err := strconv.ParseUint(v, 10, 32); err == nil {
+            config.MemoryMinMB = uint32(mb)
+        } else {
+            log.Debugf("invalid %s: %s", defs.ContainerMinMemMB, v)
+        }
+    }
 
 	// Validate resource limits against system constraints
 	if err := cntr.ValidateResourceLimits(config); err != nil {
@@ -209,7 +227,19 @@ func SandboxConfig(ocispec *specs.Spec, rc RuntimeConfig, bundle, sbContainerID 
 	if err != nil {
 		return cntr.SandboxConfig{}, err
 	}
-	// TODO: allocated shared resources
+    if containerConfig.MemoryMinMB == 0 {
+        if rc.MinContainerMemMB > 0 {
+            containerConfig.MemoryMinMB = rc.MinContainerMemMB
+        } else {
+            containerConfig.MemoryMinMB = def.DefaultMinMemMB
+        }
+    }
+    // Clamp to limit if applicable
+    if containerConfig.MemoryLimitMB > 0 && containerConfig.MemoryMinMB > containerConfig.MemoryLimitMB {
+        containerConfig.MemoryMinMB = containerConfig.MemoryLimitMB
+    }
+
+    // TODO: allocated shared resources
 
 	networkConfig := cntr.NetworkConfig{}
 	ped := cntr.HostPedType

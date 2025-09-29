@@ -1191,10 +1191,15 @@ func (s *Sandbox) pinVCPU(cpuSet cpuset.CPUSet) error {
 		}
 	}
 
-	ret := result.ErrorOrNil()
-	if ret == nil {
-		s.resManager.VcpuNum = uint32(cpuSet.Size())
-		s.resManager.setNewPCpuList(pcpuList)
-	}
-	return ret
+    ret := result.ErrorOrNil()
+    if ret == nil {
+        // Keep sandbox VCPU statistic in sync with containers' vCPUs.
+        if total, err := calculateSandboxVCPUs(s); err == nil {
+            s.resManager.VcpuNum = total
+        } else {
+            s.resManager.VcpuNum = uint32(cpuSet.Size())
+        }
+        s.resManager.setNewPCpuList(pcpuList)
+    }
+    return ret
 }
