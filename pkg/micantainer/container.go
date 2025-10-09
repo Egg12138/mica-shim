@@ -831,7 +831,7 @@ func (c *Container) winresize(height, width uint32) error {
 		return fmt.Errorf("container not ready or running, impossible to resize the container pty")
 	}
 	log.Debugf("Resize pty -> %dx%d.", width, height)
-	return errdefs.ErrNotImplemented
+	return nil
 }
 
 // firmware is the elf file of rtos

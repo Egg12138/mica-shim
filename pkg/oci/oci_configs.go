@@ -80,14 +80,12 @@ func bundleRootfs(bundle string) string {
 	return filepath.Join(bundle, "rootfs")
 }
 
-
-
-func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerType, detach bool) (*cntr.ContainerConfig, error) {
+func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerType, detach bool, defaultFirmwarePath string) (*cntr.ContainerConfig, error) {
 	configPath := filepath.Join(bundleRootfs(bundle), defs.DefaultClientConf)
 	log.Debugf("config path = %s", configPath)
 	micaConf, err := utils.ParseConfigINI(configPath, defs.OKSectionList[:])
 	log.Pretty("mica config: %v", micaConf)
-	
+
 	// Debug: Check if file exists and list all parsed keys
 	if _, err := os.Stat(configPath); err == nil {
 		log.Debugf("Parsed %d keys from client.conf:", len(micaConf))
@@ -112,20 +110,20 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 		}
 	}
 
-    var pedconf string
-    if pedtype == pedestal.Xen {
-        if cfg, ok := micaConf[defs.PedCfg]; ok && cfg != "" {
-            pedconf = cfg
-            log.Debugf("pedestal config for xen is the location of <image.bin>: %s", pedconf)
-        } else {
-            log.Debugf("use default pedestal config for xen <image.bin>: %s", pedconf)
-            pedconf = pedestal.XenDefaultPedConf()
-        }
-        // Make pedcfg absolute within bundle rootfs if necessary
-        if pedconf != "" && !filepath.IsAbs(pedconf) {
-            pedconf = filepath.Join(bundleRootfs(bundle), pedconf)
-        }
-    }
+	var pedconf string
+	if pedtype == pedestal.Xen {
+		if cfg, ok := micaConf[defs.PedCfg]; ok && cfg != "" {
+			pedconf = cfg
+			log.Debugf("pedestal config for xen is the location of <image.bin>: %s", pedconf)
+		} else {
+			log.Debugf("use default pedestal config for xen <image.bin>: %s", pedconf)
+			pedconf = pedestal.XenDefaultPedConf()
+		}
+		// Make pedcfg absolute within bundle rootfs if necessary
+		if pedconf != "" && !filepath.IsAbs(pedconf) {
+			pedconf = filepath.Join(bundleRootfs(bundle), pedconf)
+		}
+	}
 
 	// Read OS from annotation
 	osName := "zephyr" // default
@@ -134,77 +132,132 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 		log.Debugf("found OS annotation: %s", osName)
 	}
 
-	// Debug: Log the parsed mica configuration
 	log.Debugf("parsed micaConf: %+v", micaConf)
 	log.Debugf("looking for clientpath key '%s', found value: '%s'", defs.ElfPath, micaConf[defs.ElfPath])
 
+	baseRoot := bundleRootfs(bundle)
+
+	resolveFirmwarePath := func(p string, strict bool) (string, error) {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			return "", nil
+		}
+
+		candidate := p
+		if !filepath.IsAbs(candidate) {
+			candidate = filepath.Join(baseRoot, candidate)
+		}
+
+		if _, err := os.Stat(candidate); err != nil {
+			if os.IsNotExist(err) && !strict {
+				log.Debugf("firmware path %s not found, falling back to defaults", candidate)
+				return "", nil
+			}
+			return "", fmt.Errorf("firmware path %s is invalid: %w", candidate, err)
+		}
+
+		resolved, err := utils.ResolvePath(candidate)
+		if err != nil {
+			return "", err
+		}
+		return resolved, nil
+	}
+
+	annotationFirmware := ""
+	if ocispec.Annotations != nil {
+		annotationFirmware = strings.TrimSpace(ocispec.Annotations[defs.FirmwarePath])
+	}
+
+	// Resolve firmware path priority: annotation > runtime default > client.conf > discovery
+	var elfPath string
+	switch {
+	case annotationFirmware != "":
+		// annotation wins
+		if resolved, err := resolveFirmwarePath(annotationFirmware, true); err != nil {
+			return nil, fmt.Errorf("failed to resolve firmware path from annotation: %w", err)
+		} else {
+			elfPath = resolved
+		}
+	case strings.TrimSpace(defaultFirmwarePath) != "":
+		if resolved, err := resolveFirmwarePath(defaultFirmwarePath, false); err != nil {
+			return nil, fmt.Errorf("failed to resolve firmware path from runtime config: %w", err)
+		} else {
+			elfPath = resolved
+		}
+	default:
+		confPath := strings.TrimSpace(micaConf[defs.ElfPath])
+		if confPath != "" {
+			resolved, err := resolveFirmwarePath(confPath, false)
+			if err != nil {
+				return nil, fmt.Errorf("failed to resolve firmware path from %s: %w", defs.DefaultClientConf, err)
+			}
+			elfPath = resolved
+		}
+	}
+
 	// Validate ElfPath - critical for RTOS execution
-    elfPath := micaConf[defs.ElfPath]
-    if elfPath == "" {
+	if elfPath == "" {
 		// Try default paths
-		defaultElfPath := filepath.Join(bundleRootfs(bundle), "zephyr.elf")
+		defaultElfPath := filepath.Join(baseRoot, "zephyr.elf")
 		if _, err := os.Stat(defaultElfPath); err == nil {
 			elfPath = defaultElfPath
 			log.Debugf("using default elf path: %s", elfPath)
 		} else {
 			// Last resort - look for any .elf file in rootfs
-			elfFiles, _ := filepath.Glob(filepath.Join(bundleRootfs(bundle), "*.elf"))
+			elfFiles, _ := filepath.Glob(filepath.Join(baseRoot, "*.elf"))
 			if len(elfFiles) > 0 {
 				elfPath = elfFiles[0]
 				log.Debugf("found elf file: %s", elfPath)
 			} else {
 				return nil, fmt.Errorf("no elf file found in container rootfs and no clientpath specified in %s", defs.DefaultClientConf)
-    } else if !filepath.IsAbs(elfPath) {
-        // Make relative clientpath absolute under bundle rootfs
-        elfPath = filepath.Join(bundleRootfs(bundle), elfPath)
-    }
+			}
 		}
 	}
 
-    // init
-    config := &cntr.ContainerConfig{
+	// init
+	config := &cntr.ContainerConfig{
 		// Container ID
-		ID:           id,
+		ID: id,
 		// OCI and bundle info
 		ElfPath:      elfPath,
 		PedestalType: pedtype,
 		PedestalConf: pedconf,
 		OS:           osName,
-		PCPUNum:         1,
+		PCPUNum:      1,
 		CpuLimit:     0,
 		CpusetCpus:   "",
 		CpuShares:    0,
 		CpuQuota:     0,
 		CpuPeriod:    0,
 
-			// Memory defaults
+		// Memory defaults
 		MemoryLimitMB:       0,
 		MemoryMinMB:         0,
 		MemoryReservationMB: 0,
 		MemorySwapMB:        0,
 		MemoryKernelMB:      0,
 		MemorySwappinessMB:  nil,
-		OomKillDisable:    false,
-    }
+		OomKillDisable:      false,
+	}
 
 	// TODO: remove the duplicated parsing
 	if err := config.ParseOCICPUResources(&ocispec); err != nil {
 		return nil, err
 	}
 
-    if err := config.ParseOCIMemoryResources(&ocispec); err != nil {
-        return nil, err
-    }
+	if err := config.ParseOCIMemoryResources(&ocispec); err != nil {
+		return nil, err
+	}
 
-    // Container-level min memory via annotation (MiB). Defaulting and clamping
-    // will be applied in SandboxConfig (with RuntimeConfig) or later at send time.
-    if v, ok := ocispec.Annotations[defs.ContainerMinMemMB]; ok && v != "" {
-        if mb, err := strconv.ParseUint(v, 10, 32); err == nil {
-            config.MemoryMinMB = uint32(mb)
-        } else {
-            log.Debugf("invalid %s: %s", defs.ContainerMinMemMB, v)
-        }
-    }
+	// Container-level min memory via annotation (MiB). Defaulting and clamping
+	// will be applied in SandboxConfig (with RuntimeConfig) or later at send time.
+	if v, ok := ocispec.Annotations[defs.ContainerMinMemMB]; ok && v != "" {
+		if mb, err := strconv.ParseUint(v, 10, 32); err == nil {
+			config.MemoryMinMB = uint32(mb)
+		} else {
+			log.Debugf("invalid %s: %s", defs.ContainerMinMemMB, v)
+		}
+	}
 
 	// Validate resource limits against system constraints
 	if err := cntr.ValidateResourceLimits(config); err != nil {
@@ -223,23 +276,23 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 
 func SandboxConfig(ocispec *specs.Spec, rc RuntimeConfig, bundle, sbContainerID string, detach bool) (cntr.SandboxConfig, error) {
 	// generate sandbox container config
-	containerConfig, err := ContainerConfig(sbContainerID, bundle, *ocispec, cntr.PodSandbox, detach)
+	containerConfig, err := ContainerConfig(sbContainerID, bundle, *ocispec, cntr.PodSandbox, detach, rc.DefaultFirmwarePath)
 	if err != nil {
 		return cntr.SandboxConfig{}, err
 	}
-    if containerConfig.MemoryMinMB == 0 {
-        if rc.MinContainerMemMB > 0 {
-            containerConfig.MemoryMinMB = rc.MinContainerMemMB
-        } else {
-            containerConfig.MemoryMinMB = def.DefaultMinMemMB
-        }
-    }
-    // Clamp to limit if applicable
-    if containerConfig.MemoryLimitMB > 0 && containerConfig.MemoryMinMB > containerConfig.MemoryLimitMB {
-        containerConfig.MemoryMinMB = containerConfig.MemoryLimitMB
-    }
+	if containerConfig.MemoryMinMB == 0 {
+		if rc.MinContainerMemMB > 0 {
+			containerConfig.MemoryMinMB = rc.MinContainerMemMB
+		} else {
+			containerConfig.MemoryMinMB = def.DefaultMinMemMB
+		}
+	}
+	// Clamp to limit if applicable
+	if containerConfig.MemoryLimitMB > 0 && containerConfig.MemoryMinMB > containerConfig.MemoryLimitMB {
+		containerConfig.MemoryMinMB = containerConfig.MemoryLimitMB
+	}
 
-    // TODO: allocated shared resources
+	// TODO: allocated shared resources
 
 	networkConfig := cntr.NetworkConfig{}
 	ped := cntr.HostPedType
@@ -251,9 +304,8 @@ func SandboxConfig(ocispec *specs.Spec, rc RuntimeConfig, bundle, sbContainerID 
 	staticResMngt := rc.StaticResourceManagement
 	hugePage := pedestal.HugePageSupport(staticResMngt)
 
-
 	// update container resource for openamp-based client is out of plan
-	
+
 	if pedestal.GetHostPed() == pedestal.OpenAMP {
 		staticResMngt = true
 	}
@@ -261,10 +313,10 @@ func SandboxConfig(ocispec *specs.Spec, rc RuntimeConfig, bundle, sbContainerID 
 	sandboxConfig := cntr.SandboxConfig{
 		ID:       sbContainerID,
 		Hostname: ocispec.Hostname,
-		PedConfig:  pedestal.PedestalConfig{
-			PedType:       pedestal.GetHostPed(),
-			PedConfig: "",
-			MiniVCPUNum:   rc.MiniVCPUNum,
+		PedConfig: pedestal.PedestalConfig{
+			PedType:     pedestal.GetHostPed(),
+			PedConfig:   "",
+			MiniVCPUNum: rc.MiniVCPUNum,
 		},
 		ContainerConfigs: map[string]*cntr.ContainerConfig{
 			sbContainerID: containerConfig,
@@ -279,12 +331,18 @@ func SandboxConfig(ocispec *specs.Spec, rc RuntimeConfig, bundle, sbContainerID 
 		},
 
 		StaticResourceMgmt: staticResMngt,
-		HugePageSupport: hugePage,
-		EnableVCPUsPining: false,
+		HugePageSupport:    hugePage,
+		EnableVCPUsPining:  false,
 	}
 
-
 	applySandboxAnnotations(*ocispec, &sandboxConfig)
+	// Persist the resolved firmware path so later containers in the same sandbox can reuse it.
+	if sandboxConfig.Annotations == nil {
+		sandboxConfig.Annotations = make(map[string]string)
+	}
+	if containerConfig.ElfPath != "" {
+		sandboxConfig.Annotations[defs.FirmwarePath] = containerConfig.ElfPath
+	}
 	return sandboxConfig, nil
 }
 

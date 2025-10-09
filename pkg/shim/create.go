@@ -298,7 +298,14 @@ func createContainerInSandbox(ctx context.Context, sandbox cntr.SandboxTraits,
 	ocispec specs.Spec, rootfs cntr.RootFs,
 	containerID, bundlePath string, disableOutput bool) error {
 
-	containerConfig, err := oci.ContainerConfig(containerID, bundlePath, ocispec, cntr.PodContainer, disableOutput)
+	var defaultFirmware string
+	if sandbox != nil {
+		if fw, err := sandbox.Annotation(defs.FirmwarePath); err == nil {
+			defaultFirmware = fw
+		}
+	}
+
+	containerConfig, err := oci.ContainerConfig(containerID, bundlePath, ocispec, cntr.PodContainer, disableOutput, defaultFirmware)
 	if err != nil {
 		return fmt.Errorf("failed to create container config: %w", err)
 	}

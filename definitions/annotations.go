@@ -9,7 +9,7 @@ const (
 	// RuntimePrefix is the prefix for runtime-related configurations.
 	RuntimePrefix = MicraAnnotationPrefix + "runtime."
 	// ContainerPrefix is the prefix for container-related configurations.
-    ContainerPrefix = MicraAnnotationPrefix + "container."
+  ContainerPrefix = MicraAnnotationPrefix + "container."
 
 	// BundlePathKey is the annotation key for the OCI configuration file path.
 	BundlePathKey = MicraAnnotationPrefix + "pkg.oci.bundle_path"
@@ -32,7 +32,7 @@ const (
 
 	// OSAnnotation specifies the client OS type. Corresponds to ini config keys in [Mica] section of client.conf.
 	OSAnnotation = ContainerPrefix + "os"
-	// FirmwarePath specifies the path to the firmware.
+	// FirmwarePath specifies the relative path to the firmware, in the bundle.
 	FirmwarePath = PedConfPrefix + "firmware_path"
 	// Pedtype specifies the pedestal type.
 	Pedtype = PedConfPrefix + "pedestal"

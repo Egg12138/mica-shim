@@ -16,24 +16,23 @@ import (
 
 // Configuration keys for runtime settings.
 const (
-	KeyStaticResource   = "static_resource"        // default=true
-	KeyClientLimit      = "max_client_number"      // default=0, unlimited
-	KeyLinuxContainer   = "enable_host_container"  // default=false
-	KeyDebug            = "debug"                  // default=false
-	KeyStateDir         = "state_dir"              // default=defs.StateDir
-	KeyPauseImg         = "pause_image"            // default=defs.PauseImage
-	KeyMaxContainerVCPU = "max_container_vcpu"     // default=0, unlimited
-	KeySandboxMinVCPU   = "sandbox_minimum_vcpu"   // default=1
-	KeyHugePage         = "hugepage_enable"        // only for Xen; default=false
-	KeyMinMemory        = "container_minmem"       // default base memory for container
-	KeyMaxMemory        = "container_maxmem"       // default max memory for container
+	KeyStaticResource   = "static_resource"       // default=true
+	KeyClientLimit      = "max_client_number"     // default=0, unlimited
+	KeyLinuxContainer   = "enable_host_container" // default=false
+	KeyDebug            = "debug"                 // default=false
+	KeyStateDir         = "state_dir"             // default=defs.StateDir
+	KeyPauseImg         = "pause_image"           // default=defs.PauseImage
+	KeyMaxContainerVCPU = "max_container_vcpu"    // default=0, unlimited
+	KeySandboxMinVCPU   = "sandbox_minimum_vcpu"  // default=1
+	KeyHugePage         = "hugepage_enable"       // only for Xen; default=false
+	KeyMinMemory        = "container_minmem"      // default base memory for container
+	KeyMaxMemory        = "container_maxmem"      // default max memory for container
+	KeyDefaultFirmware  = "firmware_path"         // default firmware path when annotation not set
 )
-
-
 
 var (
 	thredsholdMemHigh = pedestal.MemHighThreshold()
-	thredsholdMemLow = pedestal.MemLowThreshold()
+	thredsholdMemLow  = pedestal.MemLowThreshold()
 	runtimeConfigKeys = []string{
 		KeyStaticResource,
 		KeyClientLimit,
@@ -46,8 +45,8 @@ var (
 		KeyHugePage,
 		KeyMaxMemory,
 		KeyMinMemory,
+		KeyDefaultFirmware,
 	}
-	
 )
 
 type RuntimeConfig struct {
@@ -56,13 +55,13 @@ type RuntimeConfig struct {
 	SandboxMemMB uint32
 	// TODO: enable Linux host act as a container
 	HostLinuxContainer bool
-	MaxClinetNum uint32
+	MaxClinetNum       uint32
 
 	// Global resource management settings
-	MaxContainerCPUs   uint32 // Maximum CPU cores visible for containers
-	MaxContainerMemMB  uint32 // Maximum memory available for containers
-	MinContainerMemMB          uint32 // Minimum memory for containers
-	HugePageSupport      bool
+	MaxContainerCPUs         uint32 // Maximum CPU cores visible for containers
+	MaxContainerMemMB        uint32 // Maximum memory available for containers
+	MinContainerMemMB        uint32 // Minimum memory for containers
+	HugePageSupport          bool
 	StaticResourceManagement bool
 
 	// MICA-specific configurations
@@ -70,28 +69,28 @@ type RuntimeConfig struct {
 	AuxFilePath string
 
 	PauseImage          string
-	MiniVCPUNum uint32
+	MiniVCPUNum         uint32
+	DefaultFirmwarePath string
 }
 
 // NewRuntimeConfig returns a default RuntimeConfig.
 func NewRuntimeConfig() *RuntimeConfig {
-    ped := pedestal.GetHostPed()
-    var staticResource bool
-    if ped == pedestal.OpenAMP {
-        staticResource = true
-    }
+	ped := pedestal.GetHostPed()
+	var staticResource bool
+	if ped == pedestal.OpenAMP {
+		staticResource = true
+	}
 
-    cfg := RuntimeConfig{
-        StaticResourceManagement: staticResource,
-        PauseImage:               defs.PauseImage,
-        MinContainerMemMB:        32,
-    }
-    return &cfg
+	cfg := RuntimeConfig{
+		StaticResourceManagement: staticResource,
+		PauseImage:               defs.PauseImage,
+		MinContainerMemMB:        32,
+	}
+	return &cfg
 }
 
-
 // ini conf
-// TODO: with expanding of micran runtime config, we will migrate gookit.ini/v2 to 
+// TODO: with expanding of micran runtime config, we will migrate gookit.ini/v2 to
 // out ParseConfigINI, ParseConfigINI requires only half memory of ini package and faster
 // for large ini file parsing
 func (r *RuntimeConfig) ParseRuntimeFromFile(configPath string) error {
@@ -115,8 +114,8 @@ func (r *RuntimeConfig) convertRawConfig(raw map[string]string) {
 	r.SetMiniVCPUNum(raw[KeySandboxMinVCPU])
 	r.SetHugePageSupport(raw[KeyHugePage])
 	r.SetStateDir(raw[KeyStateDir])
+	r.SetDefaultFirmwarePath(raw[KeyDefaultFirmware])
 }
-
 
 func (r *RuntimeConfig) SetDebug(debugStr string) {
 	debug, err := strconv.ParseBool(debugStr)
@@ -153,18 +152,18 @@ func (r *RuntimeConfig) SetMaxContainerCPUs(cpuString string) {
 
 func (r *RuntimeConfig) SetMaxContainerMemMB(memString string) {
 	mem, err := strconv.ParseUint(memString, 10, 32)
-	if err != nil || memoryOutOfRange(uint32(mem)){
+	if err != nil || memoryOutOfRange(uint32(mem)) {
 		log.Warnf("failed to parse max container memory %v into uint32 or out or range: %v", memString, err)
 		r.MaxContainerMemMB = thredsholdMemHigh
 		return
 	}
-	
+
 	r.MaxContainerMemMB = uint32(mem)
 }
 
 func (r *RuntimeConfig) SetMinContainerMemMB(memString string) {
 	mem, err := strconv.ParseUint(memString, 10, 32)
-	if err != nil || memoryOutOfRange(uint32(mem)){
+	if err != nil || memoryOutOfRange(uint32(mem)) {
 		log.Debugf("failed to parse min container memory %v into uint32 or out or range", memString, err)
 		r.MinContainerMemMB = thredsholdMemLow
 		return
@@ -172,8 +171,6 @@ func (r *RuntimeConfig) SetMinContainerMemMB(memString string) {
 
 	r.MinContainerMemMB = uint32(mem)
 }
-
-
 
 func (r *RuntimeConfig) SetHugePageSupport(hugePageStr string) {
 	hugePage, err := strconv.ParseBool(hugePageStr)
@@ -186,6 +183,14 @@ func (r *RuntimeConfig) SetHugePageSupport(hugePageStr string) {
 
 func (r *RuntimeConfig) SetPauseImage(pauseImage string) {
 	r.PauseImage = pauseImage
+}
+
+func (r *RuntimeConfig) SetDefaultFirmwarePath(path string) {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return
+	}
+	r.DefaultFirmwarePath = trimmed
 }
 
 func (r *RuntimeConfig) SetStaticResourceManagement(staticResourceStr string) {
@@ -227,7 +232,6 @@ func (r *RuntimeConfig) SetStateDir(stateDir string) {
 	// For now, we'll just log it since it's a path configuration
 	log.Debugf("setting state dir to: %v", stateDir)
 }
-
 
 // ParseRuntimeConfigFromAnno parses runtime configuration from annotations.
 // Annotations hold highest priority for values.
@@ -281,7 +285,7 @@ func LoadSpec(bundle string) (specs.Spec, error) {
 	return parseConfigJSON(configPath)
 }
 
-// 2MB < cfgmem < 
+// 2MB < cfgmem <
 func memoryOutOfRange(cfgmem uint32) bool {
 	if cfgmem > thredsholdMemHigh {
 		log.Debugf("configurated micran memory out of range, set to %dMB by default", thredsholdMemHigh)

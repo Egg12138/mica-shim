@@ -41,12 +41,13 @@
 - [ ] Xen API: 将对xen相关二进制的调用都走 xapi  [go-xen-api](https://github.com/terra-farm/go-xen-api-client)
 > metrics support
 > ...
-- [ ] fields in ContainerConfig are overlapped, it would be clearer that migrate fields like `cpuShares`, `cpuset` to pedestal EssentialResources
+- [x] fields in ContainerConfig are overlapped, it would be clearer that migrate fields like `cpuShares`, `cpuset` to pedestal EssentialResources
 - [ ] micad status, micran status (in-memory), containerd status 一致性 **潜在风险**
+- [x] VCPU Pinning 在 client 中也同步更新——在libmica中实现这个
 - [x] VCPU Pinning 模式： 打开后， CPUs非空，默认CPUs为空，无限制绑核,绑核后 VCPUs=numCPUSet
 > 目前实现是： initResource中 ContainerSize::CPU = numCPU = ceil(quota/period) = inited.VCPUs; CPUs=""
 > if EnableVCPUPinning, then VCPUS = num(CPUSet); CPUs = CPUSet
-- [ ] duplicated OCI Resource config parsing when `ContainerConfig()` and `CalculatingContainerResource()`
+- [x] duplicated OCI Resource config parsing when `ContainerConfig()` and `CalculatingContainerResource()`
 - [x] Lazy&Once的q:全局变量优化：HostPedType, etc... 开销太大了 (e.g. hostpedtype 目前可以加速十倍)
 - [ ] 优化镜像配置、sandbox的设置逻辑:annotation => file => default => bundle, ordered by priority; bundle 作为 校验使用。annotation的必须要和 bundle 中解析出来的一致
 - [ ] mica错误处理
