@@ -13,6 +13,7 @@ import (
 	"mica-shim/pkg/utils"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -39,17 +40,17 @@ type SandboxStats struct {
 }
 
 type SandboxConfig struct {
-	ID                string
-	Hostname          string
-	NetworkConfig     NetworkConfig
-	PedConfig         ped.PedestalConfig
-	ContainerConfigs  map[string]*ContainerConfig
-	Annotations       map[string]string
-	SharedMemorySize  uint64
-	SandboxResources  SandboxResourceSizing
+	ID                 string
+	Hostname           string
+	NetworkConfig      NetworkConfig
+	PedConfig          ped.PedestalConfig
+	ContainerConfigs   map[string]*ContainerConfig
+	Annotations        map[string]string
+	SharedMemorySize   uint64
+	SandboxResources   SandboxResourceSizing
 	EnableVCPUsPining  bool
 	StaticResourceMgmt bool
-	HugePageSupport bool
+	HugePageSupport    bool
 }
 
 func (sc *SandboxConfig) valid() bool {
@@ -160,7 +161,7 @@ type Sandbox struct {
 	sync.Mutex
 	// fs, storage, devices, volumes...
 	// monitor
-	resManager      SandboxAgent
+	resManager SandboxAgent
 	config     *SandboxConfig
 	containers map[string]*Container
 	id         string
@@ -377,12 +378,12 @@ func (s *Sandbox) CreateContainer(ctx context.Context, config ContainerConfig) (
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Validate the container after creation but before starting
 	if !c.validMicaContainer() {
 		return nil, fmt.Errorf("invalid mica container: %v", c)
 	}
-	
+
 	if err = c.create(ctx); err != nil {
 		return nil, err
 	}
@@ -426,7 +427,7 @@ func (s *Sandbox) Status() SandboxStatus {
 			State:       c.state,
 			Rootfs:      rootfs,
 			Annotations: c.config.Annotations,
-			StartedAt:   c.taskInfo.StartTime,
+			CreatedAt:   c.taskInfo.CreateTime,
 			Pid:         c.config.Pid,
 		}
 		cStatusList = append(cStatusList, s)
@@ -552,13 +553,13 @@ func (s *Sandbox) StatusContainer(id string) (ContainerStatus, error) {
 
 		// TODO: no need to store starttime in taskinfo, collapsing is unneeded
 		cs.Spec = nil
-		cs.StartedAt = c.taskInfo.StartTime
+		cs.CreatedAt = c.taskInfo.CreateTime
 		cs.State = c.state
 		cs.ID = c.id
 		cs.Rootfs = rootfs
 		cs.Pid = c.GetPid()
 		cs.Annotations = c.config.Annotations
-		return cs, er.ErrContainerNotFound
+		return cs, nil
 	}
 	log.Debugf("container %s not found in sandbox %s", id, s.id)
 	return cs, nil
@@ -605,22 +606,30 @@ func (s *Sandbox) GetOOMEvent(ctx context.Context) (string, error) {
 // TODO: aftet unified micran and micad, we can achive sending signals to RTOS clients
 // NOTICE: container == task == RTOS Client
 func (s *Sandbox) WaitTaskExit(ctx context.Context, containerID string, taskid string) (int32, error) {
-	// In mock mode, don't block or attempt to stop the client here.
-	// Let the shim's waitContainerExit drive lifecycle and timing.
 	if defs.IsMock {
 		log.Infof("WaitTaskExit(mock): container=%s task=%s", containerID, taskid)
 		return ok0, nil
 	}
 
-	if s.state.State != StateRunning {
-		return ok0, er.ErrSandboxDown
-	}
 	c, ok := s.containers[containerID]
 	if !ok {
 		return int32(er.NotFound), er.ErrContainerNotFound
 	}
 
-	return c.wait4exit()
+	if c.state.State == StateStopped {
+		return ok0, nil
+	}
+
+	if c.exitNotifier == nil {
+		c.updateExitNotifier(c.state.State)
+	}
+
+	select {
+	case <-ctx.Done():
+		return ok0, ctx.Err()
+	case <-c.exitNotifier:
+		return ok0, nil
+	}
 }
 
 func (s *Sandbox) SignalTask(ctx context.Context, containerID string, signal syscall.Signal) error {
@@ -849,7 +858,7 @@ func newSandbox(ctx context.Context, config SandboxConfig) (sb *Sandbox, retErr 
 			Version: defs.SandboxVersion,
 		},
 		network:    &network,
-		resManager:      *NewAgent(),
+		resManager: *NewAgent(),
 		wg:         &sync.WaitGroup{},
 		annotaLock: &sync.RWMutex{},
 	}
@@ -859,7 +868,6 @@ func newSandbox(ctx context.Context, config SandboxConfig) (sb *Sandbox, retErr 
 	}
 	return s, nil
 }
-
 
 func createSandbox(ctx context.Context, config *SandboxConfig) (*Sandbox, error) {
 
@@ -1007,12 +1015,12 @@ func (s *Sandbox) initContainers(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		
+
 		// Validate the container after creation but before starting
 		if !c.validMicaContainer() {
 			return fmt.Errorf("invalid mica container: %v", c)
 		}
-		
+
 		if err := c.create(ctx); err != nil {
 			return err
 		}
@@ -1037,7 +1045,7 @@ func (s *Sandbox) initContainers(ctx context.Context) error {
 }
 
 // TODO: universe pinning vCPUs for different pedestal in Libmica
-// if pinning: 
+// if pinning:
 // * Container:VCPU = 1:N; VCPU:PCU = 1:1; Container CpuSet ∈ CpuPool (CpuPool = MergedCPUSet)
 // if not pinning:
 // * Container:VCPU = 1:N; VCPU:PCU = N:M (affinity not set); Container CpuSet ∈ CpuPool (CpuPool = MergedCPUSet)
@@ -1050,7 +1058,6 @@ func (s *Sandbox) checkVCPUsPinning(ctx context.Context) error {
 		return nil
 	}
 
-
 	cpus, _, err := s.getSandboxCpusetStr()
 	if err != nil {
 		return fmt.Errorf("failed to get CPUSet string: %v", err)
@@ -1061,7 +1068,7 @@ func (s *Sandbox) checkVCPUsPinning(ctx context.Context) error {
 		return fmt.Errorf("failed to parse CPUSet string %s: %v", cpus, err)
 	}
 	cpuList := cpuSet.ToSlice()
-	
+
 	match := true
 
 	if outOfRange, overrange := CpusetRangeValid(cpuList); outOfRange {
@@ -1104,15 +1111,29 @@ func (s *Sandbox) getSandboxCpusetStr() (string, string, error) {
 	cpuResult := cpuset.NewCPUSet()
 	memResult := cpuset.NewCPUSet()
 	for _, cfg := range s.config.ContainerConfigs {
+		if cfg.Infra {
+			continue
+		}
 		resource := cfg.Resources
 		if resource != nil {
-			currCPUSet, err := cpuset.Parse(resource.CPU.Cpus)
+			if resource.CPU == nil {
+				continue
+			}
+			cpuStr := strings.TrimSpace(resource.CPU.Cpus)
+			if cpuStr == "" {
+				continue
+			}
+			currCPUSet, err := cpuset.Parse(cpuStr)
 			if err != nil {
 				return "", "", fmt.Errorf("unable to parse CPUset.cpus for container %s: %v", cfg.ID, err)
 			}
 			cpuResult = cpuResult.Union(currCPUSet)
 
-			currMemSet, err := cpuset.Parse(resource.CPU.Mems)
+			memStr := strings.TrimSpace(resource.CPU.Mems)
+			if memStr == "" {
+				continue
+			}
+			currMemSet, err := cpuset.Parse(memStr)
 			if err != nil {
 				return "", "", fmt.Errorf("unable to parse CPUset.mems for container %s: %v", cfg.ID, err)
 			}
@@ -1179,7 +1200,7 @@ func (s *Sandbox) loadContainersToSandbox(ctx context.Context) error {
 
 // update cpu affinity for sandbox vcpu
 // repin vcpus in vcpuList to the cpupool
-func (s *Sandbox) pinVCPU(cpuSet cpuset.CPUSet) error { 
+func (s *Sandbox) pinVCPU(cpuSet cpuset.CPUSet) error {
 	var result *multierror.Error
 	pcpuList := cpuSet.ToSlice()
 	for cid, c := range s.containers {
@@ -1191,15 +1212,15 @@ func (s *Sandbox) pinVCPU(cpuSet cpuset.CPUSet) error {
 		}
 	}
 
-    ret := result.ErrorOrNil()
-    if ret == nil {
-        // Keep sandbox VCPU statistic in sync with containers' vCPUs.
-        if total, err := calculateSandboxVCPUs(s); err == nil {
-            s.resManager.VcpuNum = total
-        } else {
-            s.resManager.VcpuNum = uint32(cpuSet.Size())
-        }
-        s.resManager.setNewPCpuList(pcpuList)
-    }
-    return ret
+	ret := result.ErrorOrNil()
+	if ret == nil {
+		// Keep sandbox VCPU statistic in sync with containers' vCPUs.
+		if total, err := calculateSandboxVCPUs(s); err == nil {
+			s.resManager.VcpuNum = total
+		} else {
+			s.resManager.VcpuNum = uint32(cpuSet.Size())
+		}
+		s.resManager.setNewPCpuList(pcpuList)
+	}
+	return ret
 }

@@ -86,8 +86,8 @@ func (n *SandboxAgent) createContainer(sandbox *Sandbox, c *Container) (*RTOSTas
 	shortId := utils.ShortID(c.ID())
 	task := &RTOSTask{
 		TaskID:       shortId,
-		StartTime:    time.Now(),
-		ReceiverAddr: 0x4500000,
+		CreateTime:    time.Now(),
+		ReservedAddr: 0x1000,
 	}
 
 	return task, nil

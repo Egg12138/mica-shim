@@ -354,13 +354,8 @@ func waitContainerExit(ctx context.Context, s *shimService, c *container) (int32
 		log.WithField("container", c.id).Infof("No IO activity; mock exit after %s.", mockExitTimeout)
 	}
 
-	ret, err := s.sandbox.WaitTaskExit(ctx, c.id, c.id)
-	if err != nil {
-		if ret == okExitCode {
-			ret = Exit255
-		}
-	}
-
+	ret := okExitCode
+	var err error
 	timeStamp := time.Now()
 
 	s.mu.Lock()
@@ -403,5 +398,5 @@ func waitContainerExit(ctx context.Context, s *shimService, c *container) (int32
 		}
 	}()
 
-	return ret, nil
+	return int32(ret), nil
 }

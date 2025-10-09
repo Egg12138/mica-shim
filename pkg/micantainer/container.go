@@ -2,6 +2,7 @@
 package micantainer
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	utils "mica-shim/pkg/utils"
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -85,7 +87,7 @@ func (s *ContainerState) ValidTransition(old StateString, new StateString) error
 // ContainerStatus represents the status of a container.
 type ContainerStatus struct {
 	Spec        *specs.Spec
-	StartedAt   time.Time
+	CreatedAt   time.Time
 	State       ContainerState
 	ID          string
 	Rootfs      string
@@ -95,19 +97,20 @@ type ContainerStatus struct {
 
 // RTOSTask represents a task running in the RTOS.
 type RTOSTask struct {
-	StartTime time.Time
+	CreateTime time.Time
 	// TaskID is the identifier of the task, managed by micran.
 	TaskID string
-	// ReceiverAddr is the memory address of the receiver inside the RTOS.
-	ReceiverAddr uint64
+	// ReservedAddr is the memory address of the reserved region entry inside the RTOS.
+	ReservedAddr uint64
 }
 
 // ContainerConfig holds the configuration for a container.
 type ContainerConfig struct {
-    ID             string
-    Rootfs         RootFs
-    Mount          []Mount
-    ReadOnlyRootfs bool
+	ID             string
+	Rootfs         RootFs
+	Mount          []Mount
+	ReadOnlyRootfs bool
+	Infra          bool
 	Pid            int // Pid is typically the shim pid.
 	Annotations    map[string]string
 	Resources      *specs.LinuxResources
@@ -132,18 +135,29 @@ type ContainerConfig struct {
 	// TODO: Implement for openAMP and Jailhouse cases.
 	PCPUNum int `json:"ncpu"`
 
-    // MemoryLimitMB is the memory limit in MiB.
-    MemoryLimitMB       uint32  `json:"memory_limit"`
-    // MemoryMinMB is the initial memory in MiB assigned at client boot.
-    MemoryMinMB         uint32  `json:"memory_min"`
-    MemoryReservationMB uint32  `json:"memory_reservation"`
-    MemorySwapMB        uint32  `json:"memory_swap"`
-    MemoryKernelMB      uint32  `json:"memory_kernel"`
-    MemorySwappinessMB  *uint32 `json:"memory_swappiness"`
-    OomKillDisable      bool    `json:"oom_kill_disable"`
+	// MemoryLimitMB is the memory limit in MiB.
+	MemoryLimitMB uint32 `json:"memory_limit"`
+	// MemoryMinMB is the initial memory in MiB assigned at client boot.
+	MemoryMinMB         uint32  `json:"memory_min"`
+	MemoryReservationMB uint32  `json:"memory_reservation"`
+	MemorySwapMB        uint32  `json:"memory_swap"`
+	MemoryKernelMB      uint32  `json:"memory_kernel"`
+	MemorySwappinessMB  *uint32 `json:"memory_swappiness"`
+	OomKillDisable      bool    `json:"oom_kill_disable"`
 
 	// Cmdline is the boot command line for the guest.
 	Cmdline string `json:"cmdline"`
+}
+
+// Noop writer/reader are used for infra container which never has PTY or IO.
+type noopWriteCloser struct{}
+
+func (noopWriteCloser) Write(p []byte) (int, error) {
+	return len(p), nil
+}
+
+func (noopWriteCloser) Close() error {
+	return nil
 }
 
 // RootFs represents the root filesystem of the container.
@@ -191,6 +205,8 @@ type Container struct {
 	containerPath string // The path relative to the root bundle: <sandboxID>/<containerID>.
 	state         ContainerState
 	taskInfo      RTOSTask
+	exitNotifier  chan struct{}
+	exitOnce      sync.Once
 }
 
 func (ct ContainerType) IsRegularContainer() bool {
@@ -324,11 +340,26 @@ func newContainer(ctx context.Context, s *Sandbox, cc *ContainerConfig) (*Contai
 		log.Warnf("Failed to restore container state: %v.", err)
 	}
 
+	c.updateExitNotifier(c.state.State)
+
 	return c, nil
 }
 
 // start begins the execution of the container.
 func (c *Container) start(ctx context.Context) error {
+	if c.config != nil && c.config.Infra {
+		if c.state.State == StateRunning {
+			return nil
+		}
+		if c.state.State != StateReady && c.state.State != StateStopped {
+			return fmt.Errorf("container is not ready or stopped, cannot start")
+		}
+		if err := c.state.ValidTransition(c.state.State, StateRunning); err != nil {
+			return err
+		}
+		return c.setContainerState(ctx, StateRunning)
+	}
+
 	if c.state.State == StateRunning {
 		return fmt.Errorf("container %s is already running", c.id)
 	}
@@ -354,8 +385,15 @@ func (c *Container) start(ctx context.Context) error {
 
 // create prepares the container to be started.
 func (c *Container) create(ctx context.Context) error {
-	// TODO: Too many works here.
-	rtosTask, err := createContainerInSandbox(c.sandbox, c.config)
+	if c.config != nil && c.config.Infra {
+		c.taskInfo = RTOSTask{
+			CreateTime: time.Now(),
+			TaskID:    c.id,
+		}
+		return c.setContainerState(ctx, StateReady)
+	}
+
+	rtosTask, err := initContainerTaskInSandbox(c.sandbox, c.config)
 	if err != nil {
 		return err
 	}
@@ -370,6 +408,9 @@ func (c *Container) create(ctx context.Context) error {
 
 // doStop performs the actual stop operation on the client.
 func (c *Container) doStop(force bool) error {
+	if c.config != nil && c.config.Infra {
+		return nil
+	}
 	if c.state.State == StateStopped {
 		log.Infof("Container %s is already stopped.", c.id)
 		return nil
@@ -416,8 +457,9 @@ func (c *Container) kill() error {
 		return err
 	}
 
+	// NOTICE: there is no need to call setContainerState, because kill is a task-scope operation;
+	// after supports for different POSIX signals, kill -> stopped will be incorrect
 	c.state.State = StateStopped
-
 	return nil
 }
 
@@ -430,9 +472,11 @@ func (c *Container) delete(ctx context.Context) error {
 		return fmt.Errorf("sandbox is not ready, paused, or stopped, cannot delete container")
 	}
 
-	if err := libmica.Remove(c.id); err != nil {
-		log.Debugf("Failed to remove container %s.", err)
-		return err
+	if c.config == nil || !c.config.Infra {
+		if err := libmica.Remove(c.id); err != nil {
+			log.Debugf("Failed to remove container %s.", err)
+			return err
+		}
 	}
 	if err := c.sandbox.removeContainer(c.id); err != nil {
 		return err
@@ -445,8 +489,10 @@ func (c *Container) pause(ctx context.Context) error {
 	if c.state.State != StateRunning {
 		return fmt.Errorf("container is not running, cannot pause container")
 	}
-	err := libmica.Pause(c.id)
-	if err != nil {
+	if c.config != nil && c.config.Infra {
+		return c.setContainerState(ctx, StatePaused)
+	}
+	if err := libmica.Pause(c.id); err != nil {
 		return er.ErrMicadFailed
 	}
 	return c.setContainerState(ctx, StatePaused)
@@ -457,9 +503,11 @@ func (c *Container) resume(ctx context.Context) error {
 	if c.state.State != StatePaused && c.sandbox.state.State != StateStopped {
 		return fmt.Errorf("container is not paused, cannot resume container")
 	}
+	if c.config != nil && c.config.Infra {
+		return c.setContainerState(ctx, StateRunning)
+	}
 	log.Infof("Micran restart a client os, acting as `resume`.")
-	err := libmica.Start(c.id)
-	if err != nil {
+	if err := libmica.Start(c.id); err != nil {
 		return er.ErrMicadFailed
 	}
 	return c.setContainerState(ctx, StateRunning)
@@ -468,6 +516,9 @@ func (c *Container) resume(ctx context.Context) error {
 // update modifies the container's resources.
 // TODO: Implement container resource update.
 func (c *Container) update(ctx context.Context, resources specs.LinuxResources) error {
+	if c.config != nil && c.config.Infra {
+		return nil
+	}
 	if c.sandbox.state.State != StateRunning {
 		return fmt.Errorf("sandbox is not running, cannot stats container")
 	}
@@ -605,6 +656,9 @@ func validCompatibility(_ *ContainerConfig) bool {
 // validMicaContainer checks if the container configuration is valid for mica.
 // NOTICE: Xen is the only supported pedestal for now.
 func (c *Container) validMicaContainer() bool {
+	if c.config != nil && c.config.Infra {
+		return true
+	}
 	cwd, _ := os.Getwd()
 
 	osValid := validOS(c.GetOS())
@@ -634,6 +688,7 @@ func (c *Container) setContainerState(ctx context.Context, state StateString) er
 
 	log.Debugf("Set container state from %s to %s.", c.state.State, state)
 	c.state.State = state
+	c.updateExitNotifier(state)
 	if err := c.sandbox.StoreSandbox(ctx); err != nil {
 		log.Errorf("Save sandbox state failed.")
 		return err
@@ -642,6 +697,7 @@ func (c *Container) setContainerState(ctx context.Context, state StateString) er
 }
 
 const num2CapRatio = 100
+
 // getContainerCPULimit returns the effective CPU limit for a container.
 func (cfg *ContainerConfig) getContainerCPULimit() int {
 	// TODO: The runtime cannot detect the max number of CPUs Xen can handle.
@@ -661,7 +717,7 @@ func (cfg *ContainerConfig) getContainerCPULimit() int {
 		`, cfg.CpuLimit, cfg.CpuPeriod, cfg.CpuQuota, cfg.CpuShares, cfg.CpusetCpus)
 	}
 	if cfg != nil && cfg.CpuLimit > 0 {
-		return min(int(cfg.CpuLimit), int(num2CapRatio * systemCPUs))
+		return min(int(cfg.CpuLimit), int(num2CapRatio*systemCPUs))
 	}
 
 	// As a fallback, use all available CPUs, but reserve one for the host.
@@ -768,6 +824,7 @@ func (c *Container) RestoreState() error {
 	c.taskInfo = storage.TaskInfo
 	c.mounts = storage.Mounts
 	c.containerPath = storage.ContainerPath
+	c.updateExitNotifier(c.state.State)
 
 	return nil
 }
@@ -786,12 +843,11 @@ func (c *Container) stats() (*ContainerStats, error) {
 // TODO: For now, taskId is always a dummy because one client has one task.
 // TALK: Is it possible to apply a new task to the client OS in the future, perhaps via Xen?
 func (c *Container) wait4exit() (int32, error) {
-	if c.notOperational() {
-		return int32(er.UnexpectedStatus), errors.New("container is not ready or running, cannot wait for exit")
+	if c.state.State == StateStopped {
+		return ok0, nil
 	}
-	err := libmica.Stop(c.ID())
-	if err != nil {
-		return int32(er.MicadFailed), err
+	if c.notOperational() && c.state.State != StatePaused {
+		return int32(er.UnexpectedStatus), errors.New("container is not ready or running, cannot wait for exit")
 	}
 	return ok0, nil
 }
@@ -815,6 +871,9 @@ func (c *Container) setVcpuAffinity(cpuSet cpuset.CPUSet) error {
 
 // ioStream returns the IO streams for the container.
 func (c *Container) ioStream(taskID string) (io.WriteCloser, io.Reader, io.Reader, error) {
+	if c.config != nil && c.config.Infra {
+		return noopWriteCloser{}, bytes.NewReader(nil), bytes.NewReader(nil), nil
+	}
 	if c.notOperational() {
 		return nil, nil, nil, fmt.Errorf("container not ready or running, impossible to signal the container")
 	}
@@ -860,6 +919,23 @@ func (c *Container) GetPedGuestBootBin() string {
 
 func (c *Container) GetPedestalType() ped.PedType {
 	return c.config.PedestalType
+}
+
+func (c *Container) updateExitNotifier(state StateString) {
+	switch state {
+	case StateStopped:
+		if c.exitNotifier != nil {
+			c.exitOnce.Do(func() {
+				close(c.exitNotifier)
+			})
+			c.exitNotifier = nil
+		}
+	default:
+		if c.exitNotifier == nil {
+			c.exitNotifier = make(chan struct{})
+		}
+		c.exitOnce = sync.Once{}
+	}
 }
 
 // notOperational checks if the container is not in a state to be operated on.

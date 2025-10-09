@@ -168,48 +168,68 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 		annotationFirmware = strings.TrimSpace(ocispec.Annotations[defs.FirmwarePath])
 	}
 
-	// Resolve firmware path priority: annotation > runtime default > client.conf > discovery
-	var elfPath string
-	switch {
-	case annotationFirmware != "":
-		// annotation wins
-		if resolved, err := resolveFirmwarePath(annotationFirmware, true); err != nil {
-			return nil, fmt.Errorf("failed to resolve firmware path from annotation: %w", err)
-		} else {
-			elfPath = resolved
-		}
-	case strings.TrimSpace(defaultFirmwarePath) != "":
-		if resolved, err := resolveFirmwarePath(defaultFirmwarePath, false); err != nil {
-			return nil, fmt.Errorf("failed to resolve firmware path from runtime config: %w", err)
-		} else {
-			elfPath = resolved
-		}
-	default:
-		confPath := strings.TrimSpace(micaConf[defs.ElfPath])
-		if confPath != "" {
-			resolved, err := resolveFirmwarePath(confPath, false)
-			if err != nil {
-				return nil, fmt.Errorf("failed to resolve firmware path from %s: %w", defs.DefaultClientConf, err)
+	hasMicranAnnotation := false
+	if ocispec.Annotations != nil {
+		for key := range ocispec.Annotations {
+			if strings.HasPrefix(key, defs.MicraAnnotationPrefix) {
+				hasMicranAnnotation = true
+				break
 			}
-			elfPath = resolved
 		}
 	}
 
-	// Validate ElfPath - critical for RTOS execution
-	if elfPath == "" {
-		// Try default paths
-		defaultElfPath := filepath.Join(baseRoot, "zephyr.elf")
-		if _, err := os.Stat(defaultElfPath); err == nil {
-			elfPath = defaultElfPath
-			log.Debugf("using default elf path: %s", elfPath)
-		} else {
-			// Last resort - look for any .elf file in rootfs
-			elfFiles, _ := filepath.Glob(filepath.Join(baseRoot, "*.elf"))
-			if len(elfFiles) > 0 {
-				elfPath = elfFiles[0]
-				log.Debugf("found elf file: %s", elfPath)
+	isInfraCandidate := false
+	if ocispec.Linux != nil {
+		for _, ns := range ocispec.Linux.Namespaces {
+			if ns.Type == specs.NetworkNamespace {
+				isInfraCandidate = ns.Path == ""
+				break
+			}
+		}
+	}
+
+	isInfra := isInfraCandidate && annotationFirmware == "" && len(micaConf) == 0 && !hasMicranAnnotation
+
+	// Resolve firmware path priority: annotation > runtime default > client.conf > discovery
+	var elfPath string
+	if !isInfra {
+		switch {
+		case annotationFirmware != "":
+			if resolved, err := resolveFirmwarePath(annotationFirmware, true); err != nil {
+				return nil, fmt.Errorf("failed to resolve firmware path from annotation: %w", err)
 			} else {
-				return nil, fmt.Errorf("no elf file found in container rootfs and no clientpath specified in %s", defs.DefaultClientConf)
+				elfPath = resolved
+			}
+		case strings.TrimSpace(defaultFirmwarePath) != "":
+			if resolved, err := resolveFirmwarePath(defaultFirmwarePath, false); err != nil {
+				return nil, fmt.Errorf("failed to resolve firmware path from runtime config: %w", err)
+			} else {
+				elfPath = resolved
+			}
+		default:
+			confPath := strings.TrimSpace(micaConf[defs.ElfPath])
+			if confPath != "" {
+				resolved, err := resolveFirmwarePath(confPath, false)
+				if err != nil {
+					return nil, fmt.Errorf("failed to resolve firmware path from %s: %w", defs.DefaultClientConf, err)
+				}
+				elfPath = resolved
+			}
+		}
+
+		if elfPath == "" {
+			defaultElfPath := filepath.Join(baseRoot, "zephyr.elf")
+			if _, err := os.Stat(defaultElfPath); err == nil {
+				elfPath = defaultElfPath
+				log.Debugf("using default elf path: %s", elfPath)
+			} else {
+				elfFiles, _ := filepath.Glob(filepath.Join(baseRoot, "*.elf"))
+				if len(elfFiles) > 0 {
+					elfPath = elfFiles[0]
+					log.Debugf("found elf file: %s", elfPath)
+				} else {
+					return nil, fmt.Errorf("no elf file found in	container rootfs and no clientpath specified in %s", defs.DefaultClientConf)
+				}
 			}
 		}
 	}
@@ -239,6 +259,7 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 		MemorySwappinessMB:  nil,
 		OomKillDisable:      false,
 	}
+	config.Infra = isInfra
 
 	// TODO: remove the duplicated parsing
 	if err := config.ParseOCICPUResources(&ocispec); err != nil {
@@ -284,7 +305,7 @@ func SandboxConfig(ocispec *specs.Spec, rc RuntimeConfig, bundle, sbContainerID 
 		if rc.MinContainerMemMB > 0 {
 			containerConfig.MemoryMinMB = rc.MinContainerMemMB
 		} else {
-			containerConfig.MemoryMinMB = def.DefaultMinMemMB
+			containerConfig.MemoryMinMB = defs.DefaultMinMemMB
 		}
 	}
 	// Clamp to limit if applicable
