@@ -65,7 +65,7 @@ type SandboxTraits interface {
 	PauseContainer(ctx context.Context, id string) error
 	ResumeContainer(ctx context.Context, id string) error
 	UpdateContainer(ctx context.Context, id string, resources specs.LinuxResources) error
-	WaitTaskExit(ctx context.Context, id string, pid string) (int32, error)
+	WaitContainerExit(ctx context.Context, id string) (int32, error)
 	SignalTask(ctx context.Context, containerID string, signal syscall.Signal) error
 	WinResize(ctx context.Context, containerID string, height, width uint32) error
 }

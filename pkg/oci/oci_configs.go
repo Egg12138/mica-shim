@@ -83,7 +83,7 @@ func bundleRootfs(bundle string) string {
 func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerType, detach bool, defaultFirmwarePath string) (*cntr.ContainerConfig, error) {
 	configPath := filepath.Join(bundleRootfs(bundle), defs.DefaultClientConf)
 	log.Debugf("config path = %s", configPath)
-	micaConf, err := utils.ParseConfigINI(configPath, defs.OKSectionList[:])
+	micaConf, err := utils.ParseConfigINI(configPath, defs.MicaConfSectionTitles[:])
 	log.Pretty("mica config: %v", micaConf)
 
 	// Debug: Check if file exists and list all parsed keys

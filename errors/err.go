@@ -24,9 +24,9 @@ func new(code ErrCode, msg string) *MicranErr {
 // TALK: 错误语义的一致性，包含性非常糟糕
 const (
 	InvalidState ErrCode = iota
+	NotFound
 	SocketFailed
 	Invalid
-	NotFound
 	AlreadyExists
 	MicadFailed
 	DuplicatedKey

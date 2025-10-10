@@ -604,12 +604,9 @@ func (s *Sandbox) GetOOMEvent(ctx context.Context) (string, error) {
 
 // Not supported well
 // TODO: aftet unified micran and micad, we can achive sending signals to RTOS clients
+// return int perform as an exit code placeholder for now
 // NOTICE: container == task == RTOS Client
-func (s *Sandbox) WaitTaskExit(ctx context.Context, containerID string, taskid string) (int32, error) {
-	if defs.IsMock {
-		log.Infof("WaitTaskExit(mock): container=%s task=%s", containerID, taskid)
-		return ok0, nil
-	}
+func (s *Sandbox) WaitContainerExit(ctx context.Context, containerID string) (int32, error) {
 
 	c, ok := s.containers[containerID]
 	if !ok {
@@ -619,6 +616,8 @@ func (s *Sandbox) WaitTaskExit(ctx context.Context, containerID string, taskid s
 	if c.state.State == StateStopped {
 		return ok0, nil
 	}
+
+	log.Infof("WaitContainerExit: container=%s ", containerID)
 
 	if c.exitNotifier == nil {
 		c.updateExitNotifier(c.state.State)

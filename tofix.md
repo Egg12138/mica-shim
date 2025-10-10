@@ -19,12 +19,13 @@
 - [x] duplciated config parsing
 - [x] sandbox state.json not cleaned -- after delete container
 - [ ] sandbox pod net namespace规划
-- [ ] `ttyRPMSG<id>` 在stop后会变化
+- [ ] `ttyRPMSG<id>` id 不匹配
+- [ ] ttyRPMSGid issue
 - [ ] ==我们需要MICA monitor!!==
-- [ ] kill如果正常执行，可以保证**幂等**，然而如果kill的是UNKNOWN状态的容器，会 `ontainer not found, mark status to UNKNOWN`
+- [x] kill如果正常执行，可以保证**幂等**，然而如果kill的是UNKNOWN状态的容器，会 `ontainer not found, mark status to UNKNOWN`
 - [ ] pod container corner cases
 - [ ] kubectl pods status inconsistency
-- [ ] drop-in configs 解析顺序不当，override的优先级用最新的  docs/arch.md的设计来做
+- [x] drop-in configs 解析顺序不当，override的优先级用最新的  docs/arch.md的设计来做
 - [x] cpu request, (oci spec cpu.share)
 - [ ] memory 监控
 - [ ] annotation downfall example
@@ -32,6 +33,7 @@
 - [ ] show cadvisor CPU Topology
 - [ ] service::Stats 完整实现
 - [ ] k8s/cadvisor感知到整个机器的全部资源，而不是Dom0的资源
+- [ ] `/dev/ttyRPMSG%d` 应该 保证和容器ID是映射的
 
 
 # flaws and features
@@ -162,10 +164,16 @@ type PedTraits interface {
 - [ ] 加入config items allowlist
 - [ ] 当前micad的实践有很糟糕的地方： 大量使用 `micad &` 来进行后台， 这样是不合适 
 - [ ] xen DomainID 持续递增有风险
-
+- [ ] 支持 sandbox API, 改用 containerd 2.X
 
 # performance
 
 
 - [x] ParseConfigINI
 - [ ] 为 dom0 预留核 - 修改计算逻辑
+
+
+# tmp
+
+- 演示时 确保 /dev/ttyRPMSG 在
+> 比如 拉两遍

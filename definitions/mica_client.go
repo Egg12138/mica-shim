@@ -26,5 +26,5 @@ const (
 
 var (
 	PreservedOS   = [...]string{"zephyr", "uniproton", "linux"}
-	OKSectionList = [...]string{"mica", "more"}
+	MicaConfSectionTitles = [...]string{"mica"}
 )
