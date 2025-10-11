@@ -145,7 +145,7 @@ func (s *stdinStream) Close() error {
 		return er.IOClosed
 	}
 
-	err := s.sandbox.resManager.closeTaskStdin(s.container, s.taskId)
+	err := s.sandbox.resManager.closeContainerStdin(s.container)
 	if err == nil {
 		s.closed = true
 	}
