@@ -242,7 +242,7 @@ func From(ct vc.ContainerType) ContainerType {
 // loadSandbox restores a sandbox from disk by its ID.
 func loadSandbox(ctx context.Context, id string) (sandbox *Sandbox, err error) {
 	if id == "" {
-		return nil, er.ErrEmptySandboxID
+		return nil, er.EmptySandboxID
 	}
 
 	log.Debugf("Trying to restore sandbox from disk.")
@@ -270,11 +270,11 @@ func loadSandbox(ctx context.Context, id string) (sandbox *Sandbox, err error) {
 func CleanupContainer(ctx context.Context, sandboxID string, containerID string, force bool) error {
 	log.Debugf("Cleaning up sandbox %s, container %s.", sandboxID, containerID)
 	if sandboxID == "" {
-		return er.ErrEmptySandboxID
+		return er.EmptySandboxID
 	}
 
 	if containerID == "" {
-		return er.ErrEmptyContainerID
+		return er.EmptyContainerID
 	}
 
 	// BUG: Logic error, config loader is incomplete:
@@ -319,7 +319,7 @@ func newContainer(ctx context.Context, s *Sandbox, cc *ContainerConfig) (*Contai
 
 	if cc.ID == "" {
 		log.Debugf("Empty container id.")
-		return &Container{}, er.ErrEmptyContainerID
+		return &Container{}, er.EmptyContainerID
 	}
 
 	c := &Container{
@@ -493,7 +493,7 @@ func (c *Container) pause(ctx context.Context) error {
 		return c.setContainerState(ctx, StatePaused)
 	}
 	if err := libmica.Pause(c.id); err != nil {
-		return er.ErrMicadFailed
+		return er.MicadOpFailed
 	}
 	return c.setContainerState(ctx, StatePaused)
 }
@@ -508,7 +508,7 @@ func (c *Container) resume(ctx context.Context) error {
 	}
 	log.Infof("Micran restart a client os, acting as `resume`.")
 	if err := libmica.Start(c.id); err != nil {
-		return er.ErrMicadFailed
+		return er.MicadOpFailed
 	}
 	return c.setContainerState(ctx, StateRunning)
 }
@@ -847,7 +847,7 @@ func (c *Container) wait4exit() (int32, error) {
 		return ok0, nil
 	}
 	if c.notOperational() && c.state.State != StatePaused {
-		return int32(er.UnexpectedStatus), errors.New("container is not ready or running, cannot wait for exit")
+		return ok0, errors.New("container is not ready or running, cannot wait for exit")
 	}
 	return ok0, nil
 }

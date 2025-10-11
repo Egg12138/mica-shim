@@ -36,7 +36,7 @@ func (s *shimService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) 
 		r.Bundle, r.Stdin, r.Stdout, r.Stderr, r.Terminal)
 
 	if err := utils.ValidContainerID(r.ID); err != nil {
-		return nil, er.ErrInvalidCID
+		return nil, er.InvalidCID
 	}
 
 	type Result struct {
@@ -94,7 +94,7 @@ func (s *shimService) Start(ctx context.Context, r *taskAPI.StartRequest) (*task
 	c, found := s.containers[r.ID]
 	if c == nil || !found {
 		log.Debugf("container %s not found in shim service storage", r.ID)
-		return nil, er.ErrContainerNotFound
+		return nil, er.ContainerNotFound
 	}
 
 	s.eventSendMu.Lock()
@@ -186,7 +186,7 @@ func (s *shimService) Pause(ctx context.Context, r *taskAPI.PauseRequest) (*ptyp
 	defer s.mu.Unlock()
 	c, found := s.containers[r.ID]
 	if !found || c == nil {
-		return nil, er.ErrContainerNotFound
+		return nil, er.ContainerNotFound
 	}
 	c.status = task.Status_PAUSING
 	err := s.sandbox.PauseContainer(ctx, r.ID)
@@ -219,7 +219,7 @@ func (s *shimService) Resume(ctx context.Context, r *taskAPI.ResumeRequest) (*pt
 
 	c, found := s.containers[r.ID]
 	if c == nil || !found {
-		return nil, er.ErrContainerNotFound
+		return nil, er.ContainerNotFound
 	}
 
 	err := s.sandbox.ResumeContainer(ctx, c.id)
@@ -250,7 +250,7 @@ func (s *shimService) Kill(ctx context.Context, r *taskAPI.KillRequest) (*ptypes
 
 	c, found := s.containers[r.ID]
 	if !found {
-		return nil, er.ErrContainerNotFound
+		return nil, er.ContainerNotFound
 	}
 
 	// reject kill request for some exec process in a container due to micran 1:1:1 model
@@ -313,7 +313,7 @@ func (s *shimService) KillBySignal(ctx context.Context, r *taskAPI.KillRequest) 
 
 	c, found := s.containers[r.ID]
 	if c == nil || !found {
-		return nil, er.ErrContainerNotFound
+		return nil, er.ContainerNotFound
 	}
 
 	// Only supported
@@ -339,7 +339,7 @@ func (s *shimService) ResizePty(ctx context.Context, r *taskAPI.ResizePtyRequest
 	log.Debugf("resize pty: (%d, %d)", r.Height, r.Width)
 	c, found := s.containers[r.ID]
 	if !found || c == nil {
-		return nil, er.ErrContainerNotFound
+		return nil, er.ContainerNotFound
 	}
 
 	err := s.sandbox.WinResize(ctx, r.ID, r.Height, r.Width)
@@ -355,7 +355,7 @@ func (s *shimService) CloseIO(ctx context.Context, r *taskAPI.CloseIORequest) (*
 	defer s.mu.Unlock()
 	c, found := s.containers[r.ID]
 	if c == nil || !found {
-		return nil, er.ErrContainerNotFound
+		return nil, er.ContainerNotFound
 	}
 
 	// TALK: if execid is not empty, should we close IO still?
@@ -384,7 +384,7 @@ func (s *shimService) Update(ctx context.Context, r *taskAPI.UpdateTaskRequest) 
 	defer s.mu.Unlock()
 	c, found := s.containers[r.ID]
 	if c == nil || !found {
-		return nil, er.ErrContainerNotFound
+		return nil, er.ContainerNotFound
 	}
 
 	var res *specs.LinuxResources
@@ -411,7 +411,7 @@ func (s *shimService) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*taskAP
 	c, found := s.containers[r.ID]
 	if c == nil || !found {
 		s.mu.Unlock()
-		return nil, er.ErrContainerNotFound
+		return nil, er.ContainerNotFound
 	}
 	// Capture current status and the exit channel, then release the lock while waiting
 	exitCh := c.exitCh
@@ -482,7 +482,7 @@ func (s *shimService) Stats(ctx context.Context, r *taskAPI.StatsRequest) (*task
 	
 	c, found := s.containers[r.ID]
 	if c == nil || !found {
-		return nil, er.ErrContainerNotFound
+		return nil, er.ContainerNotFound
 	}
 
 	stats, err := marshalMetrics(ctx, s, r.ID)

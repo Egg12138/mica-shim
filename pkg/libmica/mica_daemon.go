@@ -130,7 +130,7 @@ func DaemonState() (*MicaDaemonState, error) {
 			state.Listening = false
 			state.State = DaemonStopped
 			state.Pid = 0
-			return &state, er.ErrMicadNotRunning
+			return &state, er.MicadNotRunning
 		}
 	}
 

@@ -377,7 +377,7 @@ func parseVcpuLine(line string) (VCPUEntry, error) {
 	re := regexp.MustCompile(`^(\S.{31})\s+(\d+)\s+(\d+)\s+(\d+|-)\s+([r-])([b-])([-])\s+([\d.]+)\s+(.+)$`)
 	matches := re.FindStringSubmatch(line)
 	if matches == nil {
-		return VCPUEntry{}, er.ErrCommandOutputParse
+		return VCPUEntry{}, er.ErrOutputParse
 	}
 	
 	domainName := strings.TrimSpace(matches[1])

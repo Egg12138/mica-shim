@@ -4,11 +4,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	defs "mica-shim/definitions"
 	er "mica-shim/errors"
-	libmica "mica-shim/pkg/libmica"
+	log "mica-shim/logger"
+	"mica-shim/pkg/libmica"
+	utils "mica-shim/pkg/utils"
 )
 
 type iostream struct {
@@ -56,30 +59,55 @@ func (s *iostream) ensureDevice() error {
 	if s.pty != nil {
 		return nil
 	}
-	// naive discovery: first existing /dev/ttyRPMSG%d
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		for i := 0; i < libmica.MaxPTYDevices; i++ {
-			path := fmt.Sprintf(libmica.PTYDevicePattern, i)
-			fi, err := os.Stat(path)
-			if err != nil {
-				continue
-			}
-			if fi.Mode()&os.ModeCharDevice == 0 {
-				continue
-			}
-			f, err := os.OpenFile(path, os.O_RDWR, 0)
-			if err != nil {
-				continue
-			}
+	// Highest priority: explicit override for debugging/testing.
+	if override := os.Getenv("MICRAN_PTY_DEVICE"); override != "" {
+		f, err := os.OpenFile(override, os.O_RDWR, 0)
+		if err == nil {
 			s.pty = f
 			return nil
 		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("pty device not found")
+	}
+
+	shortID := ""
+	if s.container != nil {
+		shortID = utils.ShortID(s.container.id)
+	}
+
+	if shortID == "" {
+		return er.EmptyContainerID
+	}
+
+	// Prefer client-name based symlink provided by micad (ttyRPMSG_<name> -> /dev/pts/N).
+	symlink := fmt.Sprintf(libmica.PTYDevPattern, shortID)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		target, err := filepath.EvalSymlinks(symlink)
+		if err == nil {
+			if f, err := os.OpenFile(target, os.O_RDWR, 0); err == nil {
+				s.pty = f
+				return nil
+			}
+		} else if !os.IsNotExist(err) {
+			log.Infof("wait for pty device %s prepared", target)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+
+    // Legacy numeric discovery ONLY in mock mode
+    if defs.IsMock {
+        deadline := time.Now().Add(2 * time.Second)
+        for time.Now().Before(deadline) {
+            for i := range libmica.MaxPTYDevLegacyNum {
+                path := fmt.Sprintf(libmica.PTYDevLegacyPattern, i)
+                if f, err := os.OpenFile(path, os.O_RDWR, 0); err == nil {
+                    s.pty = f
+                    return nil
+                }
+            }
+            time.Sleep(100 * time.Millisecond)
+        }
+    }
+    return fmt.Errorf("pty device not found for client %s", s.container.id)
 }
 
 func (s *iostream) stdin() io.WriteCloser {
@@ -96,7 +124,7 @@ func (s *iostream) stderr() io.Reader {
 
 func (s *stdinStream) Write(data []byte) (n int, err error) {
 	if s.closed {
-		return 0, er.ErrIOClose
+		return 0, er.IOClosed
 	}
 
 	if s.container != nil && s.container.config != nil && s.container.config.Infra {
@@ -114,7 +142,7 @@ func (s *stdinStream) Write(data []byte) (n int, err error) {
 
 func (s *stdinStream) Close() error {
 	if s.closed {
-		return er.ErrIOClose
+		return er.IOClosed
 	}
 
 	err := s.sandbox.resManager.closeTaskStdin(s.container, s.taskId)
@@ -127,7 +155,7 @@ func (s *stdinStream) Close() error {
 
 func (s *stdoutStream) Read(data []byte) (n int, err error) {
 	if s.closed {
-		return 0, er.ErrIOClose
+		return 0, er.IOClosed
 	}
 	if s.container != nil && s.container.config != nil && s.container.config.Infra {
 		// EOF immediately
@@ -144,7 +172,7 @@ func (s *stdoutStream) Read(data []byte) (n int, err error) {
 
 func (s *stderrStream) Read(data []byte) (n int, err error) {
 	if s.closed {
-		return 0, er.ErrIOClose
+		return 0, er.IOClosed
 	}
 
 	// same as stdout for now

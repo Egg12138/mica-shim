@@ -344,7 +344,7 @@ func CreateMicaClient(conf MicaClientConf) error {
 // TODO: consider better way to parse variable parameters
 func micaCtl(cmd MicaCommand, rawId string, opts... string) error {
 	if !validSocketPath(defs.MicaCreatSocketPath) {
-		return er.ErrMicadNotRunning
+		return er.MicadNotRunning
 	}
 	// workaround: pause => stop
 	switch cmd {

@@ -188,7 +188,17 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 		}
 	}
 
-	isInfra := isInfraCandidate && annotationFirmware == "" && len(micaConf) == 0 && !hasMicranAnnotation
+	isCRIInfra := Type == cntr.PodSandbox
+	infraEligible := annotationFirmware == "" && len(micaConf) == 0 && !hasMicranAnnotation
+
+	isInfra := false
+	switch {
+	case isCRIInfra && infraEligible:
+		isInfra = true
+	case infraEligible && isInfraCandidate:
+		// fallback: allow empty-netns inference for ctr/nerdctl flows.
+		isInfra = true
+	}
 
 	// Resolve firmware path priority: annotation > runtime default > client.conf > discovery
 	var elfPath string

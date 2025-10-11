@@ -354,13 +354,8 @@ func waitContainerExit(ctx context.Context, s *shimService, c *container) (int32
 		log.WithField("container", c.id).Infof("No IO activity; mock exit after %s.", mockExitTimeout)
 	}
 
-    // Ask the sandbox to wait for container (container:task = 1:1) exit (non-destructive path).
-	ret, err := s.sandbox.WaitContainerExit(ctx, c.id)
-	if err != nil && ret == okExitCode {
-			ret = Exit255
-	}
-
 	timeStamp := time.Now()
+	ret := okExitCode
 
 	s.mu.Lock()
 	// Update container status and exit information.
@@ -369,11 +364,11 @@ func waitContainerExit(ctx context.Context, s *shimService, c *container) (int32
 			s.monitor <- nil
 		}
 
-		if err = s.sandbox.Stop(ctx, true); err != nil {
+		if err := s.sandbox.Stop(ctx, true); err != nil {
 			log.Errorf("Failed to stop sandbox %s.", s.sandbox.SandboxID())
 		}
 
-		if err = s.sandbox.Delete(ctx); err != nil {
+		if err := s.sandbox.Delete(ctx); err != nil {
 			log.Errorf("Failed to delete sandbox %s.", s.sandbox.SandboxID())
 		}
 	} else {
@@ -389,15 +384,15 @@ func waitContainerExit(ctx context.Context, s *shimService, c *container) (int32
 	log.Debugf("The container %s status is StatusStopped.", c.id)
 	s.mu.Unlock()
 
-	go func() {
+	go func(ts time.Time, cid string, status int) {
 		s.ec <- exit{
-			ts:     timeStamp,
-			cid:    c.id,
+			ts:     ts,
+			cid:    cid,
 			execid: "",
 			pid:    shimPid,
-			status: int(ret),
+			status: status,
 		}
-	}()
+	}(timeStamp, c.id, int(ret))
 
 	return int32(ret), nil
 }

@@ -214,7 +214,7 @@ func (s *Sandbox) AllAnnotations() map[string]string {
 
 func (s *Sandbox) DaemonState() *libmica.MicaDaemonState {
 	state, err := libmica.DaemonState()
-	if err != nil && !errors.Is(err, er.ErrMicadNotRunning) {
+	if err != nil && !errors.Is(err, er.MicadNotRunning) {
 		log.Warnf("failed to fetch daemon state: %v", err)
 		return nil
 	}
@@ -360,7 +360,7 @@ func (s *Sandbox) CreateContainer(ctx context.Context, config ContainerConfig) (
 	id := config.ID
 	if _, ok := s.containers[id]; ok {
 		log.Errorf("container %s already exists", id)
-		return nil, er.ErrAlreadyExists
+		return nil, er.AlreadyExists
 	}
 	s.config.ContainerConfigs[id] = &config
 	newc := s.config.ContainerConfigs[id]
@@ -448,11 +448,11 @@ func (s *Sandbox) removeContainer(containerID string) error {
 	}
 
 	if containerID == "" {
-		return er.ErrEmptyContainerID
+		return er.EmptyContainerID
 	}
 
 	if _, ok := s.containers[containerID]; !ok {
-		return errors.Wrapf(er.ErrContainerNotFound, "Could not remove the container %q from the sandbox %q containers list",
+		return errors.Wrapf(er.ContainerNotFound, "Could not remove the container %q from the sandbox %q containers list",
 			containerID, s.id)
 	}
 
@@ -463,15 +463,15 @@ func (s *Sandbox) removeContainer(containerID string) error {
 func (s *Sandbox) DeleteContainer(ctx context.Context, id string) (ContainerTraits, error) {
 	log.Debugf("delete container %s from sandbox", id)
 	if s == nil {
-		return nil, er.ErrSandboxNil
+		return nil, er.SandboxNotFound
 	}
 	if id == "" {
-		return nil, er.ErrEmptyContainerID
+		return nil, er.EmptyContainerID
 	}
 
 	c, ok := s.containers[id]
 	if !ok {
-		return nil, er.ErrContainerNotFound
+		return nil, er.ContainerNotFound
 	}
 
 	if err := c.delete(ctx); err != nil {
@@ -493,7 +493,7 @@ func (s *Sandbox) DeleteContainer(ctx context.Context, id string) (ContainerTrai
 func (s *Sandbox) StartContainer(ctx context.Context, id string) (ContainerTraits, error) {
 	c, ok := s.containers[id]
 	if !ok {
-		return nil, er.ErrContainerNotFound
+		return nil, er.ContainerNotFound
 	}
 
 	// start client os, os start the task from entry inside the OS image
@@ -514,7 +514,7 @@ func (s *Sandbox) StartContainer(ctx context.Context, id string) (ContainerTrait
 func (s *Sandbox) StopContainer(ctx context.Context, id string, force bool) (ContainerTraits, error) {
 	c, ok := s.containers[id]
 	if !ok {
-		return nil, er.ErrContainerNotFound
+		return nil, er.ContainerNotFound
 	}
 	if err := c.stop(ctx, force); err != nil {
 		return nil, err
@@ -530,7 +530,7 @@ func (s *Sandbox) StopContainer(ctx context.Context, id string, force bool) (Con
 func (s *Sandbox) KillContainer(ctx context.Context, id string) (ContainerTraits, error) {
 	c, ok := s.containers[id]
 	if !ok {
-		return nil, er.ErrContainerNotFound
+		return nil, er.ContainerNotFound
 	}
 	if err := c.kill(); err != nil {
 		return nil, err
@@ -542,7 +542,7 @@ func (s *Sandbox) StatusContainer(id string) (ContainerStatus, error) {
 	cs := ContainerStatus{}
 	if id == "" {
 		log.Debugf("status container: empty id")
-		return cs, er.ErrEmptyContainerID
+		return cs, er.EmptyContainerID
 	}
 
 	if c, ok := s.containers[id]; ok {
@@ -568,7 +568,7 @@ func (s *Sandbox) StatusContainer(id string) (ContainerStatus, error) {
 func (s *Sandbox) StatsContainer(ctx context.Context, id string) (ContainerStats, error) {
 	c, ok := s.containers[id]
 	if !ok {
-		return ContainerStats{}, er.ErrContainerNotFound
+		return ContainerStats{}, er.ContainerNotFound
 	}
 
 	stats, err := c.stats()
@@ -587,12 +587,12 @@ func (s *Sandbox) Stats(ctx context.Context) (SandboxStats, error) {
 
 func (s *Sandbox) IOStream(containerID, taskID string) (io.WriteCloser, io.Reader, io.Reader, error) {
 	if s.state.State != StateRunning {
-		return nil, nil, nil, er.ErrSandboxDown
+		return nil, nil, nil, er.SandboxDown
 	}
 
 	c, ok := s.containers[containerID]
 	if !ok {
-		return nil, nil, nil, er.ErrContainerNotFound
+		return nil, nil, nil, er.ContainerNotFound
 	}
 
 	return c.ioStream(taskID)
@@ -610,7 +610,7 @@ func (s *Sandbox) WaitContainerExit(ctx context.Context, containerID string) (in
 
 	c, ok := s.containers[containerID]
 	if !ok {
-		return int32(er.NotFound), er.ErrContainerNotFound
+		return ok0, er.ContainerNotFound
 	}
 
 	if c.state.State == StateStopped {
@@ -633,13 +633,13 @@ func (s *Sandbox) WaitContainerExit(ctx context.Context, containerID string) (in
 
 func (s *Sandbox) SignalTask(ctx context.Context, containerID string, signal syscall.Signal) error {
 	if s.state.State != StateRunning {
-		return er.ErrSandboxDown
+		return er.SandboxDown
 	}
 
 	log.Debugf("sending signal %s for containers %s in sandbox %s", uint32(signal), containerID, s.id)
 	c, ok := s.containers[containerID]
 	if !ok || c == nil {
-		return er.ErrContainerNotFound
+		return er.ContainerNotFound
 	}
 
 	return c.Signal(ctx, signal)
@@ -647,12 +647,12 @@ func (s *Sandbox) SignalTask(ctx context.Context, containerID string, signal sys
 
 func (s *Sandbox) WinResize(ctx context.Context, containerID string, height, width uint32) error {
 	if s.state.State != StateRunning {
-		return er.ErrSandboxDown
+		return er.SandboxDown
 	}
 
 	c, ok := s.containers[containerID]
 	if c == nil || !ok {
-		return er.ErrContainerNotFound
+		return er.ContainerNotFound
 	}
 
 	return c.winresize(height, width)
@@ -662,7 +662,7 @@ func (s *Sandbox) PauseContainer(ctx context.Context, id string) error {
 
 	c, ok := s.containers[id]
 	if !ok {
-		return er.ErrContainerNotFound
+		return er.ContainerNotFound
 	}
 
 	if err := c.pause(ctx); err != nil {
@@ -679,7 +679,7 @@ func (s *Sandbox) PauseContainer(ctx context.Context, id string) error {
 func (s *Sandbox) ResumeContainer(ctx context.Context, id string) error {
 	c, ok := s.containers[id]
 	if !ok {
-		return er.ErrContainerNotFound
+		return er.ContainerNotFound
 	}
 
 	if err := c.resume(ctx); err != nil {
@@ -702,7 +702,7 @@ func (s *Sandbox) UpdateContainer(ctx context.Context, id string, resources spec
 
 	c, ok := s.containers[id]
 	if !ok {
-		return er.ErrContainerNotFound
+		return er.ContainerNotFound
 	}
 
 	if err := c.update(ctx, resources); err != nil {
@@ -727,7 +727,7 @@ func (s *Sandbox) UpdateContainer(ctx context.Context, id string, resources spec
 
 func (s *Sandbox) setSandboxState(state StateString) error {
 	if state == "" {
-		return er.ErrInvalidState
+		return er.InvalidState
 	}
 	s.state.State = state
 	return nil
@@ -778,7 +778,7 @@ func (s *Sandbox) newSandboxStoragePath() (string, error) {
 func (s *Sandbox) addContainer(c *Container) error {
 
 	if _, ok := s.containers[c.id]; ok {
-		return er.ErrDuplicatedKey
+		return er.DuplicatedKey
 	}
 	s.containers[c.id] = c
 	return nil
@@ -786,7 +786,7 @@ func (s *Sandbox) addContainer(c *Container) error {
 
 func (s *Sandbox) cleanSandboxStorage() error {
 	if s.id == "" {
-		return er.ErrEmptySandboxID
+		return er.EmptySandboxID
 	}
 	dir := s.sandboxStoragePath()
 	if err := os.RemoveAll(dir); err != nil {
@@ -1146,7 +1146,7 @@ func (s *Sandbox) getSandboxCpusetStr() (string, string, error) {
 // recalculate resources pool for clients and call pedestal to resize
 func (s *Sandbox) updateResources(ctx context.Context) error {
 	if s == nil {
-		return er.ErrSandboxNil
+		return er.SandboxNotFound
 	}
 
 	if s.config == nil {

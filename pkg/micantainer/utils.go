@@ -19,7 +19,7 @@ func initContainerTaskInSandbox(sandbox SandboxTraits, config *ContainerConfig) 
 	// Create a new RTOS task with current time as start time
 	task := &RTOSTask{
 		// start time should be the time of Start()
-		CreateTime:    time.Time{},
+		CreateTime:   time.Time{},
 		TaskID:       config.ID,
 		ReservedAddr: 0x1000, // Dummy address for now
 	}
@@ -57,7 +57,7 @@ func startClient(ctx context.Context, sandbox SandboxTraits, c *Container) error
 func createMicaClientConf(container *Container) (libmica.MicaClientConf, error) {
 	config := container.config
 	pedestal := HostPedType
-	name := container.ID()
+	name := utils.ShortID(container.id)
 	cpus, err := container.GetClientCPU()
 	conf := libmica.MicaClientConf{}
 	if err != nil {

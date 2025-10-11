@@ -16,11 +16,11 @@ import (
 // Constants
 // PTY device mapping and discovery constants
 const (
-	PTYDevicePattern     = "/dev/ttyRPMSG%d"
-	PTYDevicePrefix      = "/dev/ttyRPMSG"
+	PTYDevLegacyPattern  = "/dev/ttyRPMSG%d"
+	PTYDevPattern      = "/dev/ttyRPMSG_%s"
 	PTYWaitTimeout       = 30 * time.Second
 	PTYDiscoveryInterval = 500 * time.Millisecond
-	MaxPTYDevices        = 10
+	MaxPTYDevLegacyNum   = 10
 )
 
 // Types
@@ -183,8 +183,8 @@ func (mio *MicaIO) discoverPTYDevice() (*PTYDiscoveryResult, error) {
 func (mio *MicaIO) scanExistingPTYDevices() []string {
 	var devices []string
 
-	for i := 0; i < MaxPTYDevices; i++ {
-		ptyPath := fmt.Sprintf(PTYDevicePattern, i)
+	for i := 0; i < MaxPTYDevLegacyNum; i++ {
+		ptyPath := fmt.Sprintf(PTYDevLegacyPattern, i)
 		if stat, err := os.Stat(ptyPath); err == nil {
 			if stat.Mode()&os.ModeCharDevice != 0 {
 				devices = append(devices, ptyPath)

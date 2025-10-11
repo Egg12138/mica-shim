@@ -149,7 +149,7 @@ func (n *SandboxAgent) Cleanup() {
 func (n *SandboxAgent) ContainerVcpuSet(cid string) ([]int, error) {
 	list, ok := n.ContainerVcpus[cid]
 	if !ok {
-		return []int{}, er.ErrContainerNotFound
+		return []int{}, er.ContainerNotFound
 	}
 
 	return list, nil
