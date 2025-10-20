@@ -65,6 +65,11 @@ func (s *shimService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) 
 		s.containers[r.ID] = container
 		s.mu.Unlock()
 
+		pid := container.pid
+		if pid == 0 {
+			pid = shimPid
+		}
+
 		s.send(&events.TaskCreate{
 			ContainerID: r.ID,
 			Bundle:      r.Bundle,
@@ -77,11 +82,11 @@ func (s *shimService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) 
 			},
 			Checkpoint: r.Checkpoint,
 			// Pid is ExecID in comming task requests
-			Pid: shimPid,
+			Pid: pid,
 		})
 
 		return &taskAPI.CreateTaskResponse{
-			Pid: shimPid,
+			Pid: pid,
 		}, nil
 	}
 
@@ -114,14 +119,23 @@ func (s *shimService) Start(ctx context.Context, r *taskAPI.StartRequest) (*task
 		if err != nil {
 			return nil, errdefs.ToGRPC(err)
 		}
+		pid := c.pid
+		if pid == 0 {
+			pid = shimPid
+		}
 		s.send(&events.TaskStart{
 			ContainerID: c.id,
-			Pid:         shimPid,
+			Pid:         pid,
 		})
 	}
 
 	return &taskAPI.StartResponse{
-		Pid: shimPid,
+		Pid: func() uint32 {
+			if c.pid == 0 {
+				return shimPid
+			}
+			return c.pid
+		}(),
 	}, nil
 }
 
@@ -155,17 +169,22 @@ func (s *shimService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*ta
 		return nil, err
 	}
 
+	pid := c.pid
+	if pid == 0 {
+		pid = shimPid
+	}
+
 	s.send(&events.TaskDelete{
 		ContainerID: r.ID,
 		ExitedAt:    timestamppb.New(c.exitTime),
-		Pid:         shimPid,
+		Pid:         pid,
 		ExitStatus:  okExitCode,
 	})
 
 	return &taskAPI.DeleteResponse{
 		ExitStatus: okExitCode,
 		ExitedAt:   timestamppb.New(c.exitTime),
-		Pid:        shimPid,
+		Pid:        pid,
 	}, nil
 }
 
@@ -200,10 +219,10 @@ func (s *shimService) Pause(ctx context.Context, r *taskAPI.PauseRequest) (*ptyp
 
 	status, err := s.getContainerStatus(c.id)
 	if err != nil {
-	log.Debugf("failed to get container status, current status: %s, error: %v", status, err)
-	c.status = task.Status_UNKNOWN
-} else {
-	log.Debugf("successfully got container status: %s", status)
+		log.Debugf("failed to get container status, current status: %s, error: %v", status, err)
+		c.status = task.Status_UNKNOWN
+	} else {
+		log.Debugf("successfully got container status: %s", status)
 		c.status = status
 	}
 
@@ -475,11 +494,10 @@ func (s *shimService) Shutdown(ctx context.Context, r *taskAPI.ShutdownRequest) 
 
 }
 
-
 func (s *shimService) Stats(ctx context.Context, r *taskAPI.StatsRequest) (*taskAPI.StatsResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	
+
 	c, found := s.containers[r.ID]
 	if c == nil || !found {
 		return nil, er.ContainerNotFound

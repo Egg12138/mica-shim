@@ -42,6 +42,7 @@ type container struct {
 	status      task.Status
 	terminal    bool
 	mounted     bool
+	pid         uint32
 }
 
 // newContainer creates a new container object for the shim.
@@ -69,6 +70,7 @@ func newContainer(s *shimService, r *taskAPI.CreateTaskRequest, cType cntr.Conta
 		status:      task.Status_CREATED,
 		terminal:    r.Terminal,
 		mounted:     mounted,
+		pid:         shimPid,
 	}
 
 	return c, nil

@@ -229,6 +229,13 @@ func (s *Sandbox) GetNetNamespace() string {
 	return s.network.NetID()
 }
 
+func (s *Sandbox) NetnsHolderPID() int {
+	if cfg := s.config; cfg != nil {
+		return cfg.NetworkConfig.HolderPid
+	}
+	return 0
+}
+
 func (s *Sandbox) GetContainer(id string) ContainerTraits {
 	return s.containers[id]
 }
@@ -348,6 +355,10 @@ func (s *Sandbox) Delete(ctx context.Context) error {
 		if err := c.delete(ctx); err != nil {
 			log.Errorf("failed to cleanup container %s", c.id)
 		}
+	}
+
+	if err := s.removeNetwork(); err != nil {
+		log.Warnf("failed to remove network for sandbox %s: %v", s.id, err)
 	}
 
 	return s.cleanSandboxStorage()
@@ -798,6 +809,13 @@ func (s *Sandbox) cleanSandboxStorage() error {
 func (s *Sandbox) removeNetwork() error {
 	log.Infof("removed network of sandbox %s", s.id)
 	log.Debugf("remove network for sandbox %s", s.id)
+	if s.config == nil {
+		return nil
+	}
+
+	if err := s.config.NetworkConfig.NetworkCleanup(s.id); err != nil {
+		return err
+	}
 	return nil
 }
 

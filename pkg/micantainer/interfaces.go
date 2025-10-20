@@ -43,6 +43,7 @@ type SandboxTraits interface {
 	GetAllContainers() []ContainerTraits
 	GetContainer(id string) ContainerTraits
 	GetNetNamespace() string
+	NetnsHolderPID() int
 	Stats(ctx context.Context) (SandboxStats, error)
 
 	// Sandbox Lifecycle methods
