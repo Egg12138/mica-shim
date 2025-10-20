@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/cpuset"
 	"github.com/opencontainers/runtime-spec/specs-go"
@@ -376,7 +377,7 @@ func parseVcpuLine(line string) (VCPUEntry, error) {
 	re := regexp.MustCompile(`^(\S.{31})\s+(\d+)\s+(\d+)\s+(\d+|-)\s+([r-])([b-])([-])\s+([\d.]+)\s+(.+)$`)
 	matches := re.FindStringSubmatch(line)
 	if matches == nil {
-		return VCPUEntry{}, er.ErrCommandOutputParse
+		return VCPUEntry{}, er.ErrOutputParse
 	}
 	
 	domainName := strings.TrimSpace(matches[1])
@@ -437,18 +438,31 @@ func MemoryMB() (free, total uint32) {
 	return free, total
 }
 
+var (
+	maxCPUNum     uint32
+	maxCPUNumOnce sync.Once
+)
+
 // MaxCPUNum returns the maximum number of CPUs available on the physical machine.
-// TODO: make this function a FnOnce for lower cost
+// This function uses sync.Once to ensure the value is calculated only once,
+// as the physical CPU count is static and won't change during runtime.
 func MaxCPUNum() uint32 {
 	if defs.IsMock {
 		return uint32(runtime.NumCPU())
 	}
-	i, err := xinfo()
-	if err != nil {
-		log.Debugf("failed to get machine info: %v", err)
-		return uint32(runtime.NumCPU())
-	}
-	return i.nodePhysicalCPUNum()
+	
+	maxCPUNumOnce.Do(func() {
+		i, err := xinfo()
+		if err != nil {
+			log.Debugf("failed to get machine info: %v", err)
+			maxCPUNum = uint32(runtime.NumCPU())
+		} else {
+			maxCPUNum = i.nodePhysicalCPUNum()
+		}
+		log.Debugf("MaxCPUNum initialized to: %d", maxCPUNum)
+	})
+	
+	return maxCPUNum
 }
 
 // For cases, id is truncated id
@@ -484,9 +498,9 @@ func XenDefaultPedConf() string {
 
 // LinuxResource2Essential converts Linux OCI resource specifications to essential resources for MICA.
 func LinuxResource2Essential(spec *specs.Spec) *EssentialResource {
-	r := InitResource()
-	// cpu
-	cpu := spec.Linux.Resources.CPU
+    r := InitResource()
+    // cpu
+    cpu := spec.Linux.Resources.CPU
 	if cpu.Quota != nil && cpu.Period != nil && *cpu.Period > 0 {
 		r.CpuPeriod = cpu.Period
 		r.CpuQuota = cpu.Quota
@@ -513,7 +527,9 @@ func LinuxResource2Essential(spec *specs.Spec) *EssentialResource {
 		*r.CPUWeight = DefaultXenWeight
 	}
 
-	cpus, set, vcpuNum := validateCPUSet(cpu.Cpus)
+    cpus, set, vcpuNum := validateCPUSet(cpu.Cpus)
+
+    r.ClientCpuSet = cpus
 
 	log.Debugf("pinning cpu set = %v, parse to %v", cpus, set)
 	// vcpuNum = calculateVCPU(&set, int(r.CpuCpacity))
@@ -545,14 +561,12 @@ func PinVCPU(shortId, cpus string) error {
 	return nil
 }
 
-// the format of two cpuset are the same, but micran needs to calculate host cpu resource and so on
-// TODO: 	valid Cpu set
 func validateCPUSet(s string) (validSet string, set cpuset.CPUSet, vcpus uint32) {
 	set, err := cpuset.Parse(s)
 	if err != nil {
 		return "", set, 0
 	}
-	validSet = ""
+	validSet = s
 	return validSet, set, uint32(set.Size())
 }
 

@@ -1,4 +1,4 @@
-.PHONY: all build-prod build build-arm64 build-prod-arm64 test-prod test clean clean-all help run-debug run-prod containerd-client build-containerd-client install install-arm64 install-prod-arm64 mock-micad mock-micad-py mock-micad-py-quiet test-sched bench-sched
+.PHONY: all build-prod build build-arm64 build-prod-arm64 test-prod test clean clean-all help run-debug run-prod containerd-client build-containerd-client install install-nonroot install-arm64 install-prod-arm64 mock-micad mock-micad-py mock-micad-py-quiet test-sched bench-sched
 
 SHIM_NAME := io.containerd.mica.v2
 # containerd shim v2 命名规约转换
@@ -16,6 +16,7 @@ RUNTIME_VERSION := $(lastword $(SHIM_PARTS))
 
 BUILD_DIRS := builds/
 SHIM_DIR := /usr/local/bin/
+SHIM_DIR_NONROOT ?= $(HOME)/.local/bin
 BINNAME := containerd-shim-$(RUNTIME_NAME)-$(RUNTIME_VERSION)
 BIN := $(BUILD_DIRS)$(BINNAME)
 BIN_PROD := $(BIN)
@@ -48,11 +49,11 @@ build:
 # Temp target for amd64 to build arm64 binary
 build-arm64:
 	@echo "🔄 Cross-compiling debug binary for ARM64..."
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -tags debug ${CROSS_DEV_BUILD_FLAGS} -o ${BIN_ARM64} ./cmd
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -tags debug ${CROSS_DEV_BUILD_FLAGS} -o ${BIN_ARM64} .
 
 build-prod-arm64:
 	@echo "🔄 Cross-compiling production binary for ARM64..."
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build ${CROSS_DEV_BUILD_FLAGS} -o ${BIN_PROD_ARM64} ./cmd
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build ${CROSS_DEV_BUILD_FLAGS} -o ${BIN_PROD_ARM64} .
 
 run: build
 	@echo "🐛 Running in debug mode..."
@@ -116,6 +117,16 @@ install: build
 	@echo "Installed:   $$(md5sum ${SHIM_DIR}${BINNAME})"
 	@echo "pass --runtime ${SHIM_NAME} to use it"
 
+install-nonroot: build
+	@echo "🏠 Installing ${BIN} to ${SHIM_DIR_NONROOT} for non-root user"
+	@mkdir -p ${SHIM_DIR_NONROOT}
+	install -m 755 ${BIN} ${SHIM_DIR_NONROOT}/$(BINNAME)
+	@echo "md5sums:"
+	@echo "Source:      $$(md5sum ${BIN})"
+	@echo "Installed:   $$(md5sum ${SHIM_DIR_NONROOT}/$(BINNAME))"
+	@echo "pass --runtime ${SHIM_NAME} to use it"
+	@echo "Make sure ${SHIM_DIR_NONROOT} is in your PATH"
+
 dev-setup:
 	@echo "🔧 Setting up development environment..."
 	@echo "1. Building debug binary..."
@@ -164,6 +175,11 @@ help:
 	@echo "  make containerd-client 		 - Test containerd client integration"
 	@echo "  make build-containerd-client - Build containerd client binary"
 	@echo "  make mock-micad             - Run mock micad server"
+	@echo ""
+	@echo "Installation:"
+	@echo "  make install          - Install debug binary (requires sudo)"
+	@echo "  make install-prod     - Install production binary (requires sudo)"
+	@echo "  make install-nonroot  - Install debug binary to ~/.local/bin"
 	@echo ""
 	@echo "Utility Commands:"
 	@echo "  make dev-setup     - Complete development setup"

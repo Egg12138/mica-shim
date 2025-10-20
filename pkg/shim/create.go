@@ -7,6 +7,7 @@ import (
 	defs "mica-shim/definitions"
 	log "mica-shim/logger"
 	cntr "mica-shim/pkg/micantainer"
+	"mica-shim/pkg/netns"
 	"mica-shim/pkg/oci"
 	"mica-shim/pkg/utils"
 	"os"
@@ -119,6 +120,13 @@ func create(ctx context.Context, s *shimService, r *taskAPI.CreateTaskRequest) (
 	if err != nil {
 		return nil, err
 	}
+
+	if containerType == cntr.PodSandbox && s.sandbox != nil {
+		if pid := s.sandbox.NetnsHolderPID(); pid > 0 {
+			container.pid = uint32(pid)
+		}
+	}
+
 	return container, nil
 }
 
@@ -254,15 +262,14 @@ func createSandbox(ctx context.Context, ocispec *specs.Spec,
 		sandboxConfig.ContainerConfigs[containerId].Rootfs = rootfs
 	}
 
-	if err := setupNS(&sandboxConfig.NetworkConfig); err != nil {
+	if err := setupNS(sandboxConfig.ID, &sandboxConfig.NetworkConfig); err != nil {
 		return nil, err
 	}
 
 	defer func() {
-		ns := sandboxConfig.NetworkConfig
-		if err != nil && ns.NetworkCreated {
-			if ex := cleanupNetNS(ns.NetworkID); ex != nil {
-				log.Debugf("Failed to cleanup network namespace %s.", ns.NetworkID)
+		if err != nil {
+			if ex := cleanupNetNS(sandboxConfig.ID, &sandboxConfig.NetworkConfig); ex != nil {
+				log.Debugf("Failed to cleanup network namespace for sandbox %s: %v", sandboxConfig.ID, ex)
 			}
 		}
 	}()
@@ -298,7 +305,14 @@ func createContainerInSandbox(ctx context.Context, sandbox cntr.SandboxTraits,
 	ocispec specs.Spec, rootfs cntr.RootFs,
 	containerID, bundlePath string, disableOutput bool) error {
 
-	containerConfig, err := oci.ContainerConfig(containerID, bundlePath, ocispec, cntr.PodContainer, disableOutput)
+	var defaultFirmware string
+	if sandbox != nil {
+		if fw, err := sandbox.Annotation(defs.FirmwarePath); err == nil {
+			defaultFirmware = fw
+		}
+	}
+
+	containerConfig, err := oci.ContainerConfig(containerID, bundlePath, ocispec, cntr.PodContainer, disableOutput, defaultFirmware)
 	if err != nil {
 		return fmt.Errorf("failed to create container config: %w", err)
 	}
@@ -313,10 +327,39 @@ func createContainerInSandbox(ctx context.Context, sandbox cntr.SandboxTraits,
 	return nil
 }
 
-func cleanupNetNS(netns string) error {
+func cleanupNetNS(sandboxID string, netcfg *cntr.NetworkConfig) error {
+	if netcfg == nil {
+		return nil
+	}
+
+	if err := netcfg.NetworkCleanup(sandboxID); err != nil {
+		return fmt.Errorf("cleanup netns for sandbox %s failed: %w", sandboxID, err)
+	}
 	return nil
 }
 
-func setupNS(netcfg *cntr.NetworkConfig) error {
+func setupNS(sandboxID string, netcfg *cntr.NetworkConfig) error {
+	if netcfg == nil {
+		return fmt.Errorf("setup netns: nil network config")
+	}
+
+	if netcfg.HolderPid > 0 {
+		if path, err := netns.RegisterExisting(sandboxID, netcfg.HolderPid); err == nil {
+			netcfg.NetworkID = path
+			netcfg.NetworkCreated = true
+			return nil
+		}
+		log.Warnf("existing netns holder pid %d for sandbox %s is invalid; recreating", netcfg.HolderPid, sandboxID)
+		netcfg.HolderPid = 0
+	}
+
+	pid, path, err := netns.Create(sandboxID)
+	if err != nil {
+		return err
+	}
+
+	netcfg.NetworkID = path
+	netcfg.NetworkCreated = true
+	netcfg.HolderPid = pid
 	return nil
 }

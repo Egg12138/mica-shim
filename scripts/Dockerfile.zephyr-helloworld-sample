@@ -4,8 +4,6 @@ FROM localhost:5000/zephyr-mica-scratch
 # default FIRMWARE_BUNDLE_PATH is <container_root>/zephyr.elf
 ARG FIRMWARE_BUNDLE_PATH="/zephyr.elf"
 ARG XEN_BIN_IMG="/image.bin"
-# firmware source path
-ARG FIRMWARE="zephyr.elf"
 
 LABEL org.opencontainer.image.description="Mica Zephyr Hello World Sample(based on xen)"
 

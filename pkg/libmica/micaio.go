@@ -16,11 +16,11 @@ import (
 // Constants
 // PTY device mapping and discovery constants
 const (
-	PTYDevicePattern     = "/dev/ttyRPMSG%d"
-	PTYDevicePrefix      = "/dev/ttyRPMSG"
+	PTYDevLegacyPattern  = "/dev/ttyRPMSG%d"
+	PTYDevPattern      = "/dev/ttyRPMSG_%s"
 	PTYWaitTimeout       = 30 * time.Second
 	PTYDiscoveryInterval = 500 * time.Millisecond
-	MaxPTYDevices        = 10
+	MaxPTYDevLegacyNum   = 10
 )
 
 // Types
@@ -35,6 +35,9 @@ type MicaIO struct {
 	// PTY device connection
 	ptyDevice string   // PTY device path
 	ptyFile   *os.File // PTY device file handle
+
+	// Optional override for PTY device selection (via env MICRAN_PTY_DEVICE)
+	ptyDeviceOverride string
 
 	// Runtime state
 	ctx     context.Context
@@ -72,6 +75,12 @@ func NewMicaIO(ctx context.Context, taskID string, stdin, stdout, stderr string,
 		cancel:   cancel,
 		done:     make(chan struct{}),
 		started:  false,
+	}
+
+	// Read PTY device override from environment if provided
+	if v := os.Getenv("MICRAN_PTY_DEVICE"); v != "" {
+		mio.ptyDeviceOverride = v
+		log.Debugf("MicaIO: using MICRAN_PTY_DEVICE override: %s", v)
 	}
 
 	// Store stdin FIFO path for direct access
@@ -174,8 +183,8 @@ func (mio *MicaIO) discoverPTYDevice() (*PTYDiscoveryResult, error) {
 func (mio *MicaIO) scanExistingPTYDevices() []string {
 	var devices []string
 
-	for i := 0; i < MaxPTYDevices; i++ {
-		ptyPath := fmt.Sprintf(PTYDevicePattern, i)
+	for i := 0; i < MaxPTYDevLegacyNum; i++ {
+		ptyPath := fmt.Sprintf(PTYDevLegacyPattern, i)
 		if stat, err := os.Stat(ptyPath); err == nil {
 			if stat.Mode()&os.ModeCharDevice != 0 {
 				devices = append(devices, ptyPath)
@@ -222,8 +231,13 @@ func (mio *MicaIO) waitForPTYDeviceCreation() error {
 // connectToPTY opens PTY device for communication
 func (mio *MicaIO) connectToPTY() error {
 	if mio.ptyDevice == "" {
-		if err := mio.waitForPTYDeviceCreation(); err != nil {
-			return fmt.Errorf("waiting for PTY device creation: %w", err)
+		if mio.ptyDeviceOverride != "" {
+			mio.ptyDevice = mio.ptyDeviceOverride
+			log.Debugf("MicaIO: using PTY override device %s for task %s", mio.ptyDevice, mio.taskID)
+		} else {
+			if err := mio.waitForPTYDeviceCreation(); err != nil {
+				return fmt.Errorf("waiting for PTY device creation: %w", err)
+			}
 		}
 	}
 

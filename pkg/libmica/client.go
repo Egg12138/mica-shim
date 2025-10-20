@@ -184,10 +184,13 @@ type MicaClientConf struct {
 	cpuWeight int
 	// cpuCapacity is the capacity of cpu
 	cpuCapacity int
-	// memoryMB size in MiB
-	memoryMB int
-	// network config
-	network [MaxNetworkLen]byte
+    // memoryMB size in MiB
+    memoryMB int
+    // maxMemMB is the upper bound memory in MiB.
+    // MARKER: Added to support maxmem transmission in create message.
+    maxMemMB int
+    // network config
+    network [MaxNetworkLen]byte
 }
 
 // dummyCPUArr is a dummy CPU array for testing, always [1,4,5]
@@ -239,15 +242,16 @@ func (m *MicaClientConf) InitWithOpts(opts MicaClientConfCreateOptions) {
 	m.vcpuNum = opts.VCPUs
 	m.cpuWeight = opts.CPUWeight
 	m.cpuCapacity = opts.CPUCapacity
-	m.memoryMB = opts.MemoryMB
-	copy(m.network[:], opts.Network)
+    m.memoryMB = opts.MemoryMB
+    m.maxMemMB = opts.MaxMemMB
+    copy(m.network[:], opts.Network)
 }
 
 func (m *MicaClientConf) pack() []byte {
-	// Calculate total buffer size:
-	// name[32] + path[128] + ped[32] + pedcfg[128] + debug(1) + cpuStr[128] +
-	// vcpuNum(4) + cpuWeight(4) + cpuCapacity(4) + memory(4) + network[512]
-	buf := make([]byte, MaxNameLen+MaxFirmwarePathLen+MaxNameLen+MaxFirmwarePathLen+1+MaxCPUStringLen+4+4+4+4+MaxNetworkLen) // Total: 993 bytes
+    // Calculate total buffer size:
+    // name[32] + path[128] + ped[32] + pedcfg[128] + debug(1) + cpuStr[128] +
+    // vcpuNum(4) + cpuWeight(4) + cpuCapacity(4) + memory(4) + maxmem(4) + network[512]
+    buf := make([]byte, MaxNameLen+MaxFirmwarePathLen+MaxNameLen+MaxFirmwarePathLen+1+MaxCPUStringLen+4+4+4+4+4+MaxNetworkLen)
 
 	offset := 0
 	copy(buf[offset:offset+MaxNameLen], m.name[:])
@@ -274,9 +278,11 @@ func (m *MicaClientConf) pack() []byte {
 	offset += 4
 	binary.LittleEndian.PutUint32(buf[offset:], uint32(m.cpuCapacity))
 	offset += 4
-	binary.LittleEndian.PutUint32(buf[offset:], uint32(m.memoryMB))
-	offset += 4
-	copy(buf[offset:offset+MaxNetworkLen], m.network[:])
+    binary.LittleEndian.PutUint32(buf[offset:], uint32(m.memoryMB))
+    offset += 4
+    binary.LittleEndian.PutUint32(buf[offset:], uint32(m.maxMemMB))
+    offset += 4
+    copy(buf[offset:offset+MaxNetworkLen], m.network[:])
 
 	return buf
 }
@@ -338,7 +344,7 @@ func CreateMicaClient(conf MicaClientConf) error {
 // TODO: consider better way to parse variable parameters
 func micaCtl(cmd MicaCommand, rawId string, opts... string) error {
 	if !validSocketPath(defs.MicaCreatSocketPath) {
-		return er.ErrMicadNotRunning
+		return er.MicadNotRunning
 	}
 	// workaround: pause => stop
 	switch cmd {

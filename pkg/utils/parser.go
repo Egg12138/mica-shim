@@ -22,7 +22,7 @@ func stripQuotes(s string) string {
 type sectionFilter func(string) bool
 
 // ParseConfigINI performs a faster INI parsing method by reading line by line.
-// Add checks for new syntax: "1,3-5"
+// with a simple lowercase section title filter
 func ParseConfigINI(configPath string, whiteList []string) (map[string]string, error) {
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		log.Infof("ini config file %s does not exist, return an empty map",configPath)

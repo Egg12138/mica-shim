@@ -9,7 +9,7 @@ const (
 	// RuntimePrefix is the prefix for runtime-related configurations.
 	RuntimePrefix = MicraAnnotationPrefix + "runtime."
 	// ContainerPrefix is the prefix for container-related configurations.
-	ContainerPrefix = MicraAnnotationPrefix + "container."
+  ContainerPrefix = MicraAnnotationPrefix + "container."
 
 	// BundlePathKey is the annotation key for the OCI configuration file path.
 	BundlePathKey = MicraAnnotationPrefix + "pkg.oci.bundle_path"
@@ -32,7 +32,7 @@ const (
 
 	// OSAnnotation specifies the client OS type. Corresponds to ini config keys in [Mica] section of client.conf.
 	OSAnnotation = ContainerPrefix + "os"
-	// FirmwarePath specifies the path to the firmware.
+	// FirmwarePath specifies the relative path to the firmware, in the bundle.
 	FirmwarePath = PedConfPrefix + "firmware_path"
 	// Pedtype specifies the pedestal type.
 	Pedtype = PedConfPrefix + "pedestal"
@@ -50,10 +50,17 @@ const (
 	// DefaulaMemory specifies the maximum byte size of memory assigned for the client.
 	DefaulaMemory = PedConfPrefix + "default_memory"
 
-	// VirtioMem indicates if virtio-mem is enabled. Virtio support is on our roadmap.
-	VirtioMem = PedConfPrefix + "enable_virtio_mem"
-	// TODO: Add more xen-related options.
-	// PedestalConf = ClientConfPrefix + "pedestalconf"
+    // VirtioMem indicates if virtio-mem is enabled. Virtio support is on our roadmap.
+    VirtioMem = PedConfPrefix + "enable_virtio_mem"
+    // TODO: Add more xen-related options.
+    // PedestalConf = ClientConfPrefix + "pedestalconf"
+)
+
+// Container-specific runtime settings.
+const (
+    // ContainerMinMemMB specifies the initial memory (MiB) assigned to the client at boot.
+    // This differs from the max memory limit (Memory/MaxMemMB) that may come from OCI.
+    ContainerMinMemMB = ContainerPrefix + "min_memory_mb"
 )
 
 const (

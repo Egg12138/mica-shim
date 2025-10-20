@@ -3,6 +3,7 @@ package micantainer
 import (
 	"fmt"
 	log "mica-shim/logger"
+	"mica-shim/pkg/netns"
 
 	"github.com/containerd/errdefs"
 	"github.com/opencontainers/runtime-spec/specs-go"
@@ -45,23 +46,41 @@ type NetworkStats struct {
 type NetworkConfig struct {
 	NetworkID      string `json:"network_id"`
 	NetworkCreated bool   `json:"network_created"`
+	HolderPid      int    `json:"holder_pid,omitempty"`
 }
 
 type Network interface {
 	NetworkIsCreated() bool
 	NetID() string
-	NetworkCleanup() error
+	NetworkCleanup(id string) error
 }
 
 func (n *NetworkConfig) NetworkIsCreated() bool {
-	return true
+	if n == nil {
+		return false
+	}
+	return n.NetworkCreated
 }
 
 func (n *NetworkConfig) NetID() string {
+	if n == nil {
+		return ""
+	}
 	return n.NetworkID
 }
 
-func (n *NetworkConfig) NetworkCleanup() error {
+func (n *NetworkConfig) NetworkCleanup(id string) error {
+	if n == nil {
+		return nil
+	}
+
+	if err := netns.Cleanup(id, n.HolderPid); err != nil {
+		return err
+	}
+
+	n.NetworkID = ""
+	n.NetworkCreated = false
+	n.HolderPid = 0
 	return nil
 }
 
@@ -80,7 +99,7 @@ func (dn *DummyNetwork) NetID() string {
 	return "dummy"
 }
 
-func (dn *DummyNetwork) NetworkCleanup() error {
+func (dn *DummyNetwork) NetworkCleanup(id string) error {
 	return nil
 }
 

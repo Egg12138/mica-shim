@@ -1,0 +1,186 @@
+diff --git a/library/include/mica/mica_client.h b/library/include/mica/mica_client.h
+index b5e343a..271e307 100644
+--- a/library/include/mica/mica_client.h
++++ b/library/include/mica/mica_client.h
+@@ -52,6 +52,8 @@ struct mica_client {
+ 	bool debug;
+ 	/* mica gdb server pthread_t */
+ 	pthread_t gdb_server_thread;
++	/* client name */
++	char			name[MAX_NAME_LEN];
+ 	/* client os firmware path */
+ 	char			path[MAX_FIRMWARE_PATH_LEN];
+ 	/* pedestal configuration */
+diff --git a/mica/micad/services/pty/rpmsg_pty.c b/mica/micad/services/pty/rpmsg_pty.c
+index 8e73749..d7477d7 100644
+--- a/mica/micad/services/pty/rpmsg_pty.c
++++ b/mica/micad/services/pty/rpmsg_pty.c
+@@ -11,24 +11,24 @@
+ #include <fcntl.h>
+ #include <poll.h>
+ #include <pthread.h>
++#include <stdint.h>
++#include <errno.h>
+ 
+ #include "mica/mica.h"
+ #include "rpmsg_pty.h"
+ 
+ #define RPMSG_TTY_NAME		"rpmsg-tty"
+-#define RPMSG_TTY_DEV		"/dev/ttyRPMSG"
+-#define RPMSG_TTY_DEV_LEN	20
+-#define RPMSG_TTY_MAX_DEV	10
++#define RPMSG_TTY_DEV		"/dev/ttyRPMSG_"
++/* /dev/ttyRPMSG_ (14) + MAX_NAME_LEN (32) + \0 (1) = 47 */
++#define RPMSG_TTY_DEV_LEN	47
+ #define BUF_SIZE		256
+ 
+-static int tty_id[RPMSG_TTY_MAX_DEV] = { [0 ... (RPMSG_TTY_MAX_DEV-1)] = -1 };
+-
+ struct rpmsg_tty_service {
+ 	atomic_int active;
+ 	struct rpmsg_endpoint ept;
+ 	int pty_master_fd;
+ 	int pty_slave_fd;
+-	int tty_index;
++	char tty_suffix[MAX_NAME_LEN];
+ 	char tty_dev[RPMSG_TTY_DEV_LEN];
+ 	struct metal_list node;
+ };
+@@ -39,7 +39,6 @@ static void rpmsg_tty_unbind(struct rpmsg_endpoint *ept)
+ 
+ 	metal_list_del(&tty_svc->node);
+ 	rpmsg_destroy_ept(&tty_svc->ept);
+-	tty_id[tty_svc->tty_index] = -1;
+ 	unlink(tty_svc->tty_dev);
+ 
+ 	close(tty_svc->pty_master_fd);
+@@ -51,34 +50,43 @@ static void rpmsg_tty_unbind(struct rpmsg_endpoint *ept)
+ 	tty_svc->active = 0;
+ }
+ 
+-static int rpmsg_tty_new_index(void)
++static void sanitize_client_tty_name(char *dst, const char *src, size_t max_len)
+ {
+-	int i;
++	size_t i;
++
++	if (!src || !dst || max_len == 0)
++		return;
+ 
+-	for (i = 0; i < RPMSG_TTY_MAX_DEV; i++) {
+-		if (tty_id[i] == -1) {
+-			tty_id[i] = 1;
+-			return i;
++	for (i = 0; i < max_len - 1 && src[i] != '\0'; i++) {
++		char c = src[i];
++		if ((c >= 'a' && c <= 'z') ||
++		    (c >= 'A' && c <= 'Z') ||
++		    (c >= '0' && c <= '9') ||
++		    c == '_' || c == '-') {
++			dst[i] = c;
++		} else {
++			dst[i] = '_';
+ 		}
+ 	}
+-
+-	return -1;
++	dst[i] = '\0';
+ }
+ 
+ /**
+- * opens an unused pseudo terminal, and create a link to this
+- * with the name RPMSG_TTY_DEV.
++ * Opens an unused pseudo terminal, and create a link to this
++ * with the name RPMSG_TTY_DEV_<client_name>.
+  */
+-static int create_tty_device(struct rpmsg_tty_service *tty_svc)
++static int create_tty_device(struct rpmsg_tty_service *tty_svc, const char *client_name)
+ {
+ 	int ret;
+ 	int master_fd, slave_fd;
+ 	char pts_name[RPROC_MAX_NAME_LEN] = {0};
+ 
+-	ret = rpmsg_tty_new_index();
+-	if (ret == -1)
+-		return ret;
+-	tty_svc->tty_index = ret;
++	if (!client_name || strlen(client_name) == 0) {
++		fprintf(stderr, "Invalid client name\n");
++		return -EINVAL;
++	}
++
++	sanitize_client_tty_name(tty_svc->tty_suffix, client_name, sizeof(tty_svc->tty_suffix));
+ 
+ 	ret = posix_openpt(O_RDWR | O_NOCTTY);
+ 	if (ret == -1)
+@@ -97,8 +105,8 @@ static int create_tty_device(struct rpmsg_tty_service *tty_svc)
+ 	if (ret != 0)
+ 		goto err;
+ 
+-	snprintf(tty_svc->tty_dev, RPMSG_TTY_DEV_LEN, "%s%d",
+-		 RPMSG_TTY_DEV, tty_svc->tty_index);
++	snprintf(tty_svc->tty_dev, RPMSG_TTY_DEV_LEN, "%s%s",
++		 RPMSG_TTY_DEV, tty_svc->tty_suffix);
+ 
+ 	unlink(tty_svc->tty_dev);
+ 	ret = symlink(pts_name, tty_svc->tty_dev);
+@@ -108,16 +116,15 @@ static int create_tty_device(struct rpmsg_tty_service *tty_svc)
+ 	/* keep open a handle to the slave to prevent EIO */
+ 	slave_fd = open(pts_name, O_RDWR);
+ 	if (slave_fd == -1) {
+-		unlink(pts_name);
++		unlink(tty_svc->tty_dev);
+ 		goto err;
+ 	}
+ 
+ 	tty_svc->pty_master_fd = master_fd;
+ 	tty_svc->pty_slave_fd = slave_fd;
+-	return ret;
++	return 0;
+ err:
+ 	close(master_fd);
+-	tty_id[tty_svc->tty_index] = -1;
+ 	return ret;
+ }
+ 
+@@ -220,13 +227,25 @@ static void rpmsg_tty_init(struct rpmsg_device *rdev, const char *name,
+ 	pthread_t tty_thread;
+ 	struct rpmsg_tty_service *tty_svc;
+ 	struct metal_list *tty_dev_list = priv;
++	struct rpmsg_virtio_device *rvdev;
++	struct remoteproc_virtio *rpvdev;
++	struct remoteproc *rproc;
++	struct mica_client *client;
++	const char *client_name = NULL;
+ 
+ 	tty_svc = malloc(sizeof(struct rpmsg_tty_service));
+ 	if (!tty_svc)
+ 		return;
+ 	tty_svc->ept.priv = tty_svc;
+ 
+-	ret = create_tty_device(tty_svc);
++	/* extract client name from rpmsg device hierarchy */
++	rvdev = metal_container_of(rdev, struct rpmsg_virtio_device, rdev);
++	rpvdev = metal_container_of(rvdev->vdev, struct remoteproc_virtio, vdev);
++	rproc = rpvdev->priv;
++	client = metal_container_of(rproc, struct mica_client, rproc);
++	client_name = client->name;
++
++	ret = create_tty_device(tty_svc, client_name);
+ 	if (ret)
+ 		goto free_mem;
+ 
+diff --git a/mica/micad/socket_listener.c b/mica/micad/socket_listener.c
+index f818e17..95fd144 100644
+--- a/mica/micad/socket_listener.c
++++ b/mica/micad/socket_listener.c
+@@ -359,7 +359,8 @@ static int init_mica_client(struct mica_client *client, struct create_msg msg)
+ {
+ 	/* configs for mica */
+ 	strlcpy(client->path, msg.path, MAX_FIRMWARE_PATH_LEN);
+-
++	strlcpy(client->name, msg.name, MAX_NAME_LEN);
++	
+ 	if (strcmp(msg.ped, "jailhouse") == 0)
+ 		client->ped = JAILHOUSE;
+ 	else if (strcmp(msg.ped, "xen") == 0)

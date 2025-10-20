@@ -42,6 +42,7 @@ type container struct {
 	status      task.Status
 	terminal    bool
 	mounted     bool
+	pid         uint32
 }
 
 // newContainer creates a new container object for the shim.
@@ -69,6 +70,7 @@ func newContainer(s *shimService, r *taskAPI.CreateTaskRequest, cType cntr.Conta
 		status:      task.Status_CREATED,
 		terminal:    r.Terminal,
 		mounted:     mounted,
+		pid:         shimPid,
 	}
 
 	return c, nil
@@ -354,14 +356,8 @@ func waitContainerExit(ctx context.Context, s *shimService, c *container) (int32
 		log.WithField("container", c.id).Infof("No IO activity; mock exit after %s.", mockExitTimeout)
 	}
 
-	ret, err := s.sandbox.WaitTaskExit(ctx, c.id, c.id)
-	if err != nil {
-		if ret == okExitCode {
-			ret = Exit255
-		}
-	}
-
 	timeStamp := time.Now()
+	ret := okExitCode
 
 	s.mu.Lock()
 	// Update container status and exit information.
@@ -370,18 +366,15 @@ func waitContainerExit(ctx context.Context, s *shimService, c *container) (int32
 			s.monitor <- nil
 		}
 
-		if err = s.sandbox.Stop(ctx, true); err != nil {
-			log.Debugf("Failed to stop sandbox %s.", s.sandbox.SandboxID())
+		if err := s.sandbox.Stop(ctx, true); err != nil {
 			log.Errorf("Failed to stop sandbox %s.", s.sandbox.SandboxID())
 		}
 
-		if err = s.sandbox.Delete(ctx); err != nil {
-			log.Debugf("Failed to delete sandbox %s.", s.sandbox.SandboxID())
+		if err := s.sandbox.Delete(ctx); err != nil {
 			log.Errorf("Failed to delete sandbox %s.", s.sandbox.SandboxID())
 		}
 	} else {
 		if _, err := s.sandbox.StopContainer(ctx, c.id, true); err != nil {
-			log.Debugf("Failed to stop pod container %s.", c.id)
 			log.Errorf("Failed to stop pod container %s.", c.id)
 		}
 	}
@@ -390,18 +383,18 @@ func waitContainerExit(ctx context.Context, s *shimService, c *container) (int32
 	c.exitTime = timeStamp
 
 	c.exitCh <- uint32(ret)
-	log.WithField("container", c.id).Debug("The container status is StatusStopped.")
+	log.Debugf("The container %s status is StatusStopped.", c.id)
 	s.mu.Unlock()
 
-	go func() {
+	go func(ts time.Time, cid string, status int) {
 		s.ec <- exit{
-			ts:     timeStamp,
-			cid:    c.id,
+			ts:     ts,
+			cid:    cid,
 			execid: "",
 			pid:    shimPid,
-			status: int(ret),
+			status: status,
 		}
-	}()
+	}(timeStamp, c.id, int(ret))
 
-	return ret, nil
+	return int32(ret), nil
 }
