@@ -50,7 +50,7 @@ func newIOStream(s *Sandbox, c *Container, proc string) *iostream {
 
 // BUG: mica create ttydevice not by container id
 func (s *iostream) ensureDevice() error {
-	if s.container != nil && s.container.config != nil && s.container.config.Infra {
+	if s.container != nil && s.container.config != nil && s.container.config.IsInfra {
 		return nil
 	}
 	if defs.IsMock {
@@ -127,7 +127,7 @@ func (s *stdinStream) Write(data []byte) (n int, err error) {
 		return 0, er.IOClosed
 	}
 
-	if s.container != nil && s.container.config != nil && s.container.config.Infra {
+	if s.container != nil && s.container.config != nil && s.container.config.IsInfra {
 		// drop stdin for infra containers
 		return len(data), nil
 	}
@@ -157,7 +157,7 @@ func (s *stdoutStream) Read(data []byte) (n int, err error) {
 	if s.closed {
 		return 0, er.IOClosed
 	}
-	if s.container != nil && s.container.config != nil && s.container.config.Infra {
+	if s.container != nil && s.container.config != nil && s.container.config.IsInfra {
 		// EOF immediately
 		return 0, io.EOF
 	}

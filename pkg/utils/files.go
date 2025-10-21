@@ -1,12 +1,14 @@
 package utils
 
 import (
+	"debug/elf"
 	"encoding/json"
 	"fmt"
 	"io"
 	defs "mica-shim/definitions"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 
@@ -15,7 +17,6 @@ import (
 
 	log "mica-shim/logger"
 )
-
 
 func IsRegular(path string) bool {
 	stat, err := os.Stat(path)
@@ -177,6 +178,30 @@ func RemoveStateDir(id string) error {
 	return os.RemoveAll(filepath.Join(defs.DefaultMicranStateDir, id))
 }
 
+func IsELFForHost(path string) (bool, error) {
+	f, err := elf.Open(path)
+	if err != nil {
+		return false, nil
+	}
+	defer f.Close()
+
+	switch runtime.GOARCH {
+	case "arm64":
+		return f.Machine == elf.EM_AARCH64, nil
+	case "amd64":
+		return f.Machine == elf.EM_X86_64, nil
+	case "arm":
+		// unsupported yet
+		return f.Machine == elf.EM_ARM, nil
+	case "riscv64":
+		// unsupported yet
+		return f.Machine == elf.EM_RISCV, nil
+	default:
+		// Unknown host arch: no strict check.
+		return false, nil
+	}
+}
+
 func MountDirs(mounts []*cdtypes.Mount, dest string) error {
 	if len(mounts) == 0 {
 		return nil
@@ -199,41 +224,39 @@ func MountDirs(mounts []*cdtypes.Mount, dest string) error {
 		}
 	}
 
-	
 	return nil
 
 }
 func Backup(srcDir string) error {
 	backupDir := "/tmp/backupbundle"
-	
+
 	if err := os.MkdirAll(backupDir, 0755); err != nil {
 		return fmt.Errorf("failed to create backup directory: %w", err)
 	}
-	
+
 	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			log.Debugf("Warning: skipping %s due to error: %v\n", path, err)
 			return nil
 		}
-		
-		if !IsRegular(path) && !info.IsDir(){
+
+		if !IsRegular(path) && !info.IsDir() {
 			log.Debugf("Skipping %s\n", path)
 			return nil
 		}
 
-		
 		relPath, err := filepath.Rel(srcDir, path)
 		if err != nil {
 			return fmt.Errorf("failed to get relative path: %w", err)
 		}
-		
+
 		destPath := filepath.Join(backupDir, relPath)
-		
+
 		log.Debugf("copy %s to %s", relPath, destPath)
 		if info.IsDir() {
 			return os.MkdirAll(destPath, info.Mode())
 		}
-		
+
 		return copyFile(path, destPath, info.Mode())
 	})
 }
@@ -244,31 +267,31 @@ func copyFile(src, dst string, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 		return fmt.Errorf("failed to create destination directory: %w", err)
 	}
-	
+
 	// Open source file
 	srcFile, err := os.Open(src)
 	if err != nil {
 		return fmt.Errorf("failed to open source file %s: %w", src, err)
 	}
 	defer srcFile.Close()
-	
+
 	// Create destination file
 	dstFile, err := os.Create(dst)
 	if err != nil {
 		return fmt.Errorf("failed to create destination file %s: %w", dst, err)
 	}
 	defer dstFile.Close()
-	
+
 	// Copy file contents
 	if _, err := io.Copy(dstFile, srcFile); err != nil {
 		return fmt.Errorf("failed to copy file contents: %w", err)
 	}
-	
+
 	// Set file permissions
 	if err := os.Chmod(dst, mode); err != nil {
 		return fmt.Errorf("failed to set file permissions: %w", err)
 	}
-	
+
 	return nil
 }
 

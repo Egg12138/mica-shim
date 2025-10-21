@@ -2,29 +2,12 @@ package defs
 
 // Client default values.
 const (
-	DefaultNcpu = 1
-	// fallback default mica configuration file
-	DefaultClientConf = "client.conf"
 	// pass "<bundle>/rootfs/<DefaultXenBin>" to pedestalCfg for xen-mica case
-	DefaultXenBin = "image.bin"
+	DefaultXenBin   = "image.bin"
+	DefaultFirmwareName   = "firmware.elf"
 	DefaultMinMemMB = 4
 )
 
-// client conf keys; 
-const (
-	ElfPath = "clientpath"
-	Name    = "name"
-	Ped     = "ped"
-	PedCfg  = "pedcfg"
-	Dbg     = "debug"
-	Mem     = "memory"
-	Weight  = "cpuweight"
-	Cpus    = "cpustr"
-	Cap     = "cpucapacity"
-	Net     = "network"
-)
-
 var (
-	PreservedOS   = [...]string{"zephyr", "uniproton", "linux"}
-	MicaConfSectionTitles = [...]string{"mica"}
+	PreservedOS = [...]string{"zephyr", "uniproton", "linux"}
 )

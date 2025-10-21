@@ -15,6 +15,7 @@ import (
 	utils "mica-shim/pkg/utils"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -110,13 +111,13 @@ type ContainerConfig struct {
 	Rootfs         RootFs
 	Mount          []Mount
 	ReadOnlyRootfs bool
-	Infra          bool
+	IsInfra        bool
 	Pid            int // Pid is typically the shim pid.
 	Annotations    map[string]string
 	Resources      *specs.LinuxResources
 
-	// ElfPath is the relative path of the <os>.elf in the bundle.
-	ElfPath      string      `json:"relative_path"`
+	// ElfAbsPath is the relative path of the <os>.elf in the bundle.
+	ElfAbsPath      string      `json:"relative_path"`
 	PedestalType ped.PedType `json:"pedestal_type"`
 	PedestalConf string      `json:"pedestal_conf"`
 	OS           string      `json:"os"`
@@ -347,7 +348,7 @@ func newContainer(ctx context.Context, s *Sandbox, cc *ContainerConfig) (*Contai
 
 // start begins the execution of the container.
 func (c *Container) start(ctx context.Context) error {
-	if c.config != nil && c.config.Infra {
+	if c.config != nil && c.config.IsInfra {
 		if c.state.State == StateRunning {
 			return nil
 		}
@@ -385,10 +386,10 @@ func (c *Container) start(ctx context.Context) error {
 
 // create prepares the container to be started.
 func (c *Container) create(ctx context.Context) error {
-	if c.config != nil && c.config.Infra {
+	if c.config != nil && c.config.IsInfra {
 		c.taskInfo = RTOSTask{
 			CreateTime: time.Now(),
-			TaskID:    c.id,
+			TaskID:     c.id,
 		}
 		return c.setContainerState(ctx, StateReady)
 	}
@@ -408,7 +409,7 @@ func (c *Container) create(ctx context.Context) error {
 
 // doStop performs the actual stop operation on the client.
 func (c *Container) doStop(force bool) error {
-	if c.config != nil && c.config.Infra {
+	if c.config != nil && c.config.IsInfra {
 		return nil
 	}
 	if c.state.State == StateStopped {
@@ -472,7 +473,7 @@ func (c *Container) delete(ctx context.Context) error {
 		return fmt.Errorf("sandbox is not ready, paused, or stopped, cannot delete container")
 	}
 
-	if c.config == nil || !c.config.Infra {
+	if c.config == nil || !c.config.IsInfra {
 		if err := libmica.Remove(c.id); err != nil {
 			log.Debugf("Failed to remove container %s.", err)
 			return err
@@ -489,7 +490,7 @@ func (c *Container) pause(ctx context.Context) error {
 	if c.state.State != StateRunning {
 		return fmt.Errorf("container is not running, cannot pause container")
 	}
-	if c.config != nil && c.config.Infra {
+	if c.config != nil && c.config.IsInfra {
 		return c.setContainerState(ctx, StatePaused)
 	}
 	if err := libmica.Pause(c.id); err != nil {
@@ -503,7 +504,7 @@ func (c *Container) resume(ctx context.Context) error {
 	if c.state.State != StatePaused && c.sandbox.state.State != StateStopped {
 		return fmt.Errorf("container is not paused, cannot resume container")
 	}
-	if c.config != nil && c.config.Infra {
+	if c.config != nil && c.config.IsInfra {
 		return c.setContainerState(ctx, StateRunning)
 	}
 	log.Infof("Micran restart a client os, acting as `resume`.")
@@ -516,7 +517,7 @@ func (c *Container) resume(ctx context.Context) error {
 // update modifies the container's resources.
 // TODO: Implement container resource update.
 func (c *Container) update(ctx context.Context, resources specs.LinuxResources) error {
-	if c.config != nil && c.config.Infra {
+	if c.config != nil && c.config.IsInfra {
 		return nil
 	}
 	if c.sandbox.state.State != StateRunning {
@@ -628,35 +629,50 @@ func validOS(os string) bool {
 }
 
 // validComponent checks if a component file is a regular file.
-func validComponent(root, component string) bool {
-	file := filepath.Join(root, component)
-	log.Debugf("File exist: %v.", utils.FileExist(file))
-	log.Debugf("File is regular: %v.", utils.IsRegular(file))
-	return utils.IsRegular(file)
+func validComponent(component string) bool {
+	log.Debugf("File exist: %v.", utils.FileExist(component))
+	log.Debugf("File is regular: %v.", utils.IsRegular(component))
+	if !utils.IsRegular(component) {
+		return false
+	}
+
+	hostArch := runtime.GOARCH
+
+	if match, _ := utils.IsELFForHost(component); match {
+		return true
+	}
+
+	// check for arm64 xen client image
+	if hostArch == "arm64" {
+		if fh, err := os.Open(component); err == nil {
+			defer fh.Close()
+			buf := make([]byte, 0x40)
+			if n, _ := fh.Read(buf); n >= 0x3C {
+				if bytes.Contains(buf, []byte("ARMd")) {
+					return true
+				}
+			}
+		}
+	}
+
+	return true
 }
 
 // validFirmware checks if the firmware file is valid.
 func validFirmware(bundle, firmware string) bool {
-	log.Debugf("Validating firmware at %s.", bundle)
-	return validComponent(filepath.Join(bundle, "rootfs"), firmware)
+	return validComponent(firmware)
 }
 
 // validBinfile checks if the binary file is valid.
 // For Xen, this is typically image.bin.
-func validBinfile(bundle, binpath string) bool {
-	return validComponent(filepath.Join(bundle, "rootfs"), binpath)
-}
-
-// validCompatibility checks for compatibility.
-func validCompatibility(_ *ContainerConfig) bool {
-	// TODO: How to check compatibility?
-	return true
+func validBinfile(binpath string) bool {
+	return validComponent(binpath)
 }
 
 // validMicaContainer checks if the container configuration is valid for mica.
 // NOTICE: Xen is the only supported pedestal for now.
 func (c *Container) validMicaContainer() bool {
-	if c.config != nil && c.config.Infra {
+	if c.config != nil && c.config.IsInfra {
 		return true
 	}
 	cwd, _ := os.Getwd()
@@ -664,18 +680,16 @@ func (c *Container) validMicaContainer() bool {
 	osValid := validOS(c.GetOS())
 	fwValid := validFirmware(cwd, c.GetFirmwarePath())
 	if HostPedType == ped.Xen {
-		binFile := validBinfile(cwd, c.GetPedestalConf())
+		binFile := validBinfile(c.GetPedestalConf())
 		fwValid = binFile && fwValid
 	}
-	compatValid := validCompatibility(c.config)
-	judge := osValid && fwValid && compatValid
+	judge := osValid && fwValid
 	log.Debugf(`
-		validMicaContainer:
+	validMicaContainer:
 		osValid = %v,
 		fwValid = %v,
-		compatValid = %v,
 		judge = %v
-	`, osValid, fwValid, compatValid, judge)
+	`, osValid, fwValid, judge)
 
 	return judge
 }
@@ -871,7 +885,7 @@ func (c *Container) setVcpuAffinity(cpuSet cpuset.CPUSet) error {
 
 // ioStream returns the IO streams for the container.
 func (c *Container) ioStream(taskID string) (io.WriteCloser, io.Reader, io.Reader, error) {
-	if c.config != nil && c.config.Infra {
+	if c.config != nil && c.config.IsInfra {
 		return noopWriteCloser{}, bytes.NewReader(nil), bytes.NewReader(nil), nil
 	}
 	if c.notOperational() {
@@ -895,7 +909,7 @@ func (c *Container) winresize(height, width uint32) error {
 
 // firmware is the elf file of rtos
 func (c *Container) GetFirmwarePath() string {
-	return c.config.ElfPath
+	return c.config.ElfAbsPath
 }
 
 func (c *Container) GetPedestalConf() string {
