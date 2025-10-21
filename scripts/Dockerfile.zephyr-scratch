@@ -7,7 +7,9 @@ FROM scratch
 
 # override the default labels
 LABEL org.opencontainer.image.description="Zephyr scratch image"
-LABEL org.openeuler.mica.pedestal="baremetal"
-LABEL org.openeuler.mica.pedestal_conf=""
+LABEL org.openeuler.mica.pedestal="xen"
+LABEL org.openeuler.mica.pedestal_conf="zephyr.bin"
 LABEL org.openeuler.mica.compatibility.openamp="2023.04+"
-LABEL org.openeuler.mica.compatibility.zephyr="3.7.1+"
+LABEL org.openeuler.mica.compatibility.xen="4.18.2"
+LABEL org.openeuler.mica.pedestal_version="4.18.2"
+LABEL org.openeuler.mica.compatibility.zephyr="v3.7.1-lts"
