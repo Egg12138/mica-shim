@@ -117,7 +117,7 @@ func (n *SandboxAgent) closeContainerStdin(c *Container) error {
     if c == nil || c.config == nil {
         return er.EmptyContainerID
     }
-    if c.config.Infra {
+    if c.config.IsInfra {
         return nil
     }
 

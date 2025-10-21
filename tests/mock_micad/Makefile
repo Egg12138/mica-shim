@@ -9,7 +9,7 @@ LDFLAGS = -pthread
 TARGET = mock_micad
 SRC = mock_micad.c
 
-.PHONY: all clean run test help
+.PHONY: all clean run test help ctl
 
 all: $(TARGET)
 
@@ -31,12 +31,23 @@ run: $(TARGET)
 	@echo "Running mock_micad..."
 	./$(TARGET)
 
+ctl:
+	@echo "Mock micad control helper"
+	@echo "  go run ./mock_ctl.go --id <container-id> status"
+	@echo "  go run ./mock_ctl.go --id <container-id> start"
+	@echo "  go run ./mock_ctl.go --id <container-id> tail"
+	@echo "Flags:"
+	@echo "  --socket-dir=/tmp/mica        Control socket directory"
+	@echo "  --create-socket=/tmp/mica/mica-create.socket  Fallback to mica-create"
+	@echo "  --create                       Force use of mica-create socket"
+
 help:
 	@echo "Mock Micad Build System"
 	@echo ""
 	@echo "Targets:"
 	@echo "  all    - Build mock_micad"  
 	@echo "  run    - Run mock_micad"
+	@echo "  ctl    - Show helper usage for mock_ctl.go"
 	@echo "  clean  - Remove build artifacts"
 	@echo "  test   - Test mock_micad execution"
 	@echo "  help   - Show this help message"

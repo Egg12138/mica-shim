@@ -1,22 +1,14 @@
 FROM localhost:5000/zephyr-mica-scratch
-# FROM zephyr-mica-scratch
 
 # default FIRMWARE_BUNDLE_PATH is <container_root>/zephyr.elf
-ARG FIRMWARE_BUNDLE_PATH="/zephyr.elf"
+ARG FIRMWARE_BUNDLE_PATH="/firmware.elf"
 ARG XEN_BIN_IMG="/image.bin"
 
 LABEL org.opencontainer.image.description="Mica Zephyr Hello World Sample(based on xen)"
 
 # Necessary for mica runtime to check the pedestal
-LABEL org.openeuler.mica.pedestal="xen"
 LABEL org.openeuler.mica.pedestal_conf="${XEN_BIN_IMG}"
-LABEL org.opencontainer.image.mica.compatibility.openamp="2023.04+"
 LABEL org.opencontainer.image.mica.compatibility.zephyr="3.7.1"
 
-ADD tests/zephyr.elf ${FIRMWARE_BUNDLE_PATH}
-ADD tests/zephyr.bin ${XEN_BIN_IMG}
-ADD scripts/qemu-zephyr-rproc.conf client.conf
-# Inherit from zephyr-mica-scratch
-# add a sample config file
-# ADD scripts/linux-tiny-hello/hello_gcc /hello
-# CMD ["/hello"]
+ADD bundle.sample/zephyr.xen.elf ${FIRMWARE_BUNDLE_PATH}
+ADD bundle.sample/zephyr.xen.bin ${XEN_BIN_IMG}

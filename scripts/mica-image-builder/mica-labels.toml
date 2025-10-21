@@ -1,0 +1,25 @@
+[base]
+description = "Mica RTOS Container Image"
+version = "1.0.0"
+created = "{{timestamp}}"
+
+[pedestal.xen]
+pedestal = "xen"
+pedestal_conf = "{{xen_image_path}}"
+pedestal_version = "4.18.2"
+
+[pedestal.openamp]
+pedestal = "openamp"
+pedestal_conf = "firmware.bin"
+pedestal_version = "2023.04+"
+
+[os.zephyr]
+os_type = "zephyr"
+
+[os.uniproton]
+os_type = "uniproton"
+
+[compatibility]
+openamp = "2023.04+"
+zephyr = "3.7.1"
+uniproton = "latest"

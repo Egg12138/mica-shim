@@ -1128,7 +1128,7 @@ func (s *Sandbox) getSandboxCpusetStr() (string, string, error) {
 	cpuResult := cpuset.NewCPUSet()
 	memResult := cpuset.NewCPUSet()
 	for _, cfg := range s.config.ContainerConfigs {
-		if cfg.Infra {
+		if cfg.IsInfra {
 			continue
 		}
 		resource := cfg.Resources

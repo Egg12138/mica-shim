@@ -3,13 +3,13 @@ package defs
 // OCI and runtime annotations.
 const (
 	// MicraAnnotationPrefix is the prefix for all micran-specific annotations.
-	MicraAnnotationPrefix = "io.openeuler.micran." // For runtime-level configuration.
-	// PedConfPrefix is the prefix for pedestal-related configurations.
-	PedConfPrefix = MicraAnnotationPrefix + "ped."
+	MicraAnnotationPrefix = "org.openeuler.micran." // For runtime-level configuration.
+	// PedPrefix is the prefix for pedestal-related configurations.
+	PedPrefix = MicraAnnotationPrefix + "ped."
 	// RuntimePrefix is the prefix for runtime-related configurations.
 	RuntimePrefix = MicraAnnotationPrefix + "runtime."
 	// ContainerPrefix is the prefix for container-related configurations.
-  ContainerPrefix = MicraAnnotationPrefix + "container."
+	ContainerPrefix = MicraAnnotationPrefix + "container."
 
 	// BundlePathKey is the annotation key for the OCI configuration file path.
 	BundlePathKey = MicraAnnotationPrefix + "pkg.oci.bundle_path"
@@ -21,7 +21,7 @@ const (
 
 // Pedestal configurations.
 const (
-	// Basically about Xen.
+// Basically about Xen.
 )
 
 // Configuration for mica clients, passed to the sandbox container.
@@ -33,34 +33,29 @@ const (
 	// OSAnnotation specifies the client OS type. Corresponds to ini config keys in [Mica] section of client.conf.
 	OSAnnotation = ContainerPrefix + "os"
 	// FirmwarePath specifies the relative path to the firmware, in the bundle.
-	FirmwarePath = PedConfPrefix + "firmware_path"
-	// Pedtype specifies the pedestal type.
-	Pedtype = PedConfPrefix + "pedestal"
-	// Compat specifies compatibility options.
-	Compat = PedConfPrefix + "compatibility"
+	FirmwarePath = ContainerPrefix + "firmware_path"
 	// FirmwareHash is the sha-256 hash of the firmware.
-	FirmwareHash = PedConfPrefix + "firmware_hash"
-
+	FirmwareHash = ContainerPrefix + "firmware_hash"
+	// Pedtype specifies the pedestal type.
+	Pedtype = PedPrefix + "pedestal"
+	// Compat specifies compatibility options.
+	Compat = PedPrefix + "compatibility"
 	// NetPlaceholder is a placeholder for network configuration.
-	NetPlaceholder = PedConfPrefix + "net_placeholder"
+	NetPlaceholder = PedPrefix + "net_placeholder"
 	// DefaultMaxCPU specifies the maximum number of CPUs visible in the client.
 	// For Xen, ACRN: maxcpus;
 	// For openAMP: useless, no vcpu.
-	DefaultMaxCPU = PedConfPrefix + "defautl_max_cpu"
+	DefaultMaxCPU = PedPrefix + "defautl_max_cpu"
 	// DefaulaMemory specifies the maximum byte size of memory assigned for the client.
-	DefaulaMemory = PedConfPrefix + "default_memory"
-
-    // VirtioMem indicates if virtio-mem is enabled. Virtio support is on our roadmap.
-    VirtioMem = PedConfPrefix + "enable_virtio_mem"
-    // TODO: Add more xen-related options.
-    // PedestalConf = ClientConfPrefix + "pedestalconf"
+	DefaulaMemory = PedPrefix + "default_memory"
+	PedestalConf = PedPrefix + "conf"
 )
 
 // Container-specific runtime settings.
 const (
-    // ContainerMinMemMB specifies the initial memory (MiB) assigned to the client at boot.
-    // This differs from the max memory limit (Memory/MaxMemMB) that may come from OCI.
-    ContainerMinMemMB = ContainerPrefix + "min_memory_mb"
+	// ContainerMinMemMB specifies the initial memory (MiB) assigned to the client at boot.
+	// This differs from the max memory limit (Memory/MaxMemMB) that may come from OCI.
+	ContainerMinMemMB = ContainerPrefix + "min_memory_mb"
 )
 
 const (

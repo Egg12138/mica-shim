@@ -89,7 +89,7 @@ func createMicaClientConf(container *Container) (libmica.MicaClientConf, error) 
 		MemoryMB:    memMB,
 		MaxMemMB:    maxMB,
 		Name:        name,
-		Path:        config.ElfPath,
+		Path:        config.ElfAbsPath,
 		Ped:         pedestal.String(),
 		PedCfg:      config.PedestalConf,
 		Debug:       true,
@@ -121,7 +121,7 @@ func calculateSandboxVCPUs(s *Sandbox) (uint32, error) {
 
 	total := uint32(0)
 	for _, cc := range s.config.ContainerConfigs {
-		if cc.Infra {
+		if cc.IsInfra {
 			continue
 		}
 		if c, ok := s.containers[cc.ID]; ok && c.state.State == StateStopped {
@@ -164,7 +164,7 @@ func calculateSandboxVCPUs(s *Sandbox) (uint32, error) {
 func calculateSandboxMemory(s *Sandbox) uint64 {
 	memorySandbox := uint64(0)
 	for _, cc := range s.config.ContainerConfigs {
-		if cc.Infra {
+		if cc.IsInfra {
 			continue
 		}
 		if c, ok := s.containers[cc.ID]; ok && c.state.State == StateStopped {

@@ -14,8 +14,6 @@
 #include <sys/types.h>
 #include <sys/epoll.h>
 #include <pthread.h>
-#include <sys/mman.h>
-#include <semaphore.h>
 #include <sys/time.h>
 #include <time.h>
 
@@ -28,23 +26,12 @@
 #define MAX_FIRMWARE_PATH_LEN 128
 #define MAX_CPU_STRING_LEN 128
 #define MAX_NETWORK_LEN 512
+#define RPMSG_TTY_DEV_PREFIX "/dev/ttyRPMSG_"
 #define RESPONSE_SUCCESS "MICA-SUCCESS\n"
 #define RESPONSE_FAILED "MICA-FAILED\n"
 
 /* RTOS IO Simulation Constants */
-#define OPENAMP_SHM_SIZE  0x1000000    /* 16M */
-#define OPENAMP_SHM_COPY_SIZE 0x100000 /* 1M */
-#define SHM_NAME "/my_shared_memory_%d"
-#define SEM_USER_TO_MICAD "/sem_user_to_mciad_%d"
-#define SEM_MICAD_TO_USER "/sem_mciad_to_user_%d"
-#define RING_BUFFER_SIZE 4096
 #define MAX_RTOS_INSTANCES 4
-
-/* RPMSG Message Types */
-#define RPMSG_TYPE_RPC 1
-#define RPMSG_TYPE_UMT 2  
-#define RPMSG_TYPE_PTY 3
-#define RPMSG_TYPE_DEBUG 4
 
 #define INFO(fmt, ...) printf("[INFO] " fmt "\n", ##__VA_ARGS__)
 #define WARN(fmt, ...) printf("!WARN! " fmt "\n", ##__VA_ARGS__)
@@ -69,41 +56,12 @@ struct create_msg {
 	int vcpu_num;
 	int cpu_weight;
 	int cpu_capacity;
-	int memory;
-	char network[MAX_NETWORK_LEN];
+    int memory;
+    int maxmem;
+    char network[MAX_NETWORK_LEN];
 };
 
-/* RTOS Communication Structures */
-typedef struct {
-    unsigned long phy_addr;
-    int data_len;
-    int instance_id;
-    int rcv_data_len;
-    int lock;
-    char rcv_buffer[256];
-} process_shared_data_t;
-
-typedef struct {
-    unsigned long phy_addr;
-    int data_len;
-} umt_send_msg_t;
-
-typedef struct {
-    uint32_t msg_type;
-    uint32_t src_addr;
-    uint32_t dst_addr;
-    uint32_t data_len;
-    char data[BUFFER_SIZE];
-} rpmsg_message_t;
-
-/* Ring Buffer Structure */
-typedef struct ring_buffer {
-    unsigned int in;
-    unsigned int out;
-    unsigned int len;
-    unsigned int esize;
-    char data[0];
-} ring_buffer_t;
+/* RTOS Communication Structures: removed (unused in mock). */
 
 /* RTOS Instance Simulation */
 struct rtos_instance {
@@ -111,22 +69,14 @@ struct rtos_instance {
     char name[MAX_NAME_LEN];
     uint32_t cpu_id;
     bool active;
-    
-    /* Shared Memory */
-    process_shared_data_t *shared_memory;
-    int shm_fd;
-    
-    /* Semaphores */
-    sem_t *sem_user_to_micad;
-    sem_t *sem_micad_to_user;
-    
-    /* Ring Buffers */
-    ring_buffer_t *tx_ring;
-    ring_buffer_t *rx_ring;
-    
-    /* Thread for RTOS simulation */
-    pthread_t rtos_thread;
-    pthread_mutex_t data_mutex;
+
+    /* PTY (rpmsg-tty style) */
+    int pty_master_fd;
+    int pty_slave_fd;
+    pthread_t pty_writer_thread;
+    bool writer_started;
+    char tty_symlink[64];
+    char pts_slave_path[128];
     
     struct rtos_instance *next;
 };
@@ -146,23 +96,22 @@ static void handle_client_ctrl(int client_fd, struct listen_unit *unit);
 static int remove_socket(const char *client_name);
 static void cleanup_listeners(void);
 static void show_time(void);
+static void print_all_client_statuses(void);
+static void set_client_status(const char *name, const char *status);
 
 /* RTOS IO Function prototypes */
 static int create_rtos_instance(const char *name, uint32_t cpu_id);
 static void destroy_rtos_instance(const char *name);
 static struct rtos_instance *find_rtos_instance(const char *name);
-static int init_shared_memory(struct rtos_instance *rtos);
-static int init_semaphores(struct rtos_instance *rtos);
-static int init_ring_buffers(struct rtos_instance *rtos);
-static void *rtos_simulation_thread(void *arg);
-static void simulate_rpmsg_processing(struct rtos_instance *rtos, rpmsg_message_t *msg);
-static int ring_buffer_write(ring_buffer_t *rb, const char *data, int len);
-static int ring_buffer_read(ring_buffer_t *rb, char *data, int len);
-static void simulate_rtos_response(struct rtos_instance *rtos, const char *input_data, int input_len);
+/* Removed SHM/SEM/RPMSG and ring buffer prototypes in mock. */
+static int create_tty_device(struct rtos_instance *rtos, const char *client_name);
+static void remove_tty_device(struct rtos_instance *rtos);
+static void *pty_writer_task(void *arg);
 
 /* Created clients tracking */
 struct client_entry {
 	char name[MAX_NAME_LEN];
+	char status[32];
 	struct client_entry *next;
 };
 
@@ -197,9 +146,10 @@ static void print_create_msg(const struct create_msg *msg)
 	printf("VCPU Num: %d\n", msg->vcpu_num);
 	printf("CPU Weight: %d\n", msg->cpu_weight);
 	printf("CPU Capacity: %d\n", msg->cpu_capacity);
-	printf("Memory: %d\n", msg->memory);
-	printf("Network: %.*s\n", (int)strnlen(msg->network, sizeof(msg->network)), msg->network);
-	printf("\n");
+    printf("Memory: %d\n", msg->memory);
+    printf("MaxMem: %d\n", msg->maxmem);
+    printf("Network: %.*s\n", (int)strnlen(msg->network, sizeof(msg->network)), msg->network);
+    printf("\n");
 }
 
 static int safe_send(int fd, const char *msg, ssize_t len)
@@ -217,6 +167,91 @@ static int safe_send(int fd, const char *msg, ssize_t len)
 		sent += ret;
 	}
 	return 0;
+}
+
+static void respond_with_status(int fd, const char *msg)
+{
+	if (msg != NULL && fd >= 0) {
+		safe_send(fd, msg, strlen(msg));
+	}
+	print_all_client_statuses();
+}
+
+static void set_client_status(const char *name, const char *status)
+{
+	struct client_entry *entry;
+	if (!name || !status)
+		return;
+
+	pthread_mutex_lock(&client_mutex);
+	entry = client_list;
+	while (entry) {
+		if (strncmp(entry->name, name, MAX_NAME_LEN) == 0) {
+			snprintf(entry->status, sizeof(entry->status), "%s", status);
+			break;
+		}
+		entry = entry->next;
+	}
+	pthread_mutex_unlock(&client_mutex);
+}
+
+static void print_all_client_statuses(void)
+{
+	struct client_entry *entry;
+	pthread_mutex_lock(&client_mutex);
+	entry = client_list;
+	if (!entry) {
+		printf("[CLIENT STATUS] (none)\n");
+		pthread_mutex_unlock(&client_mutex);
+		return;
+	}
+
+	printf("[CLIENT STATUS]");
+	while (entry) {
+		const char *status = entry->status[0] ? entry->status : "Unknown";
+		printf(" %s:%s", entry->name, status);
+		entry = entry->next;
+		if (entry)
+			printf(",");
+	}
+	printf("\n");
+	pthread_mutex_unlock(&client_mutex);
+}
+
+/* Re-introduced utility helpers kept outside disabled SHM region. */
+static void sanitize_client_name(char *dst, size_t dst_sz, const char *src)
+{
+    size_t i, j = 0;
+    if (!dst || !src || dst_sz == 0)
+        return;
+    for (i = 0; src[i] != '\0' && j + 1 < dst_sz; i++) {
+        char c = src[i];
+        if ((c >= 'a' && c <= 'z') ||
+            (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') ||
+            c == '_' || c == '-') {
+            dst[j++] = c;
+        } else {
+            dst[j++] = '_';
+        }
+    }
+    dst[j] = '\0';
+}
+
+static struct rtos_instance *find_rtos_instance(const char *name)
+{
+    struct rtos_instance *rtos;
+    pthread_mutex_lock(&rtos_mutex);
+    rtos = rtos_instances;
+    while (rtos) {
+        if (strncmp(rtos->name, name, MAX_NAME_LEN) == 0) {
+            pthread_mutex_unlock(&rtos_mutex);
+            return rtos;
+        }
+        rtos = rtos->next;
+    }
+    pthread_mutex_unlock(&rtos_mutex);
+    return NULL;
 }
 
 static void print_hex_dump(const char *data, size_t len)
@@ -277,9 +312,10 @@ static void register_client(const char *name)
 	entry = calloc(1, sizeof(*entry));
 	if (!entry)
 		return;
-	
-	strncpy(entry->name, name, MAX_NAME_LEN - 1);
-	
+
+    snprintf(entry->name, sizeof(entry->name), "%s", name);
+    snprintf(entry->status, sizeof(entry->status), "%s", "Created");
+
 	pthread_mutex_lock(&client_mutex);
 	entry->next = client_list;
 	client_list = entry;
@@ -366,7 +402,6 @@ static int remove_socket(const char *client_name)
 {
 	char socket_path[128];
 	snprintf(socket_path, sizeof(socket_path), "%s/%s.socket", SOCKET_DIR, client_name);
-	struct sockaddr_un server_addr;
 	int fd;
 
 	fd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -412,8 +447,8 @@ static int create_client_socket(const char *client_name)
 		return -1;
 	}
 
-	strncpy(unit->name, client_name, MAX_NAME_LEN - 1);
-	strncpy(unit->socket_path, socket_path, sizeof(unit->socket_path) - 1);
+	snprintf(unit->name, sizeof(unit->name), "%s", client_name);
+	snprintf(unit->socket_path, sizeof(unit->socket_path), "%s", socket_path);
 	unit->socket_fd = server_fd;
 	unit->is_create_socket = false;
 
@@ -521,292 +556,131 @@ static int add_listener(const char *name, const char *socket_path, bool is_creat
 
 	return 0;
 }
-
 /* RTOS IO Implementation Functions */
 
-static int ring_buffer_write(ring_buffer_t *rb, const char *data, int len)
+static int create_tty_device(struct rtos_instance *rtos, const char *client_name)
 {
-	int available, to_write, first_chunk;
-	
-	if (!rb || !data || len <= 0)
-		return -1;
-		
-	available = rb->len - (rb->in - rb->out);
-	if (available == 0)
-		return 0; /* Buffer full */
-		
-	to_write = (len < available) ? len : available;
-	first_chunk = rb->len - (rb->in % rb->len);
-	
-	if (first_chunk >= to_write) {
-		memcpy(rb->data + (rb->in % rb->len), data, to_write);
-	} else {
-		memcpy(rb->data + (rb->in % rb->len), data, first_chunk);
-		memcpy(rb->data, data + first_chunk, to_write - first_chunk);
-	}
-	
-	rb->in += to_write;
-	return to_write;
+    static const char *fallback_prefix = "/tmp/ttyRPMSG_";
+    const char *prefixes[] = {RPMSG_TTY_DEV_PREFIX, fallback_prefix};
+    int ret;
+    int master_fd = -1, slave_fd = -1;
+    char pts_name[128] = {0};
+    char suffix[MAX_NAME_LEN] = {0};
+    bool linked = false;
+
+    if (!rtos || !client_name)
+        return -1;
+
+    sanitize_client_name(suffix, sizeof(suffix), client_name);
+
+    master_fd = posix_openpt(O_RDWR | O_NOCTTY);
+    if (master_fd == -1)
+        goto err;
+    ret = grantpt(master_fd);
+    if (ret != 0)
+        goto err;
+    ret = unlockpt(master_fd);
+    if (ret != 0)
+        goto err;
+    ret = ptsname_r(master_fd, pts_name, sizeof(pts_name));
+    if (ret != 0)
+        goto err;
+
+    snprintf(rtos->pts_slave_path, sizeof(rtos->pts_slave_path), "%s", pts_name);
+
+    for (size_t i = 0; i < sizeof(prefixes)/sizeof(prefixes[0]); i++) {
+        snprintf(rtos->tty_symlink, sizeof(rtos->tty_symlink), "%s%s", prefixes[i], suffix);
+        unlink(rtos->tty_symlink);
+        if (symlink(pts_name, rtos->tty_symlink) == 0) {
+            linked = true;
+            break;
+        }
+    }
+
+    if (!linked)
+        goto err;
+
+    /* Keep slave open to avoid EIO on master */
+    slave_fd = open(pts_name, O_RDWR | O_NOCTTY);
+    if (slave_fd == -1)
+        goto err_unlink;
+
+    rtos->pty_master_fd = master_fd;
+    rtos->pty_slave_fd = slave_fd;
+    INFO("PTY created for %s: symlink=%s target=%s", client_name, rtos->tty_symlink, rtos->pts_slave_path);
+    return 0;
+
+err_unlink:
+    unlink(rtos->tty_symlink);
+err:
+    if (master_fd != -1)
+        close(master_fd);
+    if (slave_fd != -1)
+        close(slave_fd);
+    rtos->pty_master_fd = -1;
+    rtos->pty_slave_fd = -1;
+    rtos->tty_symlink[0] = '\0';
+    return -1;
 }
 
-static int ring_buffer_read(ring_buffer_t *rb, char *data, int len)
+static void remove_tty_device(struct rtos_instance *rtos)
 {
-	int available, to_read, first_chunk;
-	
-	if (!rb || !data || len <= 0)
-		return -1;
-		
-	available = rb->in - rb->out;
-	if (available == 0)
-		return 0; /* Buffer empty */
-		
-	to_read = (len < available) ? len : available;
-	first_chunk = rb->len - (rb->out % rb->len);
-	
-	if (first_chunk >= to_read) {
-		memcpy(data, rb->data + (rb->out % rb->len), to_read);
-	} else {
-		memcpy(data, rb->data + (rb->out % rb->len), first_chunk);
-		memcpy(data + first_chunk, rb->data, to_read - first_chunk);
-	}
-	
-	rb->out += to_read;
-	return to_read;
+    if (!rtos)
+        return;
+    if (rtos->pty_master_fd > -1) {
+        close(rtos->pty_master_fd);
+        rtos->pty_master_fd = -1;
+    }
+    if (rtos->pty_slave_fd > -1) {
+        close(rtos->pty_slave_fd);
+        rtos->pty_slave_fd = -1;
+    }
+    if (rtos->tty_symlink[0] != '\0') {
+        unlink(rtos->tty_symlink);
+        rtos->tty_symlink[0] = '\0';
+    }
 }
 
-static int init_shared_memory(struct rtos_instance *rtos)
+/* Periodically write output to the PTY master to simulate client console */
+static void *pty_writer_task(void *arg)
 {
-	char shm_name[64];
-	
-	snprintf(shm_name, sizeof(shm_name), SHM_NAME, rtos->instance_id);
-	
-	/* Create shared memory */
-	rtos->shm_fd = shm_open(shm_name, O_CREAT | O_RDWR, 0666);
-	if (rtos->shm_fd < 0) {
-		perror("shm_open failed");
-		return -1;
-	}
-	
-	if (ftruncate(rtos->shm_fd, sizeof(process_shared_data_t)) < 0) {
-		perror("ftruncate failed");
-		close(rtos->shm_fd);
-		return -1;
-	}
-	
-	/* Map shared memory */
-	rtos->shared_memory = mmap(NULL, sizeof(process_shared_data_t),
-				   PROT_READ | PROT_WRITE, MAP_SHARED,
-				   rtos->shm_fd, 0);
-	if (rtos->shared_memory == MAP_FAILED) {
-		perror("mmap failed");
-		close(rtos->shm_fd);
-		return -1;
-	}
-	
-	/* Initialize shared memory */
-	memset(rtos->shared_memory, 0, sizeof(process_shared_data_t));
-	rtos->shared_memory->instance_id = rtos->instance_id;
-	rtos->shared_memory->lock = 0;
-	
-	printf("RTOS[%s]: Shared memory initialized at %p\n", rtos->name, rtos->shared_memory);
-	return 0;
+    struct rtos_instance *rtos = (struct rtos_instance *)arg;
+    if (!rtos)
+        pthread_exit(NULL);
+    const useconds_t interval_us = 200 * 1000; /* 200ms */
+    int counter = 0;
+    while (rtos->active && is_running) {
+        if (rtos->pty_master_fd > -1) {
+            char buf[256];
+            int n = snprintf(buf, sizeof(buf), "[%s] tick=%d time=%ld\n", rtos->name, counter++, time(NULL));
+            if (n > 0) {
+                ssize_t written = write(rtos->pty_master_fd, buf, (size_t)n);
+                (void)written;
+            }
+        }
+        usleep(interval_us);
+    }
+    pthread_exit(NULL);
 }
 
-static int init_semaphores(struct rtos_instance *rtos)
+static void free_rtos_instance(struct rtos_instance *rtos)
 {
-	char sem_name[64];
-	
-	/* Create user->micad semaphore */
-	snprintf(sem_name, sizeof(sem_name), SEM_USER_TO_MICAD, rtos->instance_id);
-	rtos->sem_user_to_micad = sem_open(sem_name, O_CREAT, 0666, 0);
-	if (rtos->sem_user_to_micad == SEM_FAILED) {
-		perror("sem_open user_to_micad failed");
-		return -1;
-	}
-	
-	/* Create micad->user semaphore */
-	snprintf(sem_name, sizeof(sem_name), SEM_MICAD_TO_USER, rtos->instance_id);
-	rtos->sem_micad_to_user = sem_open(sem_name, O_CREAT, 0666, 0);
-	if (rtos->sem_micad_to_user == SEM_FAILED) {
-		perror("sem_open micad_to_user failed");
-		sem_close(rtos->sem_user_to_micad);
-		return -1;
-	}
-	
-	printf("RTOS[%s]: Semaphores initialized\n", rtos->name);
-	return 0;
-}
-
-static int init_ring_buffers(struct rtos_instance *rtos)
-{
-	/* Allocate ring buffers */
-	rtos->tx_ring = malloc(sizeof(ring_buffer_t) + RING_BUFFER_SIZE);
-	rtos->rx_ring = malloc(sizeof(ring_buffer_t) + RING_BUFFER_SIZE);
-	
-	if (!rtos->tx_ring || !rtos->rx_ring) {
-		free(rtos->tx_ring);
-		free(rtos->rx_ring);
-		return -1;
-	}
-	
-	/* Initialize ring buffers */
-	rtos->tx_ring->in = rtos->tx_ring->out = 0;
-	rtos->tx_ring->len = RING_BUFFER_SIZE;
-	rtos->tx_ring->esize = 1;
-	
-	rtos->rx_ring->in = rtos->rx_ring->out = 0;
-	rtos->rx_ring->len = RING_BUFFER_SIZE;
-	rtos->rx_ring->esize = 1;
-	
-	printf("RTOS[%s]: Ring buffers initialized (size=%d each)\n", rtos->name, RING_BUFFER_SIZE);
-	return 0;
-}
-
-static void simulate_rtos_response(struct rtos_instance *rtos, const char *input_data, int input_len)
-{
-	char response[BUFFER_SIZE];
-	int response_len;
-	
-	/* Simulate RTOS processing - echo with timestamp and processing info */
-	struct timeval tv;
-	gettimeofday(&tv, NULL);
-	
-	response_len = snprintf(response, sizeof(response),
-				"RTOS[%s@CPU%u] processed %d bytes at %ld.%06ld: %.100s",
-				rtos->name, rtos->cpu_id, input_len,
-				tv.tv_sec, tv.tv_usec, input_data);
-	
-	/* Write response to shared memory */
-	if (response_len < 256) {
-		memcpy(rtos->shared_memory->rcv_buffer, response, response_len);
-		rtos->shared_memory->rcv_data_len = response_len;
-	}
-	
-	/* Also write to ring buffer for streaming data */
-	ring_buffer_write(rtos->tx_ring, response, response_len);
-	
-	printf("RTOS[%s]: Generated response (%d bytes)\n", rtos->name, response_len);
-}
-
-static void simulate_rpmsg_processing(struct rtos_instance *rtos, rpmsg_message_t *msg)
-{
-	printf("RTOS[%s]: Processing RPMSG message type=%u, len=%u\n",
-	       rtos->name, msg->msg_type, msg->data_len);
-	
-	switch (msg->msg_type) {
-	case RPMSG_TYPE_RPC:
-		printf("RTOS[%s]: RPC call: %.*s\n", rtos->name, msg->data_len, msg->data);
-		simulate_rtos_response(rtos, msg->data, msg->data_len);
-		break;
-		
-	case RPMSG_TYPE_UMT:
-		printf("RTOS[%s]: UMT message: %.*s\n", rtos->name, msg->data_len, msg->data);
-		simulate_rtos_response(rtos, msg->data, msg->data_len);
-		break;
-		
-	case RPMSG_TYPE_PTY:
-		printf("RTOS[%s]: PTY data: %.*s\n", rtos->name, msg->data_len, msg->data);
-		ring_buffer_write(rtos->tx_ring, msg->data, msg->data_len);
-		break;
-		
-	case RPMSG_TYPE_DEBUG:
-		printf("RTOS[%s]: Debug data: %.*s\n", rtos->name, msg->data_len, msg->data);
-		ring_buffer_write(rtos->tx_ring, msg->data, msg->data_len);
-		break;
-		
-	default:
-		printf("RTOS[%s]: Unknown message type: %u\n", rtos->name, msg->msg_type);
-		break;
-	}
-}
-
-static void *rtos_simulation_thread(void *arg)
-{
-	struct rtos_instance *rtos = (struct rtos_instance *)arg;
-	struct timespec timeout;
-	int ret;
-	
-	printf("RTOS[%s]: Simulation thread started on CPU %u\n", rtos->name, rtos->cpu_id);
-	
-	while (rtos->active && is_running) {
-		/* Wait for user data with timeout */
-		clock_gettime(CLOCK_REALTIME, &timeout);
-		timeout.tv_sec += 1; /* 1 second timeout */
-		
-		ret = sem_timedwait(rtos->sem_user_to_micad, &timeout);
-		if (ret == -1) {
-			if (errno == ETIMEDOUT) {
-				/* Generate periodic debug data */
-				char debug_msg[128];
-				int len = snprintf(debug_msg, sizeof(debug_msg),
-						   "RTOS[%s] heartbeat at %ld\n", 
-						   rtos->name, time(NULL));
-				ring_buffer_write(rtos->tx_ring, debug_msg, len);
-				continue;
-			} else {
-				perror("sem_timedwait failed");
-				break;
-			}
-		}
-		
-		/* Process incoming data */
-		pthread_mutex_lock(&rtos->data_mutex);
-		
-		if (rtos->shared_memory->data_len > 0) {
-			/* Simulate processing delay */
-			usleep(10000); /* 10ms processing delay */
-			
-			/* Create RPMSG message from shared memory data */
-			rpmsg_message_t msg;
-			msg.msg_type = RPMSG_TYPE_UMT;
-			msg.src_addr = 0;
-			msg.dst_addr = rtos->instance_id;
-			msg.data_len = rtos->shared_memory->data_len;
-			
-			/* Copy data from physical address simulation */
-			snprintf(msg.data, sizeof(msg.data), "Data from phy_addr=0x%lx: simulated payload",
-				 rtos->shared_memory->phy_addr);
-			
-			/* Process the message */
-			simulate_rpmsg_processing(rtos, &msg);
-			
-			/* Clear processed data */
-			rtos->shared_memory->data_len = 0;
-			rtos->shared_memory->phy_addr = 0;
-		}
-		
-		pthread_mutex_unlock(&rtos->data_mutex);
-		
-		/* Signal completion to user */
-		sem_post(rtos->sem_micad_to_user);
-	}
-	
-	printf("RTOS[%s]: Simulation thread terminated\n", rtos->name);
-	pthread_exit(NULL);
-}
-
-static struct rtos_instance *find_rtos_instance(const char *name)
-{
-	struct rtos_instance *rtos;
-	
-	pthread_mutex_lock(&rtos_mutex);
-	rtos = rtos_instances;
-	while (rtos) {
-		if (strncmp(rtos->name, name, MAX_NAME_LEN) == 0) {
-			pthread_mutex_unlock(&rtos_mutex);
-			return rtos;
-		}
-		rtos = rtos->next;
-	}
-	pthread_mutex_unlock(&rtos_mutex);
-	return NULL;
+    if (!rtos)
+        return;
+    rtos->active = false;
+    if (rtos->writer_started) {
+        pthread_join(rtos->pty_writer_thread, NULL);
+        rtos->writer_started = false;
+    }
+    remove_tty_device(rtos);
+    free(rtos);
 }
 
 static int create_rtos_instance(const char *name, uint32_t cpu_id)
 {
-	struct rtos_instance *rtos;
-	static int next_instance_id = 0;
-	
+    struct rtos_instance *rtos;
+    static int next_instance_id = 0;
+
 	/* Check if instance already exists */
 	if (find_rtos_instance(name)) {
 		printf("RTOS instance '%s' already exists\n", name);
@@ -819,35 +693,33 @@ static int create_rtos_instance(const char *name, uint32_t cpu_id)
 		perror("Failed to allocate RTOS instance");
 		return -1;
 	}
-	
+
 	/* Initialize instance */
 	rtos->instance_id = next_instance_id++;
-	strncpy(rtos->name, name, MAX_NAME_LEN - 1);
+	snprintf(rtos->name, sizeof(rtos->name), "%s", name);
 	rtos->cpu_id = cpu_id;
 	rtos->active = true;
-	pthread_mutex_init(&rtos->data_mutex, NULL);
-	
-	/* Initialize communication mechanisms */
-	if (init_shared_memory(rtos) < 0 ||
-	    init_semaphores(rtos) < 0 ||
-	    init_ring_buffers(rtos) < 0) {
-		destroy_rtos_instance(name);
+
+	/* Create PTY device for console */
+	if (create_tty_device(rtos, name) != 0) {
+		free(rtos);
 		return -1;
 	}
-	
-	/* Start simulation thread */
-	if (pthread_create(&rtos->rtos_thread, NULL, rtos_simulation_thread, rtos) != 0) {
-		perror("Failed to create RTOS simulation thread");
-		destroy_rtos_instance(name);
+
+	/* Start PTY writer thread */
+	if (pthread_create(&rtos->pty_writer_thread, NULL, pty_writer_task, rtos) != 0) {
+		perror("Failed to create PTY writer thread");
+		free_rtos_instance(rtos);
 		return -1;
 	}
-	
+	rtos->writer_started = true;
+
 	/* Add to list */
 	pthread_mutex_lock(&rtos_mutex);
 	rtos->next = rtos_instances;
 	rtos_instances = rtos;
 	pthread_mutex_unlock(&rtos_mutex);
-	
+
 	printf("RTOS instance '%s' created successfully (ID=%d, CPU=%u)\n", 
 	       name, rtos->instance_id, cpu_id);
 	return 0;
@@ -855,11 +727,10 @@ static int create_rtos_instance(const char *name, uint32_t cpu_id)
 
 static void destroy_rtos_instance(const char *name)
 {
-	struct rtos_instance *rtos, *prev = NULL;
-	char shm_name[64], sem_name[64];
-	
+    struct rtos_instance *rtos, *prev = NULL;
+
 	pthread_mutex_lock(&rtos_mutex);
-	
+
 	/* Find and remove from list */
 	rtos = rtos_instances;
 	while (rtos) {
@@ -873,47 +744,15 @@ static void destroy_rtos_instance(const char *name)
 		prev = rtos;
 		rtos = rtos->next;
 	}
-	
-	pthread_mutex_unlock(&rtos_mutex);
-	
+
 	if (!rtos) {
-		printf("RTOS instance '%s' not found\n", name);
+		pthread_mutex_unlock(&rtos_mutex);
 		return;
 	}
-	
-	/* Stop simulation thread */
-	rtos->active = false;
-	sem_post(rtos->sem_user_to_micad); /* Wake up thread */
-	pthread_join(rtos->rtos_thread, NULL);
-	
-	/* Cleanup shared memory */
-	if (rtos->shared_memory) {
-		munmap(rtos->shared_memory, sizeof(process_shared_data_t));
-		close(rtos->shm_fd);
-		snprintf(shm_name, sizeof(shm_name), SHM_NAME, rtos->instance_id);
-		shm_unlink(shm_name);
-	}
-	
-	/* Cleanup semaphores */
-	if (rtos->sem_user_to_micad) {
-		sem_close(rtos->sem_user_to_micad);
-		snprintf(sem_name, sizeof(sem_name), SEM_USER_TO_MICAD, rtos->instance_id);
-		sem_unlink(sem_name);
-	}
-	if (rtos->sem_micad_to_user) {
-		sem_close(rtos->sem_micad_to_user);
-		snprintf(sem_name, sizeof(sem_name), SEM_MICAD_TO_USER, rtos->instance_id);
-		sem_unlink(sem_name);
-	}
-	
-	/* Cleanup ring buffers */
-	free(rtos->tx_ring);
-	free(rtos->rx_ring);
-	
-	/* Cleanup mutex */
-	pthread_mutex_destroy(&rtos->data_mutex);
-	
-	free(rtos);
+
+	pthread_mutex_unlock(&rtos_mutex);
+
+	free_rtos_instance(rtos);
 	printf("RTOS instance '%s' destroyed\n", name);
 }
 
@@ -940,32 +779,21 @@ static void show_time(void)
 
 static void cleanup_listeners(void)
 {
-	struct listen_unit *current, *next;
-	struct client_entry *client, *client_next;
-	struct rtos_instance *rtos, *rtos_next;
+    struct listen_unit *current, *next;
+    struct client_entry *client, *client_next;
+    struct rtos_instance *rtos, *rtos_next;
 	
-	/* Cleanup RTOS instances */
-	pthread_mutex_lock(&rtos_mutex);
-	rtos = rtos_instances;
-	while (rtos) {
-		rtos_next = rtos->next;
-		rtos->active = false;
-		sem_post(rtos->sem_user_to_micad); /* Wake up threads */
-		rtos = rtos_next;
-	}
-	pthread_mutex_unlock(&rtos_mutex);
-	
-	/* Wait for threads and cleanup */
-	pthread_mutex_lock(&rtos_mutex);
-	rtos = rtos_instances;
-	while (rtos) {
-		rtos_next = rtos->next;
-		pthread_join(rtos->rtos_thread, NULL);
-		/* Note: Individual cleanup will be done by destroy_rtos_instance */
-		rtos = rtos_next;
-	}
-	rtos_instances = NULL;
-	pthread_mutex_unlock(&rtos_mutex);
+    /* Stop and destroy all RTOS instances safely */
+    pthread_mutex_lock(&rtos_mutex);
+    rtos = rtos_instances;
+    rtos_instances = NULL;
+    pthread_mutex_unlock(&rtos_mutex);
+
+    while (rtos) {
+        rtos_next = rtos->next;
+        free_rtos_instance(rtos);
+        rtos = rtos_next;
+    }
 	
 	pthread_mutex_lock(&listener_mutex);
 	current = listener_list;
@@ -1000,7 +828,9 @@ static void handle_client_ctrl(int client_fd, struct listen_unit *unit)
 	if (bytes_received < 0) {
 		perror("recv failed");
 		if (send_response) {
-			safe_send(client_fd, RESPONSE_FAILED, strlen(RESPONSE_FAILED));
+			respond_with_status(client_fd, RESPONSE_FAILED);
+		} else {
+			respond_with_status(-1, NULL);
 		}
 		return;
 	}
@@ -1008,27 +838,54 @@ static void handle_client_ctrl(int client_fd, struct listen_unit *unit)
 	buffer[bytes_received] = '\0';
 	printf("Received control command for client '%s': %s\n", client_name, buffer);
 
-	/* Handle different control commands */
-	if (strncmp(buffer, "start", 5) == 0) {
-		INFO("Starting client: %s\n", client_name);
-	} else if (strncmp(buffer, "stop", 4) == 0) {
-		INFO("Stopping client: %s\n", client_name);
-	} else if (strncmp(buffer, "status", 6) == 0) {
-		INFO("Getting status for client: %s\n", client_name);
-	} else if (strncmp(buffer, "rm", 2) == 0) {
-		INFO("Removing client: %s\n", client_name);
-		/* Remove RTOS instance */
-		destroy_rtos_instance(client_name);
-		/* Remove from client list and cleanup */
-		remove_client(client_name);
-		/* The actual socket cleanup happens in the caller */
-	} else {
-		INFO("Unknown command for client '%s': %s\n", client_name, buffer);
-	}
+    /* Handle different control commands with state checks */
+    int success = 0; /* 1=ok, 0=fail */
+    if (strncmp(buffer, "start", 5) == 0) {
+        INFO("Starting client: %s\n", client_name);
+        /* start only if not already Running */
+        struct client_entry *e;
+        pthread_mutex_lock(&client_mutex);
+        e = client_list;
+        while (e && strncmp(e->name, client_name, MAX_NAME_LEN) != 0) e = e->next;
+        if (e && strcasecmp(e->status, "Running") == 0) {
+            success = 0; /* already running -> fail */
+        } else if (e) {
+            snprintf(e->status, sizeof(e->status), "%s", "Running");
+            success = 1;
+        }
+        pthread_mutex_unlock(&client_mutex);
+    } else if (strncmp(buffer, "stop", 4) == 0) {
+        INFO("Stopping client: %s\n", client_name);
+        /* stopping Stopped is OK (idempotent) */
+        struct client_entry *e;
+        pthread_mutex_lock(&client_mutex);
+        e = client_list;
+        while (e && strncmp(e->name, client_name, MAX_NAME_LEN) != 0) e = e->next;
+        if (e) {
+            snprintf(e->status, sizeof(e->status), "%s", "Stopped");
+            success = 1;
+        }
+        pthread_mutex_unlock(&client_mutex);
+    } else if (strncmp(buffer, "status", 6) == 0) {
+        INFO("Getting status for client: %s\n", client_name);
+        success = 1;
+    } else if (strncmp(buffer, "rm", 2) == 0) {
+        INFO("Removing client: %s\n", client_name);
+        /* Remove RTOS instance */
+        destroy_rtos_instance(client_name);
+        /* Remove from client list and cleanup */
+        remove_client(client_name);
+        success = 1;
+    } else {
+        INFO("Unknown command for client '%s': %s\n", client_name, buffer);
+        success = 0;
+    }
 
-	if (send_response) {
-		safe_send(client_fd, RESPONSE_SUCCESS, strlen(RESPONSE_SUCCESS));
-	}
+    if (send_response) {
+        respond_with_status(client_fd, success ? RESPONSE_SUCCESS : RESPONSE_FAILED);
+    } else {
+        respond_with_status(-1, NULL);
+    }
 	printf(">>");
 }
 
@@ -1041,13 +898,13 @@ static void create_client(int client_fd)
 	bytes_received = recv(client_fd, buffer, BUFFER_SIZE - 1, 0);
 	if (bytes_received < 0) {
 		perror("recv failed");
-		safe_send(client_fd, RESPONSE_FAILED, strlen(RESPONSE_FAILED));
+		respond_with_status(client_fd, RESPONSE_FAILED);
 		return;
 	}
 
 	buffer[bytes_received] = '\0';
 	printf("Received string: %s\n", buffer);
-	safe_send(client_fd, RESPONSE_SUCCESS, strlen(RESPONSE_SUCCESS));
+	respond_with_status(client_fd, RESPONSE_SUCCESS);
 }
 #else
 static void handle_client(int client_fd)
@@ -1059,7 +916,9 @@ static void handle_client(int client_fd)
 	if (bytes_received < 0) {
 		perror("recv failed");
 		if (send_response) {
-			safe_send(client_fd, RESPONSE_FAILED, strlen(RESPONSE_FAILED));
+			respond_with_status(client_fd, RESPONSE_FAILED);
+		} else {
+			respond_with_status(-1, NULL);
 		}
 		return;
 	}
@@ -1073,9 +932,9 @@ static void handle_client(int client_fd)
 	/* Check if received enough data for the struct */
 	printf("bytes_received: %ld\n", bytes_received);
 	printf("sizeof(struct create_msg): %ld\n", sizeof(struct create_msg));
-	if (bytes_received >= offsetof(struct create_msg, debug) + sizeof(bool)) {
-		struct create_msg *msg = (struct create_msg *)buffer;
-		print_create_msg(msg);
+    if (bytes_received >= offsetof(struct create_msg, debug) + sizeof(bool)) {
+        struct create_msg *msg = (struct create_msg *)buffer;
+        print_create_msg(msg);
 
 		/* Extract client name (remove null padding) */
 		char client_name[MAX_NAME_LEN];
@@ -1087,8 +946,9 @@ static void handle_client(int client_fd)
 		if (client_exists(client_name)) {
 			printf("Client '%s' already exists, do not register it\n", client_name);
 			if (send_response) {
-				// safe_send(client_fd, RESPONSE_FAILED, strlen(RESPONSE_FAILED));
-				safe_send(client_fd, RESPONSE_SUCCESS, strlen(RESPONSE_SUCCESS));
+				respond_with_status(client_fd, RESPONSE_FAILED);
+			} else {
+				respond_with_status(-1, NULL);
 			}
 			return;
 		} else {
@@ -1115,21 +975,75 @@ static void handle_client(int client_fd)
 			register_client(client_name);
 			printf("Successfully added client<%s> with RTOS simulation and client socket\n", client_name);
 			if (send_response) {
-				safe_send(client_fd, RESPONSE_SUCCESS, strlen(RESPONSE_SUCCESS));
+				respond_with_status(client_fd, RESPONSE_SUCCESS);
+			} else {
+				respond_with_status(-1, NULL);
 			}
 		} else {
 			printf("Err: %d. Failed to create client socket/RTOS for: %s\n", create_ret, client_name);
+			remove_socket(client_name);
 			if (send_response) {
-				safe_send(client_fd, RESPONSE_FAILED, strlen(RESPONSE_FAILED));
+				respond_with_status(client_fd, RESPONSE_FAILED);
+			} else {
+				respond_with_status(-1, NULL);
 			}
 		}
-	} else {
-		buffer[bytes_received] = '\0';
-		printf("Received control message: %s[%ld]\n", buffer, bytes_received);
-		if (send_response) {
-			safe_send(client_fd, RESPONSE_SUCCESS, strlen(RESPONSE_SUCCESS));
-		}
-	}
+    } else {
+        buffer[bytes_received] = '\0';
+        printf("Received control message: %s[%ld]\n", buffer, bytes_received);
+
+        // Support simple textual create: "create <client_name>"
+        const char *p = buffer;
+        while (*p == ' ') p++;
+        const char *cmd = p;
+        // find first token
+        while (*p && *p != ' ' && *p != '\n' && *p != '\t') p++;
+        size_t cmdlen = p - cmd;
+        while (*p == ' ') p++;
+        const char *arg = p;
+        // arg is rest of line
+        char client_name[MAX_NAME_LEN] = {0};
+        if (cmdlen == 6 && strncasecmp(cmd, "create", 6) == 0) {
+            // parse name
+            size_t i = 0;
+            while (arg[i] && arg[i] != ' ' && arg[i] != '\n' && arg[i] != '\t' && i < MAX_NAME_LEN-1) {
+                client_name[i] = arg[i];
+                i++;
+            }
+            client_name[i] = '\0';
+            if (client_name[0] == '\0') {
+                printf("create missing client name\n");
+                if (send_response) respond_with_status(client_fd, RESPONSE_FAILED); else respond_with_status(-1, NULL);
+                return;
+            }
+            if (client_exists(client_name)) {
+                printf("Client '%s' already exists\n", client_name);
+                if (send_response) respond_with_status(client_fd, RESPONSE_FAILED); else respond_with_status(-1, NULL);
+                return;
+            }
+            printf("creating client via textual command: %s\n", client_name);
+            int create_ret = create_client_socket(client_name);
+            if (create_ret == 0) {
+                // default CPU id 0
+                if (create_rtos_instance(client_name, 0) == 0) {
+                    register_client(client_name);
+                    set_client_status(client_name, "Created");
+                    if (send_response) respond_with_status(client_fd, RESPONSE_SUCCESS); else respond_with_status(-1, NULL);
+                    return;
+                }
+            }
+            remove_socket(client_name);
+            if (send_response) respond_with_status(client_fd, RESPONSE_FAILED); else respond_with_status(-1, NULL);
+            return;
+        }
+
+        // Unknown small control on create socket
+        if (send_response) {
+            respond_with_status(client_fd, RESPONSE_FAILED);
+        } else {
+            respond_with_status(-1, NULL);
+        }
+    }
 }
 #endif
 
