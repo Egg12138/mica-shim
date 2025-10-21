@@ -116,8 +116,8 @@ type ContainerConfig struct {
 	Annotations    map[string]string
 	Resources      *specs.LinuxResources
 
-	// ElfAbsPath is the relative path of the <os>.elf in the bundle.
-	ElfAbsPath      string      `json:"relative_path"`
+	// ElfAbsPath is the absolute path of the <os>.elf in the host.
+	ElfAbsPath      string      `json:"elf_abs_path"`
 	PedestalType ped.PedType `json:"pedestal_type"`
 	PedestalConf string      `json:"pedestal_conf"`
 	OS           string      `json:"os"`
@@ -630,8 +630,8 @@ func validOS(os string) bool {
 
 // validComponent checks if a component file is a regular file.
 func validComponent(component string) bool {
-	log.Debugf("File exist: %v.", utils.FileExist(component))
-	log.Debugf("File is regular: %v.", utils.IsRegular(component))
+	log.Debugf("File %s exist: %v.", component, utils.FileExist(component))
+	log.Debugf("File %s is regular: %v.", component, utils.IsRegular(component))
 	if !utils.IsRegular(component) {
 		return false
 	}
@@ -659,14 +659,16 @@ func validComponent(component string) bool {
 }
 
 // validFirmware checks if the firmware file is valid.
-func validFirmware(bundle, firmware string) bool {
+func validFirmware(firmware string) bool {
+	log.Debugf("===> firmware=%s", firmware)
 	return validComponent(firmware)
 }
 
 // validBinfile checks if the binary file is valid.
 // For Xen, this is typically image.bin.
-func validBinfile(binpath string) bool {
-	return validComponent(binpath)
+func validBinfile(rootfs, binpath string) bool {
+	path := filepath.Join(rootfs, binpath)
+	return validComponent(path)
 }
 
 // validMicaContainer checks if the container configuration is valid for mica.
@@ -675,12 +677,14 @@ func (c *Container) validMicaContainer() bool {
 	if c.config != nil && c.config.IsInfra {
 		return true
 	}
+
 	cwd, _ := os.Getwd()
+	bundleRootfs := filepath.Join(cwd, "rootfs")
 
 	osValid := validOS(c.GetOS())
-	fwValid := validFirmware(cwd, c.GetFirmwarePath())
+	fwValid := validFirmware( c.GetFirmwarePath())
 	if HostPedType == ped.Xen {
-		binFile := validBinfile(c.GetPedestalConf())
+		binFile := validBinfile(bundleRootfs, c.GetPedestalConf())
 		fwValid = binFile && fwValid
 	}
 	judge := osValid && fwValid

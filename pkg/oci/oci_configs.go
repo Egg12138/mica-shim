@@ -122,6 +122,7 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 		// Make pedcfg absolute within bundle rootfs if necessary
 		if pedconf != "" && !filepath.IsAbs(pedconf) {
 			pedconf = filepath.Join(baseRoot, pedconf)
+			log.Debugf("===>>pedestal conf path= %s", pedconf)
 		}
 	}
 
@@ -133,29 +134,55 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 	}
 
 	resolveFirmwarePath := func(p string, strict bool) (string, error) {
-		p = strings.TrimSpace(p)
-		if p == "" {
+		trimmed := strings.TrimSpace(p)
+		if trimmed == "" {
 			return "", nil
 		}
 
-		candidate := p
-		if !filepath.IsAbs(candidate) {
-			candidate = filepath.Join(baseRoot, candidate)
-		}
-
-		if _, err := os.Stat(candidate); err != nil {
-			if os.IsNotExist(err) && !strict {
-				log.Debugf("firmware path %s not found, falling back to defaults", candidate)
-				return "", nil
+		// Candidate search order:
+		//   1) host-absolute path (allows runtime config defaults to be absolute)
+		//   2) bundle rootfs relative path (supports annotations that provide container paths)
+		var candidates []string
+		if filepath.IsAbs(trimmed) {
+			candidates = append(candidates, trimmed)
+			rel := strings.TrimPrefix(trimmed, string(filepath.Separator))
+			if rel != "" {
+				candidates = append(candidates, filepath.Join(baseRoot, rel))
 			}
-			return "", fmt.Errorf("firmware path %s is invalid: %w", candidate, err)
+		} else {
+			candidates = append(candidates, filepath.Join(baseRoot, trimmed))
 		}
 
-		resolved, err := utils.ResolvePath(candidate)
-		if err != nil {
-			return "", err
+		var lastErr error
+		for _, candidate := range candidates {
+			if candidate == "" {
+				continue
+			}
+			info, err := os.Stat(candidate)
+			if err != nil {
+				if !os.IsNotExist(err) {
+					return "", fmt.Errorf("firmware path %s lookup failed: %w", candidate, err)
+				}
+				lastErr = err
+				continue
+			}
+			if info.IsDir() {
+				lastErr = fmt.Errorf("path %s is a directory", candidate)
+				continue
+			}
+
+			resolved, err := utils.ResolvePath(candidate)
+			if err != nil {
+				return "", err
+			}
+			return resolved, nil
 		}
-		return resolved, nil
+
+		if strict {
+			return "", fmt.Errorf("firmware path %s is invalid: %w", trimmed, lastErr)
+		}
+		log.Debugf("firmware path %s not found, falling back to defaults", trimmed)
+		return "", nil
 	}
 
 	annotationFirmware := ""
@@ -164,6 +191,7 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 	}
 
 	hasMicranAnnotation := false
+	log.Pretty("spec annotations=%v", ocispec.Annotations)
 	if ocispec.Annotations != nil {
 		for key := range ocispec.Annotations {
 			if strings.HasPrefix(key, defs.MicraAnnotationPrefix) {
@@ -184,6 +212,7 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 	}
 
 	isCRIInfra := Type == cntr.PodSandbox
+	log.Debugf("isCRIInfra=%v, isInfraCandidate=%v, hasMicranAnnotation=%v, hasPedestalConfAnnotation=%v, annotationFirmware=%s", isCRIInfra, isInfraCandidate, hasMicranAnnotation, hasPedestalConfAnnotation, annotationFirmware)
 	infraEligible := annotationFirmware == "" && !hasMicranAnnotation && !hasPedestalConfAnnotation
 
 	isInfra := false
@@ -215,6 +244,7 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 			// No explicit firmware path provided; fall back to common defaults.
 		}
 
+    log.Debugf("===>> elf path = %s", elfPath)
 		if elfPath == "" {
 			defaultElfPath := filepath.Join(baseRoot, defs.DefaultFirmwareName)
 			if _, err := os.Stat(defaultElfPath); err == nil {
