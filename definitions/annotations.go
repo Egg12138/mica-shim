@@ -10,6 +10,8 @@ const (
 	RuntimePrefix = MicraAnnotationPrefix + "runtime."
 	// ContainerPrefix is the prefix for container-related configurations.
 	ContainerPrefix = MicraAnnotationPrefix + "container."
+	// CompatPrefix is the prefix for compatibility-related configurations.
+	CompatPrefix = MicraAnnotationPrefix + "compatibility."
 
 	// BundlePathKey is the annotation key for the OCI configuration file path.
 	BundlePathKey = MicraAnnotationPrefix + "pkg.oci.bundle_path"
@@ -38,8 +40,8 @@ const (
 	FirmwareHash = ContainerPrefix + "firmware_hash"
 	// Pedtype specifies the pedestal type.
 	Pedtype = PedPrefix + "pedestal"
-	// Compat specifies compatibility options.
-	Compat = PedPrefix + "compatibility"
+	// PedCompat specifies compatibility options: format "^versionX" (deprecated, use CompatPrefix directly)
+	PedCompat = PedPrefix + "compatibility" // DEPRECATED: Use CompatPrefix instead
 	// NetPlaceholder is a placeholder for network configuration.
 	NetPlaceholder = PedPrefix + "net_placeholder"
 	// DefaultMaxCPU specifies the maximum number of CPUs visible in the client.

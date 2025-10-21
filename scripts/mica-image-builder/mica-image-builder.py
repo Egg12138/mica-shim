@@ -8,8 +8,9 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent))
 from mica_label_manager import MicaLabelManager
 
-firmware_path = "/firmware.elf"
-xen_bin_img_path = "/image.bin"
+# Default file paths in container
+DEFAULT_FIRMWARE_PATH = "/firmware.elf"
+DEFAULT_XEN_BIN_IMG_PATH = "/image.bin"
 
 class MicaImageBuilder:
     def __init__(self, init_docker: bool = True):
@@ -19,6 +20,9 @@ class MicaImageBuilder:
         self.firmware_path = None
         self.xen_image_path = None
         self.image_name = None
+        self.image_description = None
+        self.zephyr_version = "3.7.1"
+        self.uniproton_version = "latest"
         self.label_manager = MicaLabelManager()
         self.dry_run = not init_docker
 
@@ -115,6 +119,31 @@ class MicaImageBuilder:
                 break
             else:
                 print("Invalid choice")
+
+    def select_os_versions(self):
+        # Get default versions from TOML config
+        default_versions = {
+            'zephyr': '3.7.1',
+            'uniproton': 'latest'
+        }
+
+        # Try to get versions from default-compatibility section
+        try:
+            if 'default-compatibility' in self.label_manager.labels_config:
+                if 'zephyr' in self.label_manager.labels_config['default-compatibility']:
+                    default_versions['zephyr'] = self.label_manager.labels_config['default-compatibility']['zephyr']
+                if 'uniproton' in self.label_manager.labels_config['default-compatibility']:
+                    default_versions['uniproton'] = self.label_manager.labels_config['default-compatibility']['uniproton']
+        except:
+            pass
+
+        print(f"\nEnter OS versions (press Enter for defaults):")
+
+        zephyr_version = input(f"Zephyr version (default: {default_versions['zephyr']}): ").strip()
+        self.zephyr_version = zephyr_version if zephyr_version else default_versions['zephyr']
+
+        uniproton_version = input(f"Uniproton version (default: {default_versions['uniproton']}): ").strip()
+        self.uniproton_version = uniproton_version if uniproton_version else default_versions['uniproton']
 
     def select_image_files(self):
         print("\nSelect firmware file:")
@@ -224,6 +253,14 @@ class MicaImageBuilder:
                     except ValueError:
                         print("Please enter a number")
 
+    def get_image_description(self):
+        # Get custom image description with default
+        default_description = f"Mica {self.os_type} Container Image"
+        description = input(f"Enter image description (default: {default_description}): ").strip()
+        if not description:
+            description = default_description
+        return description
+
     def get_image_names(self):
         scratch_name = f"{self.registry}/mica-{self.os_type}-{self.pedestal}-scratch"
 
@@ -262,20 +299,27 @@ class MicaImageBuilder:
 {labels_formatted}
 """
 
-        return dockerfile_content.encode('utf-8')
+        return dockerfile_content.encode('utf-8'), labels
 
     def generate_dockerfile_final(self, scratch_name):
         xen_image_path = self.xen_image_path if self.pedestal == "xen" else None
-        labels = self.label_manager.get_final_labels(self.pedestal, self.os_type, xen_image_path)
+        labels = self.label_manager.get_final_labels(
+            self.pedestal,
+            self.os_type,
+            xen_image_path,
+            custom_description=self.image_description,
+            zephyr_version=getattr(self, 'zephyr_version', '3.7.1'),
+            uniproton_version=getattr(self, 'uniproton_version', 'latest')
+        )
         labels_formatted = self.label_manager.format_docker_labels(labels)
 
         dockerfile_content = f"""FROM {scratch_name}:latest
 
-ARG FIRMWARE_BUNDLE_PATH="${firmware_path}"
+ARG FIRMWARE_BUNDLE_PATH="/firmware.elf"
 """
 
         if self.pedestal == "xen":
-            dockerfile_content += f"ARG XEN_BIN_IMG=\"{xen_bin_img_path}\"\n"
+            dockerfile_content += f"ARG XEN_BIN_IMG=\"/image.bin\"\n"
 
         dockerfile_content += f"""
 {labels_formatted}
@@ -286,9 +330,9 @@ ADD {self.firmware_path} ${{FIRMWARE_BUNDLE_PATH}}
         if self.pedestal == "xen":
             dockerfile_content += f"ADD {self.xen_image_path} ${{XEN_BIN_IMG}}\n"
 
-        return dockerfile_content.encode('utf-8')
+        return dockerfile_content.encode('utf-8'), labels
 
-    def build_image_with_dockerfile(self, dockerfile_content, tag, build_context=None):
+    def build_image_with_dockerfile(self, dockerfile_content, tag, build_context=None, annotations=None):
         print(f"Building image: {tag}")
 
         # Default build context is the repository scripts directory.
@@ -311,6 +355,13 @@ ADD {self.firmware_path} ${{FIRMWARE_BUNDLE_PATH}}
         import os
         dockerfile_name = None
         try:
+            if annotations:
+                return self._build_with_docker_cli(
+                    dockerfile_content,
+                    tag,
+                    build_context,
+                    annotations=annotations,
+                )
             # Create a uniquely named Dockerfile in build context
             fd, tmp_path = tempfile.mkstemp(prefix=".mica.Dockerfile.", dir=build_context)
             os.close(fd)
@@ -338,7 +389,7 @@ ADD {self.firmware_path} ${{FIRMWARE_BUNDLE_PATH}}
         except Exception as e:
             print(f"Docker SDK build failed for {tag}: {e}")
             print("Falling back to Docker CLI...")
-            return self._build_with_docker_cli(dockerfile_content, tag, build_context)
+            return self._build_with_docker_cli(dockerfile_content, tag, build_context, annotations=annotations)
         finally:
             # Best-effort cleanup of the temporary Dockerfile
             if dockerfile_name:
@@ -347,7 +398,7 @@ ADD {self.firmware_path} ${{FIRMWARE_BUNDLE_PATH}}
                 except OSError:
                     pass
 
-    def _build_with_docker_cli(self, dockerfile_content, tag, build_context):
+    def _build_with_docker_cli(self, dockerfile_content, tag, build_context, annotations=None):
         """Fallback method to build using Docker CLI directly"""
         import subprocess
         import tempfile
@@ -366,8 +417,12 @@ ADD {self.firmware_path} ${{FIRMWARE_BUNDLE_PATH}}
                 'docker', 'build',
                 '-f', dockerfile_path,
                 '-t', tag,
-                build_context
             ]
+            if annotations:
+                for key, value in annotations.items():
+                    if key.startswith("org.openeuler.micran."):
+                        cmd.extend(['--annotation', f'{key}={value}'])
+            cmd.append(build_context)
 
             print(f"Running: {' '.join(cmd)}")
             result = subprocess.run(cmd, capture_output=True, text=True)
@@ -457,21 +512,35 @@ ADD {self.firmware_path} ${{FIRMWARE_BUNDLE_PATH}}
 
         self.select_pedestal()
         self.select_os_type()
+        self.select_os_versions()
         self.select_image_files()
+
+        # Get custom image description
+        self.image_description = self.get_image_description()
 
         scratch_name = self.get_image_names()
         built_images = []
 
         print("\nBuilding scratch image...")
-        scratch_dockerfile = self.generate_dockerfile_scratch()
+        scratch_dockerfile, scratch_labels = self.generate_dockerfile_scratch()
         build_ctx = str(Path(__file__).absolute().parent.parent)
-        if not self.build_image_with_dockerfile(scratch_dockerfile, f"{scratch_name}:latest", build_context=build_ctx):
+        if not self.build_image_with_dockerfile(
+            scratch_dockerfile,
+            f"{scratch_name}:latest",
+            build_context=build_ctx,
+            annotations=scratch_labels,
+        ):
             return False
         built_images.append(f"{scratch_name}:latest")
 
         print("\nBuilding final image...")
-        final_dockerfile = self.generate_dockerfile_final(scratch_name)
-        if not self.build_image_with_dockerfile(final_dockerfile, self.image_name, build_context=build_ctx):
+        final_dockerfile, final_labels = self.generate_dockerfile_final(scratch_name)
+        if not self.build_image_with_dockerfile(
+            final_dockerfile,
+            self.image_name,
+            build_context=build_ctx,
+            annotations=final_labels,
+        ):
             # Clean up scratch image on final image build failure
             self.cleanup_images(built_images)
             return False
@@ -689,11 +758,15 @@ def cli_build(builder, args):
             print(f"Debug - Final Xen image path in Dockerfile: {builder.xen_image_path}")
 
         print("\nBuilding scratch image...")
-        scratch_dockerfile = builder.generate_dockerfile_scratch()
+        scratch_dockerfile, scratch_labels = builder.generate_dockerfile_scratch()
         if args.dry_run:
             print("[dry-run] Scratch Dockerfile preview below:")
             print(scratch_dockerfile.decode('utf-8'))
-        if not builder.build_image_with_dockerfile(scratch_dockerfile, f"{scratch_name}:latest"):
+        if not builder.build_image_with_dockerfile(
+            scratch_dockerfile,
+            f"{scratch_name}:latest",
+            annotations=scratch_labels,
+        ):
             return False
         built_images.append(f"{scratch_name}:latest")
 
@@ -704,11 +777,15 @@ def cli_build(builder, args):
                 return False
 
         print("\nBuilding final image...")
-        final_dockerfile = builder.generate_dockerfile_final(scratch_name)
+        final_dockerfile, final_labels = builder.generate_dockerfile_final(scratch_name)
         if args.dry_run:
             print("[dry-run] Final Dockerfile preview below:")
             print(final_dockerfile.decode('utf-8'))
-        if not builder.build_image_with_dockerfile(final_dockerfile, builder.image_name):
+        if not builder.build_image_with_dockerfile(
+            final_dockerfile,
+            builder.image_name,
+            annotations=final_labels,
+        ):
             builder.cleanup_images(built_images)
             return False
         built_images.append(builder.image_name)
