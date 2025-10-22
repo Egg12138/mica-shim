@@ -5,8 +5,11 @@ import (
 	"fmt"
 	log "mica-shim/logger"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
+	"strings"
 )
 
 const MAX_ID_LENGTH = 31
@@ -80,4 +83,31 @@ func InList(list []string, item string) bool {
 		}
 	}
 	return false
+}
+
+// LsofSocket returns a slice of PIDs using the given socket path
+// It runs lsof to check which processes are using the socket
+func LsofSocket(socketPath string) []int {
+	var pids []int
+	cmd := exec.Command("lsof", socketPath)
+	output, err := cmd.Output()
+	if err != nil {
+		log.Debugf("Failed to run lsof on %s: %v", socketPath, err)
+		return pids
+	}
+
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "COMMAND") || line == "" {
+			continue
+		}
+
+		fields := strings.Fields(line)
+		if len(fields) >= 2 {
+			if pid, err := strconv.Atoi(fields[1]); err == nil {
+				pids = append(pids, pid)
+			}
+		}
+	}
+	return pids
 }

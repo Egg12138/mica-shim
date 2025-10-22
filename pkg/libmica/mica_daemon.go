@@ -4,6 +4,7 @@ import (
 	"fmt"
 	er "mica-shim/errors"
 	log "mica-shim/logger"
+	"mica-shim/pkg/utils"
 	"os"
 	"os/exec"
 	"strconv"
@@ -28,35 +29,47 @@ type MicaDaemonState struct {
 	Listening bool
 }
 
-// isMicadRunning checks if micad is already running by verifying the PID file
-// and process status. Returns (pid, true) if running, (0, false) otherwise.
-func isMicadRunning() (int, bool) {
+// micadDetect checks if micad is already running by verifying the PID file
+// and process status. Returns (pid, instanceNum, true) if running, (0, 0, false) otherwise.
+func micadDetect() (pid, instanceNum int, running bool) {
+	// If MICAD_PIDFILE is missing, check the multi micad case
+	if utils.FileExist(defs.MicaCreatSocketPath) {
+		// Check processes using the socket path (like lsof)
+		pids := utils.LsofSocket(defs.MicaCreatSocketPath)
+		if len(pids) == 1 {
+			return pids[0], 1, true
+		} else {
+			return 0, len(pids), true
+		}
+	}
+
+	// believe micad MICAD_PIDFILE can avoid race
 	if _, err := os.Stat(MICAD_PIDFILE); err != nil {
-		return 0, false
+		return 0, 0, false
 	}
 
 	pidFile, err := os.ReadFile(MICAD_PIDFILE)
 	if err != nil {
-		return 0, false
+		return 0, 0, false
 	}
 
-	pid, err := strconv.Atoi(strings.TrimSpace(string(pidFile)))
+	pidFromFile, err := strconv.Atoi(strings.TrimSpace(string(pidFile)))
 	if err != nil {
-		return 0, false
+		return 0, 0, false
 	}
 
 	// Check if process is running by sending signal 0
 	sigProcExistence := syscall.Signal(0)
-	if err := syscall.Kill(pid, sigProcExistence); err != nil {
-		return pid, false
+	if err := syscall.Kill(pidFromFile, sigProcExistence); err != nil {
+		return pidFromFile, 1, false
 	}
 
-	return pid, true
+	return pidFromFile, 1, true
 }
 
 // setupMicad attempts to start micad if it's not already running
 func setupMicad() error {
-	if pid, running := isMicadRunning(); running {
+	if pid, _, running := micadDetect(); running {
 		log.Infof("micad is already running with PID %d", pid)
 		return nil
 	}
@@ -81,57 +94,31 @@ func setupMicad() error {
 		}
 	}
 
-	// Try to start micad directly
-	micadPaths := []string{
-		"/bin/micad",
-		"/sbin/micad",
-		"/usr/bin/micad",
-		"/usr/local/bin/micad",
-	}
-
-	for _, path := range micadPaths {
-		if _, err := os.Stat(path); err == nil {
-			cmd := exec.Command(path)
-			if err := cmd.Start(); err != nil {
-				log.Warnf("failed to start micad at %s: %v", path, err)
-				continue
-			}
-			log.Infof("micad started directly from %s", path)
-			return nil
-		}
-	}
-
-	return fmt.Errorf("micad not found and could not be started")
+	return fmt.Errorf("mica daemon service not found or could not be started")
 }
 
 // TODO: when to check?
 // return nil => failed to setup, no need to run micran
 // return state => daemon state
 func DaemonState() (*MicaDaemonState, error) {
-	if defs.IsMock {
-		return &MicaDaemonState{
-			Pid:       114514,
-			State:     DaemonRunning,
-			Listening: true,
-		}, nil
-	}
-
+	log.Info("DaemonState() called")
 	state := MicaDaemonState{}
 
-	pid, running := isMicadRunning()
+	pid, micadNum, running := micadDetect()
 	if !running {
-		// Try to setup micad if not running
 		if setupErr := setupMicad(); setupErr != nil {
 			return nil, fmt.Errorf("failed to setup micad daemon: %w", setupErr)
 		}
 		// Check again after setup attempt
-		pid, running = isMicadRunning()
+		pid, _, running = micadDetect()
 		if !running {
 			state.Listening = false
 			state.State = DaemonStopped
 			state.Pid = 0
 			return &state, er.MicadNotRunning
 		}
+	} else if micadNum > 1 {
+		return nil, fmt.Errorf("multiple micad instances detected (%d), this may cause issues", micadNum)
 	}
 
 	state.Pid = pid
