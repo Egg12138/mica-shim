@@ -347,6 +347,67 @@ static void remove_client(const char *name)
 	}
 }
 
+static void check_and_kill_existing_instances()
+{
+	FILE *fp;
+	char line[256];
+	int pid_found[16] = {0};
+	int pid_count = 0;
+
+	printf("Checking for existing mock_micad instances...\n");
+
+	// Run lsof command to find processes using mica-create.socket
+	fp = popen("lsof -t /tmp/mica/mica-create.socket 2>/dev/null", "r");
+	if (fp == NULL) {
+		printf("Failed to check for existing instances\n");
+		return;
+	}
+
+	while (fgets(line, sizeof(line), fp) != NULL && pid_count < 16) {
+		int pid = atoi(line);
+		if (pid > 0 && pid != getpid()) {
+			char cmd_path[256];
+			snprintf(cmd_path, sizeof(cmd_path), "/proc/%d/comm", pid);
+			FILE *cmd_fp = fopen(cmd_path, "r");
+			if (cmd_fp) {
+				char comm[64];
+				if (fgets(comm, sizeof(comm), cmd_fp)) {
+					char *newline = strchr(comm, '\n');
+					if (newline) *newline = '\0';
+
+					if (strstr(comm, "mock_mica") != NULL) {
+						pid_found[pid_count++] = pid;
+					}
+				}
+				fclose(cmd_fp);
+			}
+		}
+	}
+	pclose(fp);
+
+	for (int i = 0; i < pid_count; i++) {
+		printf("WARNING: Found existing mock_micad instance (PID %d), terminating it...\n", pid_found[i]);
+		if (kill(pid_found[i], SIGTERM) == 0) {
+			// graceful shutdown
+			usleep(100000); // 100ms
+			if (kill(pid_found[i], 0) == 0) {
+				printf("Instance %d didn't terminate gracefully, sending SIGKILL\n", pid_found[i]);
+				kill(pid_found[i], SIGKILL);
+			}
+			printf("Successfully terminated existing mock_micad instance (PID %d)\n", pid_found[i]);
+		} else {
+			printf("Failed to terminate instance %d: %s\n", pid_found[i], strerror(errno));
+		}
+	}
+
+	if (pid_count > 0) {
+		printf("Terminated %d existing mock_micad instance(s)\n", pid_count);
+		usleep(200000);
+	} else {
+		printf("No existing mock_micad instances found\n");
+	}
+}
+
 static int setup_socket(const char *socket_path)
 {
 	int server_fd;
@@ -1066,6 +1127,8 @@ int main(int argc, char *argv[])
 
 	signal(SIGINT, signal_handler);
 	signal(SIGTERM, signal_handler);
+
+	check_and_kill_existing_instances();
 
 	if (add_listener("mica-create", SOCKET_PATH, true) < 0) {
 		printf("Failed to add listener\n");
