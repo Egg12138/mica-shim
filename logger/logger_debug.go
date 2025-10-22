@@ -204,13 +204,27 @@ func CleanDebugFile() error {
 // default depth=4
 func getDebugInfoPrefix(depth int) string {
 	var prefix = ""
+
+	noColor := os.Getenv("LOG_COLOR") == ""
+
+	timestamp := time.Now().Format("15:04:05")
+	if noColor {
+		prefix += fmt.Sprintf("[%s] ", timestamp)
+	} else {
+		prefix += fmt.Sprintf("[\033[36m%s\033[0m] ", timestamp)
+	}
+
 	pc_parent, _, _, ok := runtime.Caller(depth + 1)
 	if ok {
 		fullFuncName := runtime.FuncForPC(pc_parent).Name()
 		funcName := filepath.Base(fullFuncName)
 		splited := strings.Split(funcName, ".")
 		funcName = splited[len(splited)-1]
-		prefix += fmt.Sprintf(" \033[34m%s()\033[0m --> ", funcName)
+		if noColor {
+			prefix += fmt.Sprintf(" %s() --> ", funcName)
+		} else {
+			prefix += fmt.Sprintf("\033[34m%s()\033[0m --> ", funcName)
+		}
 	}
 	pc, _, _, ok := runtime.Caller(depth)
 	if ok {
@@ -219,8 +233,12 @@ func getDebugInfoPrefix(depth int) string {
 		file, line := runtime.FuncForPC(pc).FileLine(pc)
 		file = filepath.Base(file)
 		callee = fullFuncName
-		callee = "\033[32m" + callee + "\033[0m"
-		prefix += fmt.Sprintf("%s(), @[\033[33m%s:%d\033[0m]  ", callee, file, line)
+		if noColor {
+			prefix += fmt.Sprintf("%s(), @[%s:%d]  ", callee, file, line)
+		} else {
+			callee = "\033[32m" + callee + "\033[0m"
+			prefix += fmt.Sprintf("%s(), @[\033[33m%s:%d\033[0m]  ", callee, file, line)
+		}
 	}
 	return prefix
 }

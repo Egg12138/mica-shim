@@ -73,9 +73,6 @@ const (
 )
 
 func setupDevLog() {
-	if err := log.CleanDebugFile(); err != nil {
-		log.Errorf("failed to clean debug file: %v", err)
-	}
 	log.Debugf("args: %s", os.Args)
 }
 
@@ -84,12 +81,13 @@ func New(ctx context.Context, id string, publisher shimv2.Publisher, shutdown fu
 	if !found {
 		return nil, fmt.Errorf("namespace is required")
 	}
-
+	log.Debugf("got namespace: %s", ns)
 	micadPid, err := getMicadPid()
 	if err != nil {
 		log.Warnf("failed to get micad PID, setting to 0: %v", err)
 		return nil, err
 	}
+	log.Debugf("got micadPid: %d", micadPid)
 
 	s := &shimService{
 		id:         id,
@@ -103,20 +101,22 @@ func New(ctx context.Context, id string, publisher shimv2.Publisher, shutdown fu
 		monitor:    make(chan error),
 	}
 
+	log.Debugf("starting service background goroutines exit listener")
 	go s.listenAndReportExits()
 
 	// Start events forwarder to publish events to containerd
 	forwarder := s.newEventsForwarder(ctx, publisher)
 	go forwarder.forward()
 
+	log.Debugf("completed successfully, returning shimService")
 	return s, nil
 }
 
 func newCommand(ctx context.Context, opts shimv2.StartOpts, cwd string) (*exec.Cmd, error) {
-	self, err := os.Executable()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get current executable path: %w", err)
-	}
+    self, err := os.Executable()
+    if err != nil {
+        return nil, fmt.Errorf("failed to get current executable path: %w", err)
+    }
 
 	var args []string
 	if opts.Debug {
