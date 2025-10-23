@@ -34,9 +34,9 @@
 #define MAX_RTOS_INSTANCES 4
 
 #define INFO(fmt, ...) printf("[INFO] " fmt "\n", ##__VA_ARGS__)
-#define WARN(fmt, ...) printf("!WARN! " fmt "\n", ##__VA_ARGS__)
+#define ERROR(fmt, ...) printf("*ERROR* " fmt "\n", ##__VA_ARGS__)
 #define FATAL(fmt, ...) do {\
-	printf("!ERROR! " fmt "\n", ##__VA_ARGS__);\
+	printf("!MICAD PANIC! " fmt "\n", ##__VA_ARGS__);\
 	exit(EXIT_FAILURE);\
 } while(0)
 
@@ -128,9 +128,9 @@ static int global_epoll_fd = -1;
 static void signal_handler(int signum)
 {
 	if (signum == SIGINT || signum == SIGTERM) {
-		printf("\nReceived signal %d, shutting down...\n", signum);
-		is_running = false;
+		INFO("Received signal %d, shutting down mock_micad...", signum);
 		cleanup_listeners();
+		is_running = false;
 	}
 }
 
@@ -342,7 +342,7 @@ static void remove_client(const char *name)
 	}
 	pthread_mutex_unlock(&client_mutex);
 	if (remove_socket(name)) {
-		WARN("Failed to remove socket for client: %s\n", name);
+		ERROR("Failed to remove socket for client: %s\n", name);
 
 	}
 }
@@ -470,12 +470,14 @@ static int remove_socket(const char *client_name)
 		perror("socket creation failed");
 		return -1;
 	}
-	INFO("close fd");
 	close(fd);
-	INFO("unlink socket_path");
-	unlink(socket_path);
+	if (unlink(socket_path) == 0) {
+		INFO("Removed client socket: %s", socket_path);
+	} else {
+		INFO("Client socket already removed or not found: %s", socket_path);
+	}
 	return 0;
-	
+
 }
 
 static int create_client_socket(const char *client_name)
@@ -697,7 +699,11 @@ static void remove_tty_device(struct rtos_instance *rtos)
         rtos->pty_slave_fd = -1;
     }
     if (rtos->tty_symlink[0] != '\0') {
-        unlink(rtos->tty_symlink);
+        if (unlink(rtos->tty_symlink) == 0) {
+            INFO("Removed PTY symlink: %s", rtos->tty_symlink);
+        } else {
+            INFO("PTY symlink already removed or not found: %s", rtos->tty_symlink);
+        }
         rtos->tty_symlink[0] = '\0';
     }
 }
@@ -843,7 +849,9 @@ static void cleanup_listeners(void)
     struct listen_unit *current, *next;
     struct client_entry *client, *client_next;
     struct rtos_instance *rtos, *rtos_next;
-	
+
+    INFO("Starting cleanup of mock_micad resources...");
+
     /* Stop and destroy all RTOS instances safely */
     pthread_mutex_lock(&rtos_mutex);
     rtos = rtos_instances;
@@ -852,14 +860,17 @@ static void cleanup_listeners(void)
 
     while (rtos) {
         rtos_next = rtos->next;
+        INFO("Cleaning up RTOS instance: %s", rtos->name);
         free_rtos_instance(rtos);
         rtos = rtos_next;
     }
-	
+    INFO("All RTOS instances cleaned up");
+
 	pthread_mutex_lock(&listener_mutex);
 	current = listener_list;
 	while (current) {
 		next = current->next;
+		INFO("Removing listener socket: %s", current->socket_path);
 		close(current->socket_fd);
 		unlink(current->socket_path);
 		free(current);
@@ -867,16 +878,30 @@ static void cleanup_listeners(void)
 	}
 	listener_list = NULL;
 	pthread_mutex_unlock(&listener_mutex);
-	
+	INFO("All listener sockets cleaned up");
+
 	pthread_mutex_lock(&client_mutex);
 	client = client_list;
 	while (client) {
 		client_next = client->next;
+		INFO("Cleaning up client: %s (status: %s)", client->name, client->status[0] ? client->status : "Unknown");
+		/* Remove client socket for each client */
+		remove_socket(client->name);
 		free(client);
 		client = client_next;
 	}
 	client_list = NULL;
 	pthread_mutex_unlock(&client_mutex);
+	INFO("All client entries cleaned up");
+
+	INFO("Mock_micad resource cleanup completed");
+
+	/* Clean up main socket */
+	if (unlink(SOCKET_PATH) == 0) {
+		INFO("Removed main socket: %s", SOCKET_PATH);
+	} else {
+		INFO("Main socket already removed or not found: %s", SOCKET_PATH);
+	}
 }
 
 static void handle_client_ctrl(int client_fd, struct listen_unit *unit)
@@ -903,13 +928,13 @@ static void handle_client_ctrl(int client_fd, struct listen_unit *unit)
     int success = 0; /* 1=ok, 0=fail */
     if (strncmp(buffer, "start", 5) == 0) {
         INFO("Starting client: %s\n", client_name);
-        /* start only if not already Running */
         struct client_entry *e;
         pthread_mutex_lock(&client_mutex);
         e = client_list;
         while (e && strncmp(e->name, client_name, MAX_NAME_LEN) != 0) e = e->next;
         if (e && strcasecmp(e->status, "Running") == 0) {
-            success = 0; /* already running -> fail */
+            ERROR("Cannot start client '%s' - already Running", client_name);
+            success = 0;
         } else if (e) {
             snprintf(e->status, sizeof(e->status), "%s", "Running");
             success = 1;
@@ -917,14 +942,18 @@ static void handle_client_ctrl(int client_fd, struct listen_unit *unit)
         pthread_mutex_unlock(&client_mutex);
     } else if (strncmp(buffer, "stop", 4) == 0) {
         INFO("Stopping client: %s\n", client_name);
-        /* stopping Stopped is OK (idempotent) */
         struct client_entry *e;
         pthread_mutex_lock(&client_mutex);
         e = client_list;
         while (e && strncmp(e->name, client_name, MAX_NAME_LEN) != 0) e = e->next;
         if (e) {
-            snprintf(e->status, sizeof(e->status), "%s", "Stopped");
-            success = 1;
+            if (strcasecmp(e->status, "Created") == 0) {
+                INFO("Should not stop client '%s' - status is 'Created', must be 'Running' or 'Stopped'", client_name);
+                success = 0;
+            } else {
+                snprintf(e->status, sizeof(e->status), "%s", "Stopped");
+                success = 1;
+            }
         }
         pthread_mutex_unlock(&client_mutex);
     } else if (strncmp(buffer, "status", 6) == 0) {
@@ -1005,7 +1034,7 @@ static void handle_client(int client_fd)
 
 		/* Check if client already exists */
 		if (client_exists(client_name)) {
-			printf("Client '%s' already exists, do not register it\n", client_name);
+			ERROR("Client '%s' already exists - cannot create duplicate", client_name);
 			if (send_response) {
 				respond_with_status(client_fd, RESPONSE_FAILED);
 			} else {
@@ -1041,7 +1070,7 @@ static void handle_client(int client_fd)
 				respond_with_status(-1, NULL);
 			}
 		} else {
-			printf("Err: %d. Failed to create client socket/RTOS for: %s\n", create_ret, client_name);
+			ERROR("Failed to create client socket/RTOS for '%s' (error: %d)", client_name, create_ret);
 			remove_socket(client_name);
 			if (send_response) {
 				respond_with_status(client_fd, RESPONSE_FAILED);
@@ -1073,12 +1102,12 @@ static void handle_client(int client_fd)
             }
             client_name[i] = '\0';
             if (client_name[0] == '\0') {
-                printf("create missing client name\n");
+                ERROR("Create command missing client name");
                 if (send_response) respond_with_status(client_fd, RESPONSE_FAILED); else respond_with_status(-1, NULL);
                 return;
             }
             if (client_exists(client_name)) {
-                printf("Client '%s' already exists\n", client_name);
+                ERROR("Client '%s' already exists - cannot create duplicate", client_name);
                 if (send_response) respond_with_status(client_fd, RESPONSE_FAILED); else respond_with_status(-1, NULL);
                 return;
             }
@@ -1093,12 +1122,14 @@ static void handle_client(int client_fd)
                     return;
                 }
             }
+            ERROR("Failed to create client socket/RTOS for '%s'", client_name);
             remove_socket(client_name);
             if (send_response) respond_with_status(client_fd, RESPONSE_FAILED); else respond_with_status(-1, NULL);
             return;
         }
 
         // Unknown small control on create socket
+        ERROR("Invalid command on create socket: '%s'. Use 'create <name>' for new clients or send 'start/stop/status' to client-specific socket (/tmp/mica/<client>.socket)", buffer);
         if (send_response) {
             respond_with_status(client_fd, RESPONSE_FAILED);
         } else {
@@ -1150,8 +1181,9 @@ int main(int argc, char *argv[])
 	}
 
 	pthread_join(thread, NULL);
+	INFO("Main loop exited, performing final cleanup...");
 	cleanup_listeners();
-	printf("Mock micad stopped.\n");
+	INFO("Mock micad stopped successfully.");
 
 	return 0;
 } 
