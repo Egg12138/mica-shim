@@ -19,6 +19,7 @@ import (
 	"github.com/containerd/containerd/mount"
 	"github.com/containerd/containerd/namespaces"
 	cdruntime "github.com/containerd/containerd/runtime"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -71,10 +72,6 @@ var (
 const (
 	channelSize = 128
 )
-
-func setupDevLog() {
-	log.Debugf("args: %s", os.Args)
-}
 
 func New(ctx context.Context, id string, publisher shimv2.Publisher, shutdown func()) (shimv2.Shim, error) {
 	ns, found := namespaces.Namespace(ctx)
@@ -148,6 +145,9 @@ func newCommand(ctx context.Context, opts shimv2.StartOpts, cwd string) (*exec.C
 	if err != nil {
 		return nil, fmt.Errorf("failed to create shim command: %w", err)
 	}
+	// Do not redirect child's stdout here. The parent `start` path is
+	// responsible for emitting the address cleanly; child's logging(info,warn,error) is
+	// routed to containerd via the shim FIFO logger setup.
 	return cmd, nil
 }
 
@@ -190,7 +190,7 @@ func (s *shimService) Cleanup(ctx context.Context) (*taskAPI.DeleteResponse, err
 			return nil, err
 		}
 	default:
-		log.Infof("unknown container type to be cleaned up: %s", ctype)
+		log.Debugf("unknown container type to be cleaned up: %s", ctype)
 	}
 
 	return &taskAPI.DeleteResponse{
@@ -215,6 +215,11 @@ func cleanupContainer(ctx context.Context, sandboxID, containerID, bundle string
 }
 
 func (s *shimService) StartShim(ctx context.Context, opts shimv2.StartOpts) (_ string, retErr error) {
+	origLevel := log.Log.GetLevel()
+	log.Log.SetLevel(logrus.WarnLevel)
+	defer log.Log.SetLevel(origLevel)
+
+	log.Debugf("startshim() being called")
 	bundle, err := os.Getwd()
 	if err != nil {
 		return "", err
@@ -239,7 +244,7 @@ func (s *shimService) StartShim(ctx context.Context, opts shimv2.StartOpts) (_ s
 		return sockaddr, nil
 	}
 
-	setupDevLog()
+	log.Debugf("args: %s", os.Args)
 	cmd, err := newCommand(ctx, opts, bundle)
 	if err != nil {
 		return "", err
@@ -250,10 +255,17 @@ func (s *shimService) StartShim(ctx context.Context, opts shimv2.StartOpts) (_ s
 	if err != nil {
 		return "", err
 	}
+	log.Debugf("  socket address = %s", sockAddr)
 
 	socket, err := shimv2.NewSocket(sockAddr)
+	if err != nil {
+		log.Errorf("failed to create containerd ttrpc socket: %v", err)
+	} else {
+		log.Debugf("  socket created successfully")
+	}
 
 	if err != nil {
+		log.Errorf("  socket creation failed, checking if address in use: %v", err)
 		switch {
 		// the only time where this would happen is if there is a bug and the socket
 		// was not cleaned up in the cleanup method of the shim or we are using the
@@ -263,12 +275,14 @@ func (s *shimService) StartShim(ctx context.Context, opts shimv2.StartOpts) (_ s
 			return "", fmt.Errorf("socket address already in use: %w", err)
 
 		case shimv2.CanConnect(sockAddr):
+			log.Debugf("  existing socket is connectable, reusing it")
 			if err := shimv2.WriteAddress("address", sockAddr); err != nil {
 				return "", fmt.Errorf("failed to write sandbox/regular container socket address: %w", err)
 			}
 			return sockAddr, nil
 		}
 
+		log.Debugf("  removing stale socket and creating new one")
 		if err := shimv2.RemoveSocket(sockAddr); err != nil {
 			return "", fmt.Errorf("failed to remove pre-existing shim socket: %w", err)
 		}
@@ -276,6 +290,7 @@ func (s *shimService) StartShim(ctx context.Context, opts shimv2.StartOpts) (_ s
 		if socket, err = shimv2.NewSocket(sockAddr); err != nil {
 			return "", fmt.Errorf("failed to create new shim socket: %w", err)
 		}
+		log.Debugf("  new socket created successfully after cleanup")
 	}
 
 	defer func() {
@@ -302,8 +317,13 @@ func (s *shimService) StartShim(ctx context.Context, opts shimv2.StartOpts) (_ s
 		handleSchedCore()
 	}
 
+	// make sure that reexec shim-v2 binary use the value if need
+	if err := shimv2.WriteAddress("address", sockAddr); err != nil {
+		return "", fmt.Errorf("failed to write shim address file: %w", err)
+	}
+
 	if err := cmd.Start(); err != nil {
-		sockF.Close()
+		_ = sockF.Close()
 		return "", fmt.Errorf("failed to start shim command: %w", err)
 	}
 
@@ -315,8 +335,17 @@ func (s *shimService) StartShim(ctx context.Context, opts shimv2.StartOpts) (_ s
 		}
 	}()
 
+	// Wait in background to avoid zombie if parent outlives child briefly.
+	go cmd.Wait()
+
 	if err := shimv2.WritePidFile("shim.pid", cmd.Process.Pid); err != nil {
 		return "", fmt.Errorf("failed to write shim PID file: %w", err)
+	}
+
+	// Align with containerd logic: slightly increase child OOM score
+	// so it is killed before containerd.
+	if err := shimv2.AdjustOOMScore(cmd.Process.Pid); err != nil {
+		log.Warnf("failed to adjust OOM score for shim: %v", err)
 	}
 
 	return sockAddr, nil

@@ -6,6 +6,7 @@ import (
 	"os"
 
 	shimv2 "github.com/containerd/containerd/runtime/v2/shim"
+	"github.com/sirupsen/logrus"
 )
 
 // ShimName injected in Makefile.
@@ -15,6 +16,11 @@ func main() {
 	if err := log.CleanDebugFile(); err != nil {
 		log.Errorf("failed to clean debug file: %v", err)
 	}
+
+	if isBootstrapStart() {
+		log.Log.SetLevel(logrus.WarnLevel)
+	}
+
 	log.Debugf("main() called, checking if task request")
 
 	if notTaskRequest() {
@@ -22,7 +28,8 @@ func main() {
 	}
 
 	shimv2.Run(ShimName, shim.New, noReaper, noSubreaper, setupLogger)
-	log.Infof("shimv2.Run() returned normally")
+	// Avoid noisy info log after start handshake; keep at debug level.
+	log.Debugf("shimv2.Run() returned normally")
 }
 
 func notTaskRequest() bool {
@@ -47,4 +54,13 @@ func noSubreaper(c *shimv2.Config) {
 
 func setupLogger(c *shimv2.Config) {
 	c.NoSetupLogger = false
+}
+
+func isBootstrapStart() bool {
+	for _, arg := range os.Args[1:] {
+		if arg == "start" {
+			return true
+		}
+	}
+	return false
 }
