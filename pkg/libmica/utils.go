@@ -249,11 +249,11 @@ func success(res string) bool {
 	return res != "" && !strings.Contains(res, defs.MicaFailed) && !strings.Contains(res, "Error")
 }
 
-func completelyDown(id string) bool {
+func clientIsDown(id string) bool {
 	clientId := utils.ShortID(id)
 	socketPath := filepath.Join(defs.MicaStateDir, clientId+".socket")
 	valid := validSocketPath(socketPath)
-	log.Infof("check socket path: %s is valid=%t", socketPath, valid)
+	log.Debugf("check socket path: %s is valid=%t", socketPath, valid)
 	return !valid && isDown(id)
 }
 

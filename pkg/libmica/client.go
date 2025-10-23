@@ -355,12 +355,7 @@ func micaCtl(cmd MicaCommand, rawId string, opts... string) error {
 	}
 	shortId := utils.ShortID(rawId)
 	clientSocketPath := filepath.Join(defs.MicaStateDir, shortId+".socket")
-	var s *micaSocket
-	if defs.IsMock {
-		s = newMicaSocket(defs.MicaCreatSocketPath)
-	} else {
-		s = newMicaSocket(clientSocketPath)
-	}
+	s := newMicaSocket(clientSocketPath)
 	msg := string(cmd)
 	return s.handleMsg([]byte(msg))
 }
@@ -376,10 +371,9 @@ func Start(id string) error {
 // TODO: if client.socket does not exist, return nil; the logic is in dangerous, 
 // we have to make sure that client os is down really
 func Stop(id string) error {
-	if completelyDown(id) {
+	if clientIsDown(id) {
 		log.Infof("%s is already down, not need to stop it", id)
-	}
-	if err := micaCtl(MStop, id); err != nil {
+	} else if err := micaCtl(MStop, id); err != nil {
 		return fmt.Errorf("failed to stop mica client %s %w", id, err)
 	}
 	return nil
@@ -411,6 +405,9 @@ func Resume(id string) error {
 }
 
 func Remove(id string) error {
+	if clientIsDown(id) {
+		return nil
+	}
 	return micaCtl(MRemove, id)
 }
 
