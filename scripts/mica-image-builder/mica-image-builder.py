@@ -25,6 +25,7 @@ class MicaImageBuilder:
         self.uniproton_version = "latest"
         self.label_manager = MicaLabelManager()
         self.dry_run = not init_docker
+        self.platform = None 
 
         if init_docker:
             try:
@@ -38,6 +39,12 @@ class MicaImageBuilder:
                 sys.exit(1)
         else:
             self.client = None
+
+    def resolve_platforms(self, platform_str):
+        """Resolve platform string to actual platforms"""
+        if not platform_str or platform_str == 'all':
+            return 'linux/amd64,linux/arm64'
+        return platform_str
 
     def setup_registry(self):
         print("Setting up local registry...")
@@ -116,6 +123,35 @@ class MicaImageBuilder:
                 break
             elif choice == "2":
                 self.os_type = "uniproton"
+                break
+            else:
+                print("Invalid choice")
+
+    def select_platform(self):
+        """Select build platform(s) for multi-architecture support"""
+        print("\nSelect build platform:")
+        print("1. Native build (default)")
+        print("2. amd64 only (linux/amd64)")
+        print("3. arm64 only (linux/arm64)")
+        print("4. amd64 + arm64 (linux/amd64,linux/arm64)")
+        print("5. All supported platforms (linux/amd64,linux/arm64)")
+
+        while True:
+            choice = input("Enter choice (1-5, default: 1): ").strip()
+            if not choice or choice == "1":
+                self.platform = None  # Native build
+                break
+            elif choice == "2":
+                self.platform = "linux/amd64"
+                break
+            elif choice == "3":
+                self.platform = "linux/arm64"
+                break
+            elif choice == "4":
+                self.platform = "linux/amd64,linux/arm64"
+                break
+            elif choice == "5":
+                self.platform = self.resolve_platforms("all")
                 break
             else:
                 print("Invalid choice")
@@ -330,6 +366,12 @@ ADD {self.firmware_path} ${{FIRMWARE_BUNDLE_PATH}}
         if self.pedestal == "xen":
             dockerfile_content += f"ADD {self.xen_image_path} ${{XEN_BIN_IMG}}\n"
 
+        # Add minimal CMD for RTOS containers
+        # For RTOS, the firmware runs automatically via mica runtime
+        # Use a portable shell script for OCI compliance across all architectures
+        dockerfile_content += '\nADD mica-image-builder/entry-mica.sh /entry-mica.sh\n'
+        dockerfile_content += 'CMD ["/entry-mica.sh"]\n'
+
         return dockerfile_content.encode('utf-8'), labels
 
     def build_image_with_dockerfile(self, dockerfile_content, tag, build_context=None, annotations=None):
@@ -412,16 +454,30 @@ ADD {self.firmware_path} ${{FIRMWARE_BUNDLE_PATH}}
             dockerfile_path = f.name
 
         try:
-            # Build using Docker CLI
-            cmd = [
-                'docker', 'build',
-                '-f', dockerfile_path,
-                '-t', tag,
-            ]
+            # Use buildx for multi-architecture builds or regular docker build
+            if self.platform:
+                cmd = [
+                    'docker', 'buildx', 'build',
+                    '-f', dockerfile_path,
+                    '-t', tag,
+                    '--platform', self.platform,
+                ]
+                # For multi-arch builds, we need to push to registry
+                # unless it's a dry run
+                if not self.dry_run and (',' in self.platform or self.platform == 'all'):
+                    cmd.append('--push')
+            else:
+                cmd = [
+                    'docker', 'build',
+                    '-f', dockerfile_path,
+                    '-t', tag,
+                ]
+
             if annotations:
                 for key, value in annotations.items():
                     if key.startswith("org.openeuler.micran."):
                         cmd.extend(['--annotation', f'{key}={value}'])
+
             cmd.append(build_context)
 
             print(f"Running: {' '.join(cmd)}")
@@ -513,6 +569,7 @@ ADD {self.firmware_path} ${{FIRMWARE_BUNDLE_PATH}}
         self.select_pedestal()
         self.select_os_type()
         self.select_os_versions()
+        self.select_platform()
         self.select_image_files()
 
         # Get custom image description
@@ -562,6 +619,8 @@ ADD {self.firmware_path} ${{FIRMWARE_BUNDLE_PATH}}
         print("\nBuild completed successfully!")
         print(f"Scratch image: {scratch_name}:latest")
         print(f"Final image: {self.image_name}")
+        if self.platform:
+            print(f"Platform(s): {self.platform}")
 
         # Only ask about remote push if we pushed to local registry
         push_remote = input("\nPush to remote registry? (y/N): ").strip().lower()
@@ -588,7 +647,7 @@ def parse_arguments():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Interactive mode (no arguments)
+  # Interactive mode (no arguments) - includes platform selection
   python3 mica-image-builder.py
 
   # CLI mode with Xen pedestal and Zephyr OS
@@ -606,6 +665,21 @@ Examples:
   # CLI mode with custom version
   python3 mica-image-builder.py --pedestal xen --os zephyr \\
     --firmware firmware.elf --xen-image xen.bin --version 2.0
+
+  # Multi-architecture build for amd64 and arm64
+  python3 mica-image-builder.py --pedestal xen --os zephyr \\
+    --firmware firmware.elf --xen-image xen.bin --platform linux/amd64,linux/arm64
+
+  # Multi-architecture build for all supported platforms
+  python3 mica-image-builder.py --pedestal xen --os zephyr \\
+    --firmware firmware.elf --xen-image xen.bin --platform all --push
+
+  # Interactive mode platform selection options:
+  # 1. Native build (default) - builds for host architecture
+  # 2. amd64 only - builds for linux/amd64 only
+  # 3. arm64 only - builds for linux/arm64 only
+  # 4. amd64 + arm64 - builds for both platforms
+  # 5. All platforms - builds for all supported platforms
 """
     )
 
@@ -652,6 +726,14 @@ Examples:
         action='store_true',
         help='Generate Dockerfiles and print actions without invoking Docker'
     )
+    parser.add_argument(
+        '--platform',
+        help='Target platform(s) for multi-architecture builds (e.g., linux/amd64,linux/arm64 or all)'
+    )
+    parser.add_argument(
+        '--builder',
+        help='Docker buildx builder name (default: container-builder)'
+    )
 
     return parser.parse_args()
 
@@ -668,6 +750,8 @@ def should_use_cli_mode(args):
         args.version != '0.1',
         args.push,
         args.dry_run,
+        args.platform,
+        args.builder,
     ])
 
 
@@ -699,6 +783,7 @@ def cli_build(builder, args):
         builder.registry = args.registry
         builder.pedestal = args.pedestal
         builder.os_type = args.os
+        builder.platform = builder.resolve_platforms(args.platform)
 
         # Convert file paths to relative paths from scripts directory
         scripts_dir = Path(__file__).absolute().parent.parent
@@ -750,6 +835,10 @@ def cli_build(builder, args):
             print(f"Xen image: {builder.xen_image_path}")
         print(f"Scratch image: {scratch_name}:latest")
         print(f"Final image: {builder.image_name}:latest")
+
+        # Show platform information if specified
+        if builder.platform:
+            print(f"Platform(s): {builder.platform}")
 
         # Debug: Show the actual file paths that will be used
         print(f"\nDebug - Build context: {str(Path(__file__).absolute().parent.parent)}")
