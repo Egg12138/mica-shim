@@ -67,13 +67,14 @@ func detectXen() bool {
 func checkXenKos() error {
 	// xen_netback, xen_blkback, xen_gntalloc, xen_gntdev
 	// TODO: migrate xen-essentials ko to mica-xen related ko
-	essentials := []string{"xen_gntalloc", "xen_gntdev"}
+	essentials := []string{"xen_gntalloc", "xen_gntdev", "xen-mcsback"}
 	for i, ko := range essentials {
 		loaded, err := utils.KoLoaded(ko)
 		if err != nil {
 			return err
 		}
 		if !loaded {
+			err = utils.FindAndLoadKo(ko)
 			return fmt.Errorf("xl: %s is not loaded", essentials[i])
 		}
 	}
