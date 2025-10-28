@@ -1,25 +1,31 @@
 package main
 
 import (
-	log "mica-shim/logger"
-	"mica-shim/pkg/shim"
-	"os"
+    "io"
+    log "mica-shim/logger"
+    "mica-shim/pkg/shim"
+    "os"
 
-	shimv2 "github.com/containerd/containerd/runtime/v2/shim"
-	"github.com/sirupsen/logrus"
+    shimv2 "github.com/containerd/containerd/runtime/v2/shim"
+    "github.com/sirupsen/logrus"
 )
 
 // ShimName injected in Makefile.
 var ShimName string
 
 func main() {
-	if err := log.CleanDebugFile(); err != nil {
-		log.Errorf("failed to clean debug file: %v", err)
-	}
+    if err := log.CleanDebugFile(); err != nil {
+        log.Errorf("failed to clean debug file: %v", err)
+    }
 
-	if isBootstrapStart() {
-		log.Log.SetLevel(logrus.WarnLevel)
-	}
+    if isBootstrapStart() {
+        // During bootstrap "start", containerd reads CombinedOutput from the shim
+        // for a strict JSON/address handshake. Any stderr/stdout noise corrupts
+        // the handshake and leaves the shim socket file behind. Silence console
+        // output and rely on our debug file for diagnostics in this phase.
+        log.Log.SetLevel(logrus.WarnLevel)
+        log.Log.SetOutput(io.Discard)
+    }
 
 	log.Debugf("main() called, checking if task request")
 
