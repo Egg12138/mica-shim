@@ -141,7 +141,7 @@ func getPausePatterns() []string {
 
 // Handle SCHED_CORE.
 func handleSchedCore() {
-	log.Infof(`The functions and features of SCHED_CORE can currently be partially accomplished and replaced by Pedestal (default is Xen), 
+	log.Debugf(`The functions and features of SCHED_CORE can currently be partially accomplished and replaced by Pedestal (default is Xen), 
 	and micran does not need it for now. 
 	However, in the future, we may provide a more unique way to combine the advantages of SCHED_CORE with the isolation strategy of Pedestal.`)
 }
@@ -156,8 +156,7 @@ func getMicadPid() (uint32, error) {
 
 	// Check if daemon is actually running before returning PID
 	if daemonState.State != libmica.DaemonRunning {
-		log.Warnf("Micad daemon is not running (state: %s)", daemonState.State)
-		return 0, err
+		return 0, fmt.Errorf("Micad daemon is not running (state: %s)", daemonState.State)
 	}
 
 	return uint32(daemonState.Pid), nil

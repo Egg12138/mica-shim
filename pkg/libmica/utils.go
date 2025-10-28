@@ -249,15 +249,10 @@ func success(res string) bool {
 	return res != "" && !strings.Contains(res, defs.MicaFailed) && !strings.Contains(res, "Error")
 }
 
-func clientIsDown(id string) bool {
+func ClientNotExist(id string) bool {
 	clientId := utils.ShortID(id)
 	socketPath := filepath.Join(defs.MicaStateDir, clientId+".socket")
 	valid := validSocketPath(socketPath)
 	log.Debugf("check socket path: %s is valid=%t", socketPath, valid)
-	return !valid && isDown(id)
-}
-
-// TODO: check the client is really shutdown
-func isDown(_ string) bool {
-	return true
+	return !valid
 }

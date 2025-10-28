@@ -70,6 +70,7 @@ func create(ctx context.Context, s *shimService, r *taskAPI.CreateTaskRequest) (
 			s.config.SandboxCPUs, s.config.SandboxMemMB = oci.CalculateContainerSizing(ociSpec)
 		}
 
+		utils.TravelDir(r.Rootfs[0].GetSource())
 		if err := mountRootfs(rootfsPath, r.Rootfs); err != nil {
 			return nil, err
 		}
@@ -291,7 +292,7 @@ func createSandbox(ctx context.Context, ocispec *specs.Spec,
 	log.Debugf("Sandbox <%s> created.", sandbox.SandboxID())
 	containers := sandbox.GetAllContainers()
 	for _, c := range containers {
-		log.Infof("Detect inside sandbox <%s>: container %s.", c.ID(), sandbox.SandboxID())
+		log.Debugf("Detect inside sandbox <%s>: container %s.", c.ID(), sandbox.SandboxID())
 	}
 	if len(containers) != 1 {
 		return nil, fmt.Errorf("container list from sandbox is wrong, expecting only one container, got %d", len(containers))

@@ -203,62 +203,112 @@ func IsELFForHost(path string) (bool, error) {
 }
 
 func MountDirs(mounts []*cdtypes.Mount, dest string) error {
-	if len(mounts) == 0 {
-		return nil
-	}
-	log.Debugf("mount to %s", dest)
-	if _, err := os.Stat(dest); os.IsNotExist(err) {
-		if err := os.Mkdir(dest, 0711); err != nil {
+    if len(mounts) == 0 {
+        return nil
+    }
+
+		if err := os.Mkdir(dest, 0711); err != nil && !os.IsExist(err) {
 			return err
 		}
-	}
+		for _, rm := range mounts {
 
-	for _, rm := range mounts {
-		m := &mount.Mount{
-			Type:    rm.Type,
-			Source:  rm.Source,
-			Options: rm.Options,
-		}
-		if err := m.Mount(dest); err != nil {
-			return fmt.Errorf("failed to mount: %v", m)
-		}
-	}
+			m := &mount.Mount{
+					Type:    rm.Type,
+					Source:  rm.Source,
+					Options: rm.Options, 
+			}
 
-	return nil
+			if err := m.Mount(dest); err != nil {
+					return fmt.Errorf("failed to mount to %s: %v", dest, err)
+			}
+		}
+    return nil
 
 }
 func Backup(srcDir string) error {
 	backupDir := "/tmp/backupbundle"
 
+	log.Debugf("=== BACKUP: starting backup from %s to %s ===", srcDir, backupDir)
+
+	// Test source directory access first
+	if stat, err := os.Stat(srcDir); err != nil {
+		log.Debugf("Source directory access failed: %s - %v", srcDir, err)
+		return fmt.Errorf("failed to access source directory: %w", err)
+	} else {
+		log.Debugf("Source directory access OK: %s - mode: %v", srcDir, stat.Mode())
+	}
+
 	if err := os.MkdirAll(backupDir, 0755); err != nil {
 		return fmt.Errorf("failed to create backup directory: %w", err)
 	}
 
-	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
+	fileCount := 0
+	dirCount := 0
+	skipCount := 0
+
+	err := filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			log.Debugf("Warning: skipping %s due to error: %v\n", path, err)
+			log.Debugf("BACKUP Warning: skipping %s due to error: %v", path, err)
+			skipCount++
 			return nil
 		}
 
 		if !IsRegular(path) && !info.IsDir() {
-			log.Debugf("Skipping %s\n", path)
+			log.Debugf("BACKUP Skipping non-regular file: %s", path)
+			skipCount++
 			return nil
 		}
 
 		relPath, err := filepath.Rel(srcDir, path)
 		if err != nil {
-			return fmt.Errorf("failed to get relative path: %w", err)
+			log.Debugf("BACKUP failed to get relative path for %s: %v", path, err)
+			skipCount++
+			return nil
 		}
 
 		destPath := filepath.Join(backupDir, relPath)
 
-		log.Debugf("copy %s to %s", relPath, destPath)
 		if info.IsDir() {
-			return os.MkdirAll(destPath, info.Mode())
+			dirCount++
+			if err := os.MkdirAll(destPath, info.Mode()); err != nil {
+				log.Debugf("BACKUP failed to create directory %s: %v", destPath, err)
+				return nil
+			}
+		} else {
+			fileCount++
+			log.Debugf("BACKUP copying %s to %s", relPath, destPath)
+			if err := copyFile(path, destPath, info.Mode()); err != nil {
+				log.Debugf("BACKUP failed to copy file %s: %v", path, err)
+				return nil
+			}
 		}
 
-		return copyFile(path, destPath, info.Mode())
+		return nil
 	})
+
+	log.Debugf("=== BACKUP: completed ===")
+	log.Debugf("BACKUP Summary: %d dirs, %d files copied, %d items skipped", dirCount, fileCount, skipCount)
+
+	// Show what was actually backed up
+	if entries, err := os.ReadDir(backupDir); err != nil {
+		log.Debugf("BACKUP failed to read backup directory: %v", err)
+	} else {
+		log.Debugf("BACKUP directory contains %d items:", len(entries))
+		for i, entry := range entries {
+			if i < 10 {
+				if entry.IsDir() {
+					log.Debugf("  [DIR]  %s", entry.Name())
+				} else {
+					log.Debugf("  [FILE] %s", entry.Name())
+				}
+			}
+		}
+		if len(entries) > 10 {
+			log.Debugf("  ... and %d more items", len(entries)-10)
+		}
+	}
+
+	return err
 }
 
 // copyFile copies a single file from src to dst with the given permissions
@@ -296,7 +346,10 @@ func copyFile(src, dst string, mode os.FileMode) error {
 }
 
 func TravelDir(root string) error {
-	return filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	var treeBuilder strings.Builder
+	treeBuilder.WriteString("\n" + root)
+
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -306,14 +359,36 @@ func TravelDir(root string) error {
 			return err
 		}
 
-		depth := 0
-		if relPath != "." {
-			depth = len(strings.Split(relPath, string(os.PathSeparator)))
+		if relPath == "." {
+			treeBuilder.WriteString("\n")
+			return nil
 		}
 
-		indent := strings.Repeat("  ", depth)
-		log.Debugf("%s%s", indent, info.Name())
+		parts := strings.Split(relPath, string(os.PathSeparator))
+		depth := len(parts) - 1
+
+		var prefix string
+		for i := range depth {
+			if i == depth-1 {
+				prefix += "├── "
+			} else {
+				prefix += "│   "
+			}
+		}
+
+		if info.IsDir() {
+			treeBuilder.WriteString(fmt.Sprintf("%s%s/\n", prefix, info.Name()))
+		} else {
+			treeBuilder.WriteString(fmt.Sprintf("%s%s\n", prefix, info.Name()))
+		}
 
 		return nil
 	})
+
+	if err != nil {
+		return err
+	}
+
+	log.Debugf("%s", treeBuilder.String())
+	return nil
 }

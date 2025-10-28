@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pkg/errors"
+
 	log "mica-shim/logger"
 	cntr "mica-shim/pkg/micantainer"
 	"mica-shim/pkg/oci"
@@ -110,10 +112,11 @@ func New(ctx context.Context, id string, publisher shimv2.Publisher, shutdown fu
 }
 
 func newCommand(ctx context.Context, opts shimv2.StartOpts, cwd string) (*exec.Cmd, error) {
-    self, err := os.Executable()
-    if err != nil {
-        return nil, fmt.Errorf("failed to get current executable path: %w", err)
-    }
+
+	self, err := os.Executable()
+	if err != nil {
+			return nil, fmt.Errorf("failed to get current executable path: %w", err)
+	}
 
 	var args []string
 	if opts.Debug {
@@ -126,6 +129,7 @@ func newCommand(ctx context.Context, opts shimv2.StartOpts, cwd string) (*exec.C
 	// MAX_SHIM_VERSION the maximum shim version supported by the client, always 2 for shim v2 (1.7+)
 	// SCHED_CORE enable core scheduling if available (1.6+)
 	// NAMESPACE an optional namespace the shim is operating in or inheriting (1.7+)
+	// LOG_COLOR controls colored output in the shim process
 	cmdCfg := &shimv2.CommandConfig{
 		Runtime:      self,
 		Address:      opts.Address,
@@ -145,6 +149,12 @@ func newCommand(ctx context.Context, opts shimv2.StartOpts, cwd string) (*exec.C
 	if err != nil {
 		return nil, fmt.Errorf("failed to create shim command: %w", err)
 	}
+	// Pass LOG_COLOR environment variable to child process
+	if logColor := os.Getenv("LOG_COLOR"); logColor != "" {
+		log.Debug("++++++++ colored log")
+		cmd.Env = append(cmd.Env, "LOG_COLOR="+logColor)
+	}
+
 	// Do not redirect child's stdout here. The parent `start` path is
 	// responsible for emitting the address cleanly; child's logging(info,warn,error) is
 	// routed to containerd via the shim FIFO logger setup.
@@ -255,61 +265,58 @@ func (s *shimService) StartShim(ctx context.Context, opts shimv2.StartOpts) (_ s
 	if err != nil {
 		return "", err
 	}
-	log.Debugf("  socket address = %s", sockAddr)
 
-	socket, err := shimv2.NewSocket(sockAddr)
-	if err != nil {
-		log.Errorf("failed to create containerd ttrpc socket: %v", err)
-	} else {
-		log.Debugf("  socket created successfully")
-	}
+    socket, err := shimv2.NewSocket(sockAddr)
+    if err != nil {
+    log.Debugf("socket %s creation failed: %v", sockAddr, err)
 
-	if err != nil {
-		log.Errorf("  socket creation failed, checking if address in use: %v", err)
-		switch {
 		// the only time where this would happen is if there is a bug and the socket
 		// was not cleaned up in the cleanup method of the shim or we are using the
 		// grouping functionality where the new process should be run with the same
 		// shim as an existing container
-		case !shimv2.SocketEaddrinuse(err):
-			return "", fmt.Errorf("socket address already in use: %w", err)
+		if !shimv2.SocketEaddrinuse(err) {
+			return "", errors.Wrap(err, "create new socket")
+		}
 
-		case shimv2.CanConnect(sockAddr):
-			log.Debugf("  existing socket is connectable, reusing it")
+		if shimv2.CanConnect(sockAddr) {
 			if err := shimv2.WriteAddress("address", sockAddr); err != nil {
-				return "", fmt.Errorf("failed to write sandbox/regular container socket address: %w", err)
+				return "", errors.Wrap(err, "write existing socket for shim")
 			}
 			return sockAddr, nil
 		}
 
-		log.Debugf("  removing stale socket and creating new one")
+        log.Debugf("removing stale socket and creating new one")
 		if err := shimv2.RemoveSocket(sockAddr); err != nil {
-			return "", fmt.Errorf("failed to remove pre-existing shim socket: %w", err)
+			return "", errors.Wrap(err, "remove pre-existing socket")
 		}
-
 		if socket, err = shimv2.NewSocket(sockAddr); err != nil {
-			return "", fmt.Errorf("failed to create new shim socket: %w", err)
+			return "", errors.Wrap(err, "try create new shim socket second time")
 		}
-		log.Debugf("  new socket created successfully after cleanup")
 	}
+
 
 	defer func() {
 		if retErr != nil {
 			if err := socket.Close(); err != nil {
-				log.Errorf("failed to close shim socket on start error: %v", err)
+				log.Warnf("failed to close shim socket: %v", err)
 			}
 			if err := shimv2.RemoveSocket(sockAddr); err != nil {
-				log.Errorf("failed to remove shim socket on start error: %v", err)
+				log.Warnf("failed to remove shim socket: %v", err)
 			}
 		}
 	}()
 
-	sockF, err := socket.File()
+	// make sure that reexec shim-v2 binary use the value if need
+	if err := shimv2.WriteAddress("address", sockAddr); err != nil {
+		return "", errors.Wrap(err, "write shim address file")
+	}
+
+	sock, err := socket.File()
 	if err != nil {
 		return "", fmt.Errorf("failed to get shim socket file descriptor: %w", err)
 	}
 
-	cmd.ExtraFiles = append(cmd.ExtraFiles, sockF)
+	cmd.ExtraFiles = append(cmd.ExtraFiles, sock)
 
 	runtime.LockOSThread()
 	if os.Getenv("SCHED_CORE") != "" {
@@ -317,13 +324,9 @@ func (s *shimService) StartShim(ctx context.Context, opts shimv2.StartOpts) (_ s
 		handleSchedCore()
 	}
 
-	// make sure that reexec shim-v2 binary use the value if need
-	if err := shimv2.WriteAddress("address", sockAddr); err != nil {
-		return "", fmt.Errorf("failed to write shim address file: %w", err)
-	}
 
 	if err := cmd.Start(); err != nil {
-		_ = sockF.Close()
+		_ = sock.Close()
 		return "", fmt.Errorf("failed to start shim command: %w", err)
 	}
 
@@ -338,14 +341,12 @@ func (s *shimService) StartShim(ctx context.Context, opts shimv2.StartOpts) (_ s
 	// Wait in background to avoid zombie if parent outlives child briefly.
 	go cmd.Wait()
 
-	if err := shimv2.WritePidFile("shim.pid", cmd.Process.Pid); err != nil {
+	if err = shimv2.WritePidFile("shim.pid", cmd.Process.Pid); err != nil {
 		return "", fmt.Errorf("failed to write shim PID file: %w", err)
 	}
 
-	// Align with containerd logic: slightly increase child OOM score
-	// so it is killed before containerd.
-	if err := shimv2.AdjustOOMScore(cmd.Process.Pid); err != nil {
-		log.Warnf("failed to adjust OOM score for shim: %v", err)
+	if err = shimv2.WriteAddress("address", sockAddr); err != nil {
+		return "", err
 	}
 
 	return sockAddr, nil

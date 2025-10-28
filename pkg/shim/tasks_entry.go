@@ -93,7 +93,7 @@ func (s *shimService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) 
 }
 
 func (s *shimService) Start(ctx context.Context, r *taskAPI.StartRequest) (*taskAPI.StartResponse, error) {
-	log.Infof("starting container %s", r.ID)
+	log.Debugf("starting container %s", r.ID)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, found := s.containers[r.ID]
@@ -275,21 +275,21 @@ func (s *shimService) Kill(ctx context.Context, r *taskAPI.KillRequest) (*ptypes
 	// reject kill request for some exec process in a container due to micran 1:1:1 model
 	// if r.All = true, we can pass the signal to the container
 	if r.ExecID != "" && !r.All {
-		log.Infof("container %s has no exec process %s", r.ID, r.ExecID)
+		log.Debugf("container %s has no exec process %s", r.ID, r.ExecID)
 		return emptyResponse, nil
 	}
 
 	switch signum {
 	case syscall.SIGKILL, syscall.SIGTERM:
 		if c.status == task.Status_STOPPED {
-			log.Infof("container %s already stopped", c.id)
+			log.Debugf("container %s already stopped", c.id)
 			return emptyResponse, nil
 		}
 		log.Debugf("in sandbox <%s>, tring to kill container %s", s.id, c.id)
 		killed, err := s.sandbox.KillContainer(ctx, c.id)
 		if err != nil {
-			log.Pretty("kill container failed %v", err)
 			st, err1 := s.getContainerStatus(c.id)
+			log.Debugf("kill container failed %v, status remains %s", err, st.String())
 			if err1 != nil {
 				log.Debugf("failed to get container status: %v, marking status as UNKNOWN", err1)
 				c.status = task.Status_UNKNOWN
@@ -303,7 +303,7 @@ func (s *shimService) Kill(ctx context.Context, r *taskAPI.KillRequest) (*ptypes
 		return emptyResponse, nil
 	case syscall.SIGSTOP, syscall.SIGCONT:
 		if c.status == task.Status_PAUSING || c.status == task.Status_STOPPED {
-			log.Infof("container %s pausing or stopped, can not task action", c.id)
+			log.Debugf("container %s pausing or stopped, can not task action", c.id)
 			return emptyResponse, nil
 		}
 		if err := s.sandbox.PauseContainer(ctx, c.id); err != nil {
@@ -337,7 +337,7 @@ func (s *shimService) KillBySignal(ctx context.Context, r *taskAPI.KillRequest) 
 
 	// Only supported
 	if (signum == syscall.SIGKILL || signum == syscall.SIGTERM) && c.status == task.Status_STOPPED {
-		log.Infof("container %s already stopped", c.id)
+		log.Debugf("container %s already stopped", c.id)
 		return emptyResponse, nil
 	}
 	return emptyResponse, s.sandbox.SignalTask(ctx, c.id, signum)
@@ -416,8 +416,8 @@ func (s *shimService) Update(ctx context.Context, r *taskAPI.UpdateTaskRequest) 
 	if !found {
 		return nil, errdefs.ToGRPCf(errdefs.ErrInvalidArgument, "Invalid resources type for %s", s.id)
 	}
-	log.Infof("update task annotations: %v", r.Annotations)
-	log.Infof("update task resource: %v", res)
+	log.Debugf("update task annotations: %v", r.Annotations)
+	log.Debugf("update task resource: %v", res)
 	err = s.sandbox.UpdateContainer(ctx, r.ID, *res)
 	if err != nil {
 		return nil, errdefs.ToGRPC(err)
