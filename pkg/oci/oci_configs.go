@@ -81,9 +81,9 @@ func bundleRootfs(bundle string) string {
 }
 
 func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerType, detach bool, defaultFirmwarePath string) (*cntr.ContainerConfig, error) {
-	baseRoot := bundleRootfs(bundle)
+	baseRootfs := bundleRootfs(bundle)
 
-	getAnnotation := func(key string ) (string, bool) {
+	getAnnotation := func(key string) (string, bool) {
 		if ocispec.Annotations == nil {
 			return "", false
 		}
@@ -107,6 +107,45 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 		}
 	}
 
+	// resolve a container bundle file's path (absolute inside container or relative) to a host path under baseRootfs.
+	// p = "/absolute-path-to-rootfs" => "$baseRootfs/relative-path-to-rootfs"
+	// p = "relateive-path-to-rootfs" => "$baseRootfs/relative-path-to-rootfs"
+	// p = "" => ""
+	bundleContentPathToHost := func(p string) string {
+		trimmed := strings.TrimSpace(p)
+		if trimmed == "" {
+			return ""
+		}
+		if filepath.IsAbs(trimmed) {
+			return filepath.Join(baseRootfs, strings.TrimPrefix(trimmed, string(filepath.Separator)))
+		}
+		return filepath.Join(baseRootfs, trimmed)
+	}
+
+	resolveExistingFile := func(p string) string {
+		rp := bundleContentPathToHost(p)
+		if rp == "" {
+			return ""
+		}
+		st, err := os.Stat(rp)
+		if err == nil && !st.IsDir() {
+			if abs, err := utils.ResolvePath(rp); err == nil {
+				return abs
+			}
+			return rp
+		}
+		if err != nil {
+			if os.IsNotExist(err) {
+				log.Debugf("path %s does not exist", rp)
+			} else {
+				log.Warnf("stat %s failed: %v", rp, err)
+			}
+		} else if st.IsDir() {
+			log.Debugf("path %s is a directory, skipping", rp)
+		}
+		return ""
+	}
+
 	var pedconf string
 	hasPedestalConfAnnotation := false
 	if pedtype == pedestal.Xen {
@@ -119,10 +158,23 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 			pedconf = pedestal.XenDefaultPedConf()
 			log.Debugf("using default pedestal config for xen <image.bin>: %s", pedconf)
 		}
-		// Make pedcfg absolute within bundle rootfs if necessary
-		if pedconf != "" && !filepath.IsAbs(pedconf) {
-			pedconf = filepath.Join(baseRoot, pedconf)
-			log.Debugf("===>>pedestal conf path= %s", pedconf)
+		// Normalize to host path inside rootfs and warn if missing; try default fallback once.
+		resolvedPed := resolveExistingFile(pedconf)
+		if resolvedPed == "" {
+			// If annotation was given and missing, fall back to default file name under rootfs.
+			fallback := resolveExistingFile(defs.DefaultXenBin)
+			if fallback != "" {
+				resolvedPed = fallback
+				log.Debugf("pedestal config missing for %q, falling back to %s", pedconf, fallback)
+			} else {
+				// Keep normalized path for later, but warn early.
+				normalized := bundleContentPathToHost(pedconf)
+				pedconf = normalized
+				log.Warnf("xen pedestal config not found at %s (nor default %s)", normalized, bundleContentPathToHost(defs.DefaultXenBin))
+			}
+		}
+		if resolvedPed != "" {
+			pedconf = resolvedPed
 		}
 	}
 
@@ -133,55 +185,18 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 		log.Debugf("found OS annotation: %s", osName)
 	}
 
-	resolveFirmwarePath := func(p string, strict bool) (string, error) {
+	utils.TravelDir(baseRootfs)
+	resolveFirmwarePath := func(p string) (string, error) {
 		trimmed := strings.TrimSpace(p)
 		if trimmed == "" {
 			return "", nil
 		}
-
-		// Candidate search order:
-		//   1) host-absolute path (allows runtime config defaults to be absolute)
-		//   2) bundle rootfs relative path (supports annotations that provide container paths)
-		var candidates []string
-		if filepath.IsAbs(trimmed) {
-			candidates = append(candidates, trimmed)
-			rel := strings.TrimPrefix(trimmed, string(filepath.Separator))
-			if rel != "" {
-				candidates = append(candidates, filepath.Join(baseRoot, rel))
-			}
-		} else {
-			candidates = append(candidates, filepath.Join(baseRoot, trimmed))
+		hostPath := resolveExistingFile(trimmed)
+		if hostPath != "" {
+			log.Debugf("resolved firmware: %s -> %s", trimmed, hostPath)
+			return hostPath, nil
 		}
-
-		var lastErr error
-		for _, candidate := range candidates {
-			if candidate == "" {
-				continue
-			}
-			info, err := os.Stat(candidate)
-			if err != nil {
-				if !os.IsNotExist(err) {
-					return "", fmt.Errorf("firmware path %s lookup failed: %w", candidate, err)
-				}
-				lastErr = err
-				continue
-			}
-			if info.IsDir() {
-				lastErr = fmt.Errorf("path %s is a directory", candidate)
-				continue
-			}
-
-			resolved, err := utils.ResolvePath(candidate)
-			if err != nil {
-				return "", err
-			}
-			return resolved, nil
-		}
-
-		if strict {
-			return "", fmt.Errorf("firmware path %s is invalid: %w", trimmed, lastErr)
-		}
-		log.Debugf("firmware path %s not found, falling back to defaults", trimmed)
+		log.Debugf("firmware path %s not found under rootfs, will try defaults", trimmed)
 		return "", nil
 	}
 
@@ -194,7 +209,7 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 	log.Pretty("spec annotations=%v", ocispec.Annotations)
 	if ocispec.Annotations != nil {
 		for key := range ocispec.Annotations {
-			if strings.HasPrefix(key, defs.MicraAnnotationPrefix) {
+			if strings.HasPrefix(key, defs.MicranAnnotationPrefix) {
 				hasMicranAnnotation = true
 				break
 			}
@@ -229,13 +244,13 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 	if !isInfra {
 		switch {
 		case annotationFirmware != "":
-			if resolved, err := resolveFirmwarePath(annotationFirmware, true); err != nil {
+			if resolved, err := resolveFirmwarePath(annotationFirmware); err != nil {
 				return nil, fmt.Errorf("failed to resolve firmware path from annotation: %w", err)
 			} else {
 				elfPath = resolved
 			}
 		case strings.TrimSpace(defaultFirmwarePath) != "":
-			if resolved, err := resolveFirmwarePath(defaultFirmwarePath, false); err != nil {
+			if resolved, err := resolveFirmwarePath(defaultFirmwarePath); err != nil {
 				return nil, fmt.Errorf("failed to resolve firmware path from runtime config: %w", err)
 			} else {
 				elfPath = resolved
@@ -244,14 +259,13 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 			// No explicit firmware path provided; fall back to common defaults.
 		}
 
-    log.Debugf("===>> elf path = %s", elfPath)
 		if elfPath == "" {
-			defaultElfPath := filepath.Join(baseRoot, defs.DefaultFirmwareName)
-			if _, err := os.Stat(defaultElfPath); err == nil {
+			defaultElfPath := resolveExistingFile(defs.DefaultFirmwareName)
+			if defaultElfPath != "" {
 				elfPath = defaultElfPath
 				log.Debugf("using default elf path: %s", elfPath)
 			} else {
-				elfFiles, _ := filepath.Glob(filepath.Join(baseRoot, "*.elf"))
+				elfFiles, _ := filepath.Glob(filepath.Join(baseRootfs, "*.elf"))
 				if len(elfFiles) > 0 {
 					elfPath = elfFiles[0]
 					log.Debugf("found elf file: %s", elfPath)
@@ -267,7 +281,7 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 		// Container ID
 		ID: id,
 		// OCI and bundle info
-		ElfAbsPath:      elfPath,
+		ElfAbsPath:   elfPath,
 		PedestalType: pedtype,
 		PedestalConf: pedconf,
 		OS:           osName,
@@ -316,9 +330,9 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 	}
 
 	// OS is already set from annotation or default above
-	log.Infof("container OS: %s", config.OS)
+	log.Debugf("container OS: %s", config.OS)
 
-	log.Infof("container resource limits - CPU: %s, Memory: %s",
+	log.Debugf("container resource limits - CPU: %s, Memory: %s",
 		formatCPULimit(config), formatMemoryLimit(config))
 	return config, nil
 }
@@ -347,7 +361,7 @@ func SandboxConfig(ocispec *specs.Spec, rc RuntimeConfig, bundle, sbContainerID 
 	ped := cntr.HostPedType
 	if ped == pedestal.Xen {
 		pedcfg := filepath.Join(bundleRootfs(bundle), defs.DefaultXenBin)
-		log.Debugf("pedestal config for xen is the location of <%s>: %s",defs.DefaultXenBin, pedcfg)
+		log.Debugf("pedestal config for xen is the location of <%s>: %s", defs.DefaultXenBin, pedcfg)
 	}
 
 	staticResMngt := rc.StaticResourceManagement
@@ -363,8 +377,9 @@ func SandboxConfig(ocispec *specs.Spec, rc RuntimeConfig, bundle, sbContainerID 
 		ID:       sbContainerID,
 		Hostname: ocispec.Hostname,
 		PedConfig: pedestal.PedestalConfig{
+			// Use host pedestal type and resolved pedestal config path from container config.
 			PedType:     pedestal.GetHostPed(),
-			PedConfig:   "",
+			PedConfig:   containerConfig.PedestalConf,
 			MiniVCPUNum: rc.MiniVCPUNum,
 		},
 		ContainerConfigs: map[string]*cntr.ContainerConfig{
@@ -489,7 +504,7 @@ func applySandboxAnnotations(ocispec specs.Spec, cfg *cntr.SandboxConfig) {
 	}
 
 	for key, value := range ocispec.Annotations {
-		if !strings.HasPrefix(key, defs.MicraAnnotationPrefix) || value == "" {
+		if !strings.HasPrefix(key, defs.MicranAnnotationPrefix) || value == "" {
 			continue
 		}
 		switch key {
