@@ -74,7 +74,7 @@ func (me *MicaExecutor) UpdateMemoryLimit(memMiB uint32) error {
 		log.Warnf("failed to request new max memory \"%d\" to container: %v", memMiB,  err)
 	} else {
 		me.records.memoryMB = int(memMiB)
-		log.Infof("update max memory to %d", memMiB)
+		log.Debugf("update max memory to %d", memMiB)
 	}
 	return err
 }
@@ -87,7 +87,7 @@ func (me *MicaExecutor) UpdateMemory(memMiB uint32) error {
 		log.Warnf("failed to request new memory \"%d\" to container: %v", memMiB,  err)
 	} else {
 		me.records.memoryMB = int(memMiB)
-		log.Infof("update memory to %d", memMiB)
+		log.Debugf("update memory to %d", memMiB)
 	}
 	return err
 }

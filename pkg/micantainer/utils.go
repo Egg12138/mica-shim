@@ -29,20 +29,12 @@ func initContainerTaskInSandbox(sandbox SandboxTraits, config *ContainerConfig) 
 }
 
 func startClient(ctx context.Context, sandbox SandboxTraits, c *Container) error {
-	conf, err := createMicaClientConf(c)
-	if err != nil {
+	if _, err := c.ensureClientPresence(); err != nil {
 		return err
 	}
 
 	start := time.Now()
-	if err = libmica.Create(conf); err != nil {
-		log.Errorf("startClient: Create failed: %v", err)
-		return err
-	}
-	log.Infof("startClient: Create OK in %s", time.Since(start))
-
-	start = time.Now()
-	if err = libmica.Start(c.ID()); err != nil {
+	if err := libmica.Start(c.ID()); err != nil {
 		log.Errorf("startClient: Start failed: %v", err)
 		return err
 	}
@@ -124,19 +116,21 @@ func calculateSandboxVCPUs(s *Sandbox) (uint32, error) {
 		if cc.IsInfra {
 			continue
 		}
-		if c, ok := s.containers[cc.ID]; ok && c.state.State == StateStopped {
-			log.Debugf("skipped stopped container %s", c.ID())
-			continue
+		if c, ok := s.containers[cc.ID]; ok {
+			state := c.checkState()
+			if state == StateStopped || state == StateDown {
+				log.Debugf("skipped inactive container %s (state=%s)", c.ID(), state)
+				continue
+			}
 		}
 
-		// Primary: use configured VCPUNum if set (already validated in ContainerConfig).
 		if cc.VCPUNum > 0 {
 			total += cc.VCPUNum
 			continue
 		}
 
-		// Fallbacks for legacy/partial configs.
-		if cpu := cc.Resources.CPU; cpu != nil {
+		if cc.Resources != nil && cc.Resources.CPU != nil {
+			cpu := cc.Resources.CPU
 			if cpu.Period != nil && cpu.Quota != nil && *cpu.Period != 0 {
 				m := utils.CalculateMilliCPUs(*cpu.Quota, *cpu.Period)
 				v := utils.CalculateVCpusFromMilliCpus(m)
@@ -167,9 +161,12 @@ func calculateSandboxMemory(s *Sandbox) uint64 {
 		if cc.IsInfra {
 			continue
 		}
-		if c, ok := s.containers[cc.ID]; ok && c.state.State == StateStopped {
-			log.Debugf("skipped stopped container %s", c.ID())
-			continue
+		if c, ok := s.containers[cc.ID]; ok {
+			state := c.checkState()
+			if state == StateStopped || state == StateDown {
+				log.Debugf("skipped inactive container %s (state=%s)", c.ID(), state)
+				continue
+			}
 		}
 
 		if cc.Resources == nil {
