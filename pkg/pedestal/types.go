@@ -3,11 +3,10 @@ package pedestal
 import "strings"
 
 type PedType int
-type PedConfigString string
 
 type PedestalConfig struct {
 	PedType      PedType
-	PedConfig    PedConfigString
+	PedConfig    string
 	MiniVCPUNum   uint32		
 }
 
