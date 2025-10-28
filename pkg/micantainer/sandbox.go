@@ -85,8 +85,9 @@ const (
 	StateRunning  StateString = "running"
 	StateStopped  StateString = "stopped"
 	StateCreating StateString = "creating"
+	StatePaused   StateString = "paused"
+	StateDown     StateString = "down"
 	// Unsupported yet
-	StatePaused StateString = "paused"
 )
 
 type SandboxState struct {
@@ -109,20 +110,13 @@ func (s *SandboxState) Transition(old StateString, new StateString) error {
 	return s.State.validTransition(old, new)
 }
 
-// Private methods
-
 func (s *StateString) valid() bool {
-	for _, validState := range []StateString{StateReady, StateRunning, StateStopped, StateCreating, StatePaused} {
-		if *s == validState {
-			return true
-		}
-	}
-	return false
+	return *s != StateDown
 }
 
 func (s *StateString) validTransition(old StateString, new StateString) error {
 	if *s != old {
-		return fmt.Errorf("invalid state: %s (expected: %v)", *s, old)
+		return fmt.Errorf("mismatched state: %s (expecting: %v)", *s, old)
 	}
 
 	switch *s {
@@ -147,6 +141,11 @@ func (s *StateString) validTransition(old StateString, new StateString) error {
 
 	case StateStopped:
 		if new == StateRunning {
+			return nil
+		}
+
+	case StateDown:
+		if new == StateReady || new == StateRunning || new == StateStopped || new == StateCreating {
 			return nil
 		}
 	}
@@ -243,7 +242,7 @@ func (s *Sandbox) GetContainer(id string) ContainerTraits {
 // status of containers and sandbox itself;
 func (s *Sandbox) Start(ctx context.Context) error {
 	cur := s.state.State
-	log.Infof("Start(): current sandbox state=%s", cur)
+	log.Debugf("current sandbox state=%s", cur)
 
 	// If restored as 'creating', normalize to 'ready' before starting
 	if cur == StateCreating {
@@ -255,9 +254,9 @@ func (s *Sandbox) Start(ctx context.Context) error {
 
 	// If already running, ensure all containers are running
 	if cur == StateRunning {
-		log.Infof("sandbox %s is already running; ensuring containers are running", s.id)
+		log.Debugf("sandbox %s is already running; ensuring containers are running", s.id)
 		for _, c := range s.containers {
-			if c.state.State != StateRunning {
+			if c.checkState() != StateRunning {
 				if err := c.start(ctx); err != nil {
 					return err
 				}
@@ -271,7 +270,7 @@ func (s *Sandbox) Start(ctx context.Context) error {
 
 	// Perform state transition based on actual current state
 	if err := s.state.Transition(cur, StateRunning); err != nil {
-		log.Infof("transition error: from=%s to=%s", cur, StateRunning)
+		log.Debugf("transition error: from=%s to=%s", cur, StateRunning)
 		return err
 	}
 
@@ -280,7 +279,7 @@ func (s *Sandbox) Start(ctx context.Context) error {
 		log.Info("setstate error")
 		return err
 	}
-	log.Infof("1, state from %s => %s", oldState, s.state.State)
+	log.Debugf("1, state from %s => %s", oldState, s.state.State)
 
 	var startErr error
 	defer func() {
@@ -299,14 +298,14 @@ func (s *Sandbox) Start(ctx context.Context) error {
 		return err
 	}
 
-	log.Infof("sandbox %s started", s.id)
+	log.Debugf("sandbox %s started", s.id)
 	return nil
 }
 
 // Stop stops all containers inside the sandbox as well as sandbox itself
 func (s *Sandbox) Stop(ctx context.Context, force bool) error {
 	if s.state.State == StateStopped {
-		log.Infof("sandbox %s is already stopped", s.id)
+		log.Debugf("sandbox %s is already stopped", s.id)
 		return nil
 	}
 
@@ -320,8 +319,7 @@ func (s *Sandbox) Stop(ctx context.Context, force bool) error {
 		}
 	}
 
-	// TODO: add stopClient()
-	if err := s.stopClient(ctx); err != nil && !force {
+	if err := s.stopClients(ctx); err != nil && !force {
 		return err
 	}
 
@@ -537,7 +535,7 @@ func (s *Sandbox) StopContainer(ctx context.Context, id string, force bool) (Con
 	return c, nil
 }
 
-// Stop the container forcely and pop it, not storing sandbox state
+// Stop the container forcely and pop it.
 func (s *Sandbox) KillContainer(ctx context.Context, id string) (ContainerTraits, error) {
 	c, ok := s.containers[id]
 	if !ok {
@@ -557,6 +555,14 @@ func (s *Sandbox) StatusContainer(id string) (ContainerStatus, error) {
 	}
 
 	if c, ok := s.containers[id]; ok {
+		if _, err := c.ensureClientPresence(); err != nil {
+			return cs, err
+		}
+
+		if c.checkState() == StateDown {
+			return cs, er.ContainerNotFound
+		}
+
 		rootfs := c.config.Rootfs.Source
 		if c.config.Rootfs.Mounted {
 			rootfs = c.config.Rootfs.Target
@@ -624,14 +630,19 @@ func (s *Sandbox) WaitContainerExit(ctx context.Context, containerID string) (in
 		return ok0, er.ContainerNotFound
 	}
 
-	if c.state.State == StateStopped {
+	state := c.checkState()
+	if state == StateDown {
+		return ok0, er.ContainerNotFound
+	}
+
+	if state == StateStopped {
 		return ok0, nil
 	}
 
 	log.Infof("WaitContainerExit: container=%s ", containerID)
 
 	if c.exitNotifier == nil {
-		c.updateExitNotifier(c.state.State)
+		c.updateExitNotifier(state)
 	}
 
 	select {
@@ -807,8 +818,7 @@ func (s *Sandbox) cleanSandboxStorage() error {
 
 }
 func (s *Sandbox) removeNetwork() error {
-	log.Infof("removed network of sandbox %s", s.id)
-	log.Debugf("remove network for sandbox %s", s.id)
+	log.Infof("remove network for sandbox %s", s.id)
 	if s.config == nil {
 		return nil
 	}
@@ -819,13 +829,11 @@ func (s *Sandbox) removeNetwork() error {
 	return nil
 }
 
-func (s *Sandbox) stopClient(ctx context.Context) error {
-	log.Debugf("stop sandbox %s", s.id)
-	if err := s.resManager.stopSandbox(s); err != nil {
+func (s *Sandbox) stopClients(ctx context.Context) error {
+	if err := s.resManager.stopClients(ctx, s); err != nil {
 		log.Errorf("failed to stop sandbox %s: %v", s.id, err)
 		return err
 	}
-	log.Info("stopping client os")
 	return nil
 }
 
@@ -835,7 +843,7 @@ func DummySandboxConfig(cid string, spec *specs.Spec) (*SandboxConfig, error) {
 		ID:       cid,
 		Hostname: spec.Hostname,
 		Annotations: map[string]string{
-			"org.openeuler.mica.test": "true",
+			"org.openeuler.micran.test": "true",
 		},
 		ContainerConfigs: make(map[string]*ContainerConfig),
 		SharedMemorySize: 64 * 1024 * 1024, // 64MB
@@ -987,8 +995,8 @@ func RestoreSandbox(ctx context.Context, id string) (*SandboxStorage, error) {
 	raw, err := utils.RestoreStructFromJSON(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			log.Debugf("not found sandbox state file: %s, a new one should be created", configPath)
-			return nil, err
+			log.Debugf("not found sandbox state file: %s, sandbox may have been already cleaned up", configPath)
+			return nil, er.SandboxNotFound
 		}
 		return nil, fmt.Errorf("failed to load sandbox state from %s: %w", configPath, err)
 	}

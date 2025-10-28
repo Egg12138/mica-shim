@@ -117,7 +117,7 @@ type ContainerConfig struct {
 	Resources      *specs.LinuxResources
 
 	// ElfAbsPath is the absolute path of the <os>.elf in the host.
-	ElfAbsPath      string      `json:"elf_abs_path"`
+	ElfAbsPath   string      `json:"elf_abs_path"`
 	PedestalType ped.PedType `json:"pedestal_type"`
 	PedestalConf string      `json:"pedestal_conf"`
 	OS           string      `json:"os"`
@@ -278,25 +278,33 @@ func CleanupContainer(ctx context.Context, sandboxID string, containerID string,
 		return er.EmptyContainerID
 	}
 
-	// BUG: Logic error, config loader is incomplete:
-	// 1. Multithread unsafe.
-	// 2. Missing fields.
-	// 3. Lacks verifications.
 	sandbox, err := loadSandbox(ctx, sandboxID)
 	if err != nil {
-		return err
-	}
-	_, err = sandbox.StopContainer(ctx, containerID, force)
-	if err != nil && !force {
+		if err == er.SandboxNotFound {
+			if !libmica.ClientNotExist(containerID) && !force {
+				return fmt.Errorf("sandbox state missing while client %s still exists", containerID)
+			}
+			log.Debugf("Sandbox %s already removed from disk, skipping container %s cleanup.", sandboxID, containerID)
+			return nil
+		}
 		return err
 	}
 
-	_, err = sandbox.DeleteContainer(ctx, containerID)
-	if err != nil && !force {
-		return err
+	if _, err = sandbox.StopContainer(ctx, containerID, force); err != nil {
+		if err != er.ContainerNotFound && !force {
+			return err
+		}
+		log.Debugf("Container %s already stopped or absent in sandbox %s: %v.", containerID, sandboxID, err)
 	}
 
-	if len(sandbox.AllAnnotations()) > 0 {
+	if _, err = sandbox.DeleteContainer(ctx, containerID); err != nil {
+		if err != er.ContainerNotFound && !force {
+			return err
+		}
+		log.Debugf("Container %s already deleted from sandbox %s: %v.", containerID, sandboxID, err)
+	}
+
+	if len(sandbox.containers) > 0 {
 		return nil
 	}
 
@@ -341,40 +349,45 @@ func newContainer(ctx context.Context, s *Sandbox, cc *ContainerConfig) (*Contai
 		log.Warnf("Failed to restore container state: %v.", err)
 	}
 
-	c.updateExitNotifier(c.state.State)
+	c.updateExitNotifier(c.checkState())
 
 	return c, nil
 }
 
 // start begins the execution of the container.
 func (c *Container) start(ctx context.Context) error {
+	currentState, err := c.ensureClientPresence()
+	if err != nil {
+		return err
+	}
+
 	if c.config != nil && c.config.IsInfra {
-		if c.state.State == StateRunning {
+		if currentState == StateRunning {
 			return nil
 		}
-		if c.state.State != StateReady && c.state.State != StateStopped {
+		if currentState != StateReady && currentState != StateStopped {
 			return fmt.Errorf("container is not ready or stopped, cannot start")
 		}
-		if err := c.state.ValidTransition(c.state.State, StateRunning); err != nil {
+		if err := c.state.ValidTransition(currentState, StateRunning); err != nil {
 			return err
 		}
 		return c.setContainerState(ctx, StateRunning)
 	}
 
-	if c.state.State == StateRunning {
+	if currentState == StateRunning {
 		return fmt.Errorf("container %s is already running", c.id)
 	}
 
-	if c.state.State != StateReady && c.state.State != StateStopped {
+	if currentState != StateReady && currentState != StateStopped {
 		return fmt.Errorf("container is not ready or stopped, cannot start")
 	}
 
-	if err := c.state.ValidTransition(c.state.State, StateRunning); err != nil {
+	if err := c.state.ValidTransition(currentState, StateRunning); err != nil {
 		return err
 	}
 
 	if err := startClient(ctx, c.sandbox, c); err != nil {
-		log.Errorf("Failed to start container: %v.", err)
+		log.Warnf("Failed to start container: %v, stopping it", err)
 		if err := c.stop(ctx, true); err != nil {
 			log.Warn("Failed to stop the container after start failed.")
 		}
@@ -401,6 +414,10 @@ func (c *Container) create(ctx context.Context) error {
 
 	c.taskInfo = *rtosTask
 
+	if _, err := c.ensureClientPresence(); err != nil {
+		return err
+	}
+
 	if err := c.setContainerState(ctx, StateReady); err != nil {
 		return err
 	}
@@ -412,12 +429,13 @@ func (c *Container) doStop(force bool) error {
 	if c.config != nil && c.config.IsInfra {
 		return nil
 	}
-	if c.state.State == StateStopped {
-		log.Infof("Container %s is already stopped.", c.id)
+	currentState := c.checkState()
+	if currentState == StateStopped {
+		log.Debugf("Container %s is already stopped.", c.id)
 		return nil
 	}
 
-	if err := c.state.State.validTransition(c.state.State, StateStopped); err != nil && !force {
+	if err := c.state.ValidTransition(currentState, StateStopped); err != nil && !force {
 		return err
 	}
 
@@ -429,10 +447,16 @@ func (c *Container) doStop(force bool) error {
 
 // stop stops the container.
 func (c *Container) stop(ctx context.Context, force bool) error {
-	var err error
-	if err = c.doStop(force); err != nil {
+	if _, err := c.ensureClientPresence(); err != nil {
 		return err
 	}
+
+	var err error
+	if err = c.doStop(force); err != nil {
+		log.Debugf("+++++ failed to stop contaienr %s", c.id)
+		return err
+	}
+	log.Debugf("+++++ stopped contaienr %s", c.id)
 
 	if err = c.setContainerState(ctx, StateStopped); err != nil {
 		return err
@@ -447,29 +471,39 @@ func (c *Container) kill() error {
 	if c.sandbox.state.State != StateReady && c.sandbox.state.State != StateRunning {
 		return fmt.Errorf("sandbox is not running or ready, can not signal container")
 	}
-	log.Debugf("Container state is %s.", c.state.State)
-	if c.state.State != StateRunning &&
-		c.state.State != StateReady &&
-		c.state.State != StatePaused {
+	currentState, err := c.ensureClientPresence()
+	if err != nil {
+		return err
+	}
+	log.Debugf("Container state is %s.", currentState)
+	if currentState != StateRunning &&
+		currentState != StateReady &&
+		currentState != StatePaused {
 		return fmt.Errorf("container is not running, ready or paused, can not be killed")
 	}
 
 	if err := c.doStop(true); err != nil {
+		log.Debugf("+++++ failed to stop contaienr %s", c.id)
 		return err
 	}
+	log.Debugf("+++++ stopped contaienr %s", c.id)
 
-	// NOTICE: there is no need to call setContainerState, because kill is a task-scope operation;
-	// after supports for different POSIX signals, kill -> stopped will be incorrect
-	c.state.State = StateStopped
+	if err := c.setContainerState(c.ctx, StateStopped); err != nil {
+		return err
+	}
 	return nil
 }
 
 // delete removes the container.
 // This differs from mica, where `rm` forces a client stop. For a container engine, that is bad practice.
 func (c *Container) delete(ctx context.Context) error {
-	if c.state.State != StateReady &&
-		c.state.State != StatePaused &&
-		c.state.State != StateStopped {
+	currentState, err := c.ensureClientPresence()
+	if err != nil {
+		return err
+	}
+	if currentState != StateReady &&
+		currentState != StatePaused &&
+		currentState != StateStopped {
 		return fmt.Errorf("sandbox is not ready, paused, or stopped, cannot delete container")
 	}
 
@@ -487,7 +521,11 @@ func (c *Container) delete(ctx context.Context) error {
 
 // pause pauses the container's execution.
 func (c *Container) pause(ctx context.Context) error {
-	if c.state.State != StateRunning {
+	currentState, err := c.ensureClientPresence()
+	if err != nil {
+		return err
+	}
+	if currentState != StateRunning {
 		return fmt.Errorf("container is not running, cannot pause container")
 	}
 	if c.config != nil && c.config.IsInfra {
@@ -501,13 +539,17 @@ func (c *Container) pause(ctx context.Context) error {
 
 // resume resumes a paused container.
 func (c *Container) resume(ctx context.Context) error {
-	if c.state.State != StatePaused && c.sandbox.state.State != StateStopped {
+	currentState, err := c.ensureClientPresence()
+	if err != nil {
+		return err
+	}
+	if currentState != StatePaused && c.sandbox.state.State != StateStopped {
 		return fmt.Errorf("container is not paused, cannot resume container")
 	}
 	if c.config != nil && c.config.IsInfra {
 		return c.setContainerState(ctx, StateRunning)
 	}
-	log.Infof("Micran restart a client os, acting as `resume`.")
+	log.Debugf("Micran restart a client os, acting as `resume`.")
 	if err := libmica.Start(c.id); err != nil {
 		return er.MicadOpFailed
 	}
@@ -601,10 +643,11 @@ func (c *Container) TaskInfo() RTOSTask {
 }
 
 func (c *Container) Status() StateString {
-	return c.state.State
+	return c.checkState()
 }
 
 func (c *Container) State() *ContainerState {
+	c.checkState()
 	return &c.state
 }
 
@@ -614,7 +657,11 @@ func (c *Container) Signal(ctx context.Context, signal syscall.Signal) error {
 	if c.sandbox.notOperational() {
 		return fmt.Errorf("sandbox is not running or ready, can not signal container")
 	}
-	if c.state.State != StateRunning && c.state.State != StateReady && c.state.State != StatePaused {
+	currentState, err := c.ensureClientPresence()
+	if err != nil {
+		return err
+	}
+	if currentState != StateRunning && currentState != StateReady && currentState != StatePaused {
 		return fmt.Errorf("client os is not running, ready or paused, can not signal container")
 	}
 
@@ -660,15 +707,13 @@ func validComponent(component string) bool {
 
 // validFirmware checks if the firmware file is valid.
 func validFirmware(firmware string) bool {
-	log.Debugf("===> firmware=%s", firmware)
 	return validComponent(firmware)
 }
 
 // validBinfile checks if the binary file is valid.
 // For Xen, this is typically image.bin.
-func validBinfile(rootfs, binpath string) bool {
-	path := filepath.Join(rootfs, binpath)
-	return validComponent(path)
+func validBinfile(binpath string) bool {
+	return validComponent(binpath)
 }
 
 // validMicaContainer checks if the container configuration is valid for mica.
@@ -678,13 +723,10 @@ func (c *Container) validMicaContainer() bool {
 		return true
 	}
 
-	cwd, _ := os.Getwd()
-	bundleRootfs := filepath.Join(cwd, "rootfs")
-
 	osValid := validOS(c.GetOS())
-	fwValid := validFirmware( c.GetFirmwarePath())
+	fwValid := validFirmware(c.GetFirmwarePath())
 	if HostPedType == ped.Xen {
-		binFile := validBinfile(bundleRootfs, c.GetPedestalConf())
+		binFile := validBinfile(c.GetPedestalConf())
 		fwValid = binFile && fwValid
 	}
 	judge := osValid && fwValid
@@ -707,11 +749,79 @@ func (c *Container) setContainerState(ctx context.Context, state StateString) er
 	log.Debugf("Set container state from %s to %s.", c.state.State, state)
 	c.state.State = state
 	c.updateExitNotifier(state)
+	if err := c.SaveState(); err != nil {
+		log.Errorf("failed to save container state: %v", err)
+		return err
+	}
 	if err := c.sandbox.StoreSandbox(ctx); err != nil {
-		log.Errorf("Save sandbox state failed.")
+		log.Errorf("failed to save sandbox state: %v", err)
 		return err
 	}
 	return nil
+}
+
+func (c *Container) checkState() StateString {
+	if c == nil {
+		return StateDown
+	}
+
+	if c.config != nil && c.config.IsInfra {
+		return c.state.State
+	}
+
+	if c.id == "" {
+		return StateDown
+	}
+
+	if libmica.ClientNotExist(c.id) {
+		if c.state.State != StateDown {
+			if err := c.setContainerState(c.ctx, StateDown); err != nil {
+				log.Warnf("failed to mark container %s as down: %v", c.id, err)
+			}
+		}
+		return StateDown
+	}
+
+	return c.state.State
+}
+
+func (c *Container) ensureClientPresence() (StateString, error) {
+	state := c.checkState()
+	if state != StateDown {
+		return state, nil
+	}
+
+	if err := c.registerClientWithMicad(); err != nil {
+		return StateDown, err
+	}
+
+	state = c.checkState()
+	if state == StateDown {
+		return StateDown, er.ContainerNotFound
+	}
+
+	return state, nil
+}
+
+func (c *Container) registerClientWithMicad() error {
+	if c == nil || c.config == nil || c.config.IsInfra {
+		return nil
+	}
+
+	if !libmica.ClientNotExist(c.id) {
+		return nil
+	}
+
+	conf, err := createMicaClientConf(c)
+	if err != nil {
+		return err
+	}
+
+	if err := libmica.Create(conf); err != nil {
+		return err
+	}
+
+	return c.setContainerState(c.ctx, StateReady)
 }
 
 const num2CapRatio = 100
@@ -778,10 +888,17 @@ func (c *Container) SaveState() error {
 	var err error
 	var err1 error
 
-	stateInBundle := filepath.Join(c.containerPath, defs.MicantainerStateFile)
-	stateInMicranDir := filepath.Join(defs.DefaultMicranStateDir, c.id, defs.MicantainerStateFile)
+	cwd, err := os.Getwd()
+	if err != nil {
+		log.Warnf("Failed to get current working directory: %v", err)
+		cwd = "."
+	}
+	stateInBundle := filepath.Join(cwd, c.containerPath, defs.MicantainerStateFile)
+	stateInMicranDir := filepath.Join(defs.DefaultMicranStateDir, c.containerPath, defs.MicantainerStateFile)
+	log.Infof("stateInBundle: %s", stateInBundle)
 
-	if err := utils.EnsureDir(filepath.Dir(stateInBundle), defs.DirMode); err != nil {
+	bundleDir := filepath.Dir(stateInBundle)
+	if err := utils.EnsureDir(bundleDir, defs.DirMode); err != nil {
 		log.Warnf("Failed to ensure bundle directory: %v.", err)
 	}
 	if err := utils.EnsureDir(filepath.Dir(stateInMicranDir), defs.DirMode); err != nil {
@@ -822,7 +939,12 @@ func (c *Container) RestoreState() error {
 	raw, err := utils.RestoreStructFromJSON(stateInMicranDir)
 
 	if err != nil {
-		stateInBundle := filepath.Join(c.containerPath, defs.MicantainerStateFile)
+		cwd, err := os.Getwd()
+		if err != nil {
+			log.Warnf("Failed to get current working directory: %v", err)
+			cwd = "."
+		}
+		stateInBundle := filepath.Join(cwd, c.containerPath, defs.MicantainerStateFile)
 		raw, err = utils.RestoreStructFromJSON(stateInBundle)
 		if err != nil {
 			return fmt.Errorf("failed to restore container state from both locations: %w", err)
@@ -861,10 +983,11 @@ func (c *Container) stats() (*ContainerStats, error) {
 // TODO: For now, taskId is always a dummy because one client has one task.
 // TALK: Is it possible to apply a new task to the client OS in the future, perhaps via Xen?
 func (c *Container) wait4exit() (int32, error) {
-	if c.state.State == StateStopped {
+	currentState := c.checkState()
+	if currentState == StateStopped {
 		return ok0, nil
 	}
-	if c.notOperational() && c.state.State != StatePaused {
+	if c.notOperational() && currentState != StatePaused {
 		return ok0, errors.New("container is not ready or running, cannot wait for exit")
 	}
 	return ok0, nil
@@ -958,5 +1081,6 @@ func (c *Container) updateExitNotifier(state StateString) {
 
 // notOperational checks if the container is not in a state to be operated on.
 func (c *Container) notOperational() bool {
-	return c.state.State != StateReady && c.state.State != StateRunning
+	currentState := c.checkState()
+	return currentState != StateReady && currentState != StateRunning
 }
