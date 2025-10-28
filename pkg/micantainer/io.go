@@ -88,7 +88,7 @@ func (s *iostream) ensureDevice() error {
 				return nil
 			}
 		} else if !os.IsNotExist(err) {
-			log.Infof("wait for pty device %s prepared", target)
+			log.Debugf("wait for pty device %s prepared", target)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
