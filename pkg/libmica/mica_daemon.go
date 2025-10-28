@@ -70,7 +70,7 @@ func micadDetect() (pid, instanceNum int, running bool) {
 // setupMicad attempts to start micad if it's not already running
 func setupMicad() error {
 	if pid, _, running := micadDetect(); running {
-		log.Infof("micad is already running with PID %d", pid)
+		log.Debugf("micad is already running with PID %d", pid)
 		return nil
 	}
 

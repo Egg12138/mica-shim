@@ -247,7 +247,7 @@ func (mio *MicaIO) connectToPTY() error {
 	}
 
 	mio.ptyFile = ptyFile
-	log.Infof("successfully connected to PTY device %s for task %s", mio.ptyDevice, mio.taskID)
+	log.Debugf("successfully connected to PTY device %s for task %s", mio.ptyDevice, mio.taskID)
 	return nil
 }
 
@@ -330,7 +330,7 @@ func (mio *MicaIO) Start() error {
 	}()
 
 	mio.started = true
-	log.Infof("MicaIO started successfully for task %s using PTY device %s", mio.taskID, mio.ptyDevice)
+	log.Debugf("MicaIO started successfully for task %s using PTY device %s", mio.taskID, mio.ptyDevice)
 	return nil
 }
 

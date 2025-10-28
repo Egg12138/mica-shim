@@ -18,9 +18,9 @@
 - [x] `ctr task start demo` 卡住
 - [x] duplciated config parsing
 - [x] sandbox state.json not cleaned -- after delete container
-- [ ] sandbox pod net namespace规划
-- [ ] `ttyRPMSG<id>` id 不匹配
-- [ ] ttyRPMSGid issue
+- [x] sandbox pod net namespace规划
+- [x] `ttyRPMSG<id>` id 不匹配
+- [x] ttyRPMSGid issue
 - [ ] ==我们需要MICA monitor!!==
 - [x] kill如果正常执行，可以保证**幂等**，然而如果kill的是UNKNOWN状态的容器，会 `ontainer not found, mark status to UNKNOWN`
 - [ ] pod container corner cases
@@ -28,33 +28,35 @@
 - [x] drop-in configs 解析顺序不当，override的优先级用最新的  docs/arch.md的设计来做
 - [x] cpu request, (oci spec cpu.share)
 - [ ] memory 监控
-- [ ] annotation downfall example
+- [x] annotation downfall example
 - [ ] k8s example
 - [ ] show cadvisor CPU Topology
-- [ ] service::Stats 完整实现
+- [x] service::Stats 完整实现
 - [ ] k8s/cadvisor感知到整个机器的全部资源，而不是Dom0的资源
-- [ ] `/dev/ttyRPMSG%d` 应该 保证和容器ID是映射的
+- [x] `/dev/ttyRPMSG%d` 应该 保证和容器ID是映射的
 
 
 # flaws and features
 
+- [ ] infra 容器时，io也不需要建立。
+- [ ] 重新加回 client.conf 作为 fallback
 - [x] Xen vcpu reader
 - [ ] 验证xl vcpu-list相关输出和micran存储的都同步！后者保证性能，不应该总是从xl输出来读取信息
-- [ ] Xen API: 将对xen相关二进制的调用都走 xapi  [go-xen-api](https://github.com/terra-farm/go-xen-api-client)
+- [x] Xen API: 将对xen相关二进制的调用都走 xapi  [go-xen-api](https://github.com/terra-farm/go-xen-api-client)
 > metrics support
 > ...
 - [x] fields in ContainerConfig are overlapped, it would be clearer that migrate fields like `cpuShares`, `cpuset` to pedestal EssentialResources
-- [ ] micad status, micran status (in-memory), containerd status 一致性 **潜在风险**
+- [x] micad status, micran status (in-memory), containerd status 一致性 **潜在风险**
 - [x] VCPU Pinning 在 client 中也同步更新——在libmica中实现这个
 - [x] VCPU Pinning 模式： 打开后， CPUs非空，默认CPUs为空，无限制绑核,绑核后 VCPUs=numCPUSet
 > 目前实现是： initResource中 ContainerSize::CPU = numCPU = ceil(quota/period) = inited.VCPUs; CPUs=""
 > if EnableVCPUPinning, then VCPUS = num(CPUSet); CPUs = CPUSet
 - [x] duplicated OCI Resource config parsing when `ContainerConfig()` and `CalculatingContainerResource()`
 - [x] Lazy&Once的q:全局变量优化：HostPedType, etc... 开销太大了 (e.g. hostpedtype 目前可以加速十倍)
-- [ ] 优化镜像配置、sandbox的设置逻辑:annotation => file => default => bundle, ordered by priority; bundle 作为 校验使用。annotation的必须要和 bundle 中解析出来的一致
-- [ ] mica错误处理
+- [x ] 优化镜像配置、sandbox的设置逻辑:annotation => file => default => bundle, ordered by priority; bundle 作为 校验使用。annotation的必须要和 bundle 中解析出来的一致
+- [x] mica错误处理
 - [x] sandbox Update Resource: parse cpuset when updating!
-- [ ] openAMP case的静态资源管理
+- [x] openAMP case的静态资源管理
 - [ ] 将Sandbox作为一个Pool:
 > for xen, sandbox cpu range => sandbox cpu pool
 > sandbox memory is a memory pool
@@ -165,6 +167,9 @@ type PedTraits interface {
 - [ ] 当前micad的实践有很糟糕的地方： 大量使用 `micad &` 来进行后台， 这样是不合适 
 - [ ] xen DomainID 持续递增有风险
 - [ ] 支持 sandbox API, 改用 containerd 2.X
+- [ ] mica-image-builder重构：写的一坨
+- [ ] /run/containerd/s/<HASH> 有时会错误地监听 mica-create.socket...
+- [ ] migrate fmt.Errorf to errors.Wrap
 
 # performance
 

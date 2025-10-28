@@ -11,6 +11,7 @@ require (
 	github.com/containerd/fifo v1.1.0
 	github.com/containerd/typeurl/v2 v2.1.1
 	github.com/containers/podman/v4 v4.9.3
+	github.com/creack/pty v1.1.24
 	github.com/gogo/protobuf v1.3.2
 	github.com/gookit/ini/v2 v2.3.2
 	github.com/hashicorp/go-multierror v1.1.1
@@ -46,7 +47,6 @@ require (
 	github.com/containerd/ttrpc v1.2.7 // indirect
 	github.com/containernetworking/plugins v1.4.1 // indirect
 	github.com/coreos/go-systemd/v22 v22.5.1-0.20231103132048-7d375ecc2b09 // indirect
-	github.com/creack/pty v1.1.24 // indirect
 	github.com/cri-o/cri-o v1.30.10 // indirect
 	github.com/cyphar/filepath-securejoin v0.3.4 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
