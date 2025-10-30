@@ -35,10 +35,15 @@ func micadDetect() (pid, instanceNum int, running bool) {
 	// If MICAD_PIDFILE is missing, check the multi micad case
 	if utils.FileExist(defs.MicaCreatSocketPath) {
 		// Check processes using the socket path (like lsof)
-		pids := utils.LsofSocket(defs.MicaCreatSocketPath)
+		cmdName := "micad"
+		if defs.IsMock {
+			cmdName = "mock_mica"
+		}
+		pids := utils.LsofSocket(defs.MicaCreatSocketPath, cmdName)
 		if len(pids) == 1 {
 			return pids[0], 1, true
 		} else {
+			log.Debugf("lsof found multiple micad processes (%v) using socket %s", pids, defs.MicaCreatSocketPath)
 			return 0, len(pids), true
 		}
 	}
