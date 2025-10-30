@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"sort"
 	"sync"
 	"syscall"
 	"time"
@@ -16,15 +18,15 @@ import (
 // Constants
 // PTY device mapping and discovery constants
 const (
-	PTYDevLegacyPattern  = "/dev/ttyRPMSG%d"
-	PTYDevPattern      = "/dev/ttyRPMSG_%s"
+	PTYDevPattern        = "/dev/ttyRPMSG_%s"
 	PTYWaitTimeout       = 30 * time.Second
 	PTYDiscoveryInterval = 500 * time.Millisecond
-	MaxPTYDevLegacyNum   = 10
 )
 
 // Types
-// MicaIO handles stdio communication between containerd and mica PTY devices
+// MicaIO handles stdio communication between containerd and mica PTY devices.
+// NOTE: This helper is retained for auxiliary tooling (e.g. tests/ioworkflow)
+// and is not used by the production micran shim path.
 type MicaIO struct {
 	taskID   string          // Task identifier
 	stdin    *ioutils.PipeIO // Stdin pipe
@@ -183,8 +185,14 @@ func (mio *MicaIO) discoverPTYDevice() (*PTYDiscoveryResult, error) {
 func (mio *MicaIO) scanExistingPTYDevices() []string {
 	var devices []string
 
-	for i := 0; i < MaxPTYDevLegacyNum; i++ {
-		ptyPath := fmt.Sprintf(PTYDevLegacyPattern, i)
+	matches, err := filepath.Glob("/dev/ttyRPMSG_*")
+	if err != nil {
+		log.Debugf("failed to glob PTY devices: %v", err)
+		return devices
+	}
+
+	sort.Strings(matches)
+	for _, ptyPath := range matches {
 		if stat, err := os.Stat(ptyPath); err == nil {
 			if stat.Mode()&os.ModeCharDevice != 0 {
 				devices = append(devices, ptyPath)

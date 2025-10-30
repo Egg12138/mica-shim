@@ -16,6 +16,7 @@
 #include <pthread.h>
 #include <sys/time.h>
 #include <time.h>
+#include <sys/wait.h>
 
 #define SOCKET_PATH "/tmp/mica/mica-create.socket"
 #define SOCKET_DIR "/tmp/mica"
@@ -77,7 +78,12 @@ struct rtos_instance {
     bool writer_started;
     char tty_symlink[64];
     char pts_slave_path[128];
-    
+
+    /* PTY writer state */
+    int writer_state;  /* 0=init, 1=boot, 2=task, 3=done */
+    int output_counter;
+    pthread_mutex_t state_mutex;
+
     struct rtos_instance *next;
 };
 
@@ -112,8 +118,15 @@ static void *pty_writer_task(void *arg);
 struct client_entry {
 	char name[MAX_NAME_LEN];
 	char status[32];
+	pid_t shell_pid;  /* PID of the interactive shell process */
+	int shell_fd;     /* File descriptor for shell communication */
 	struct client_entry *next;
 };
+
+/* Shell management function prototypes */
+static int create_client_shell(const char *client_name);
+static void destroy_client_shell(struct client_entry *client);
+static void forward_to_client_shell(struct client_entry *client, const char *command);
 
 static volatile bool is_running = true;
 static struct listen_unit *listener_list = NULL;
@@ -308,28 +321,40 @@ static bool client_exists(const char *name)
 static void register_client(const char *name)
 {
 	struct client_entry *entry;
-	
+
 	entry = calloc(1, sizeof(*entry));
 	if (!entry)
 		return;
 
     snprintf(entry->name, sizeof(entry->name), "%s", name);
     snprintf(entry->status, sizeof(entry->status), "%s", "Created");
+    entry->shell_pid = -1;
+    entry->shell_fd = -1;
 
 	pthread_mutex_lock(&client_mutex);
 	entry->next = client_list;
 	client_list = entry;
 	pthread_mutex_unlock(&client_mutex);
+
+    /* Create an interactive shell for this client */
+    if (create_client_shell(name) == 0) {
+        set_client_status(name, "Shell Ready");
+    } else {
+        ERROR("Failed to create shell for client '%s'", name);
+    }
 }
 
 static void remove_client(const char *name)
 {
 	struct client_entry *entry, *prev = NULL;
-	
+
 	pthread_mutex_lock(&client_mutex);
 	entry = client_list;
 	while (entry) {
 		if (strncmp(entry->name, name, MAX_NAME_LEN) == 0) {
+			/* Destroy the shell for this client */
+			destroy_client_shell(entry);
+
 			if (prev)
 				prev->next = entry->next;
 			else
@@ -343,7 +368,6 @@ static void remove_client(const char *name)
 	pthread_mutex_unlock(&client_mutex);
 	if (remove_socket(name)) {
 		ERROR("Failed to remove socket for client: %s\n", name);
-
 	}
 }
 
@@ -714,19 +738,215 @@ static void *pty_writer_task(void *arg)
     struct rtos_instance *rtos = (struct rtos_instance *)arg;
     if (!rtos)
         pthread_exit(NULL);
-    const useconds_t interval_us = 200 * 1000; /* 200ms */
-    int counter = 0;
-    while (rtos->active && is_running) {
+
+    const useconds_t logo_interval_us = 100 * 1000; /* 100ms for logo display */
+    const useconds_t info_interval_us = 500 * 1000; /* 500ms = 2 lines per second */
+    const int total_runtime_seconds = 15;
+    const useconds_t total_runtime_us = total_runtime_seconds * 1000 * 1000;
+
+    time_t start_time = time(NULL);
+    useconds_t elapsed_time = 0;
+
+    pthread_mutex_lock(&rtos->state_mutex);
+    rtos->writer_state = 1;  /* Start in logo state */
+    pthread_mutex_unlock(&rtos->state_mutex);
+
+    while (rtos->active && is_running && elapsed_time < total_runtime_us) {
         if (rtos->pty_master_fd > -1) {
-            char buf[256];
-            int n = snprintf(buf, sizeof(buf), "[%s] tick=%d time=%ld\n", rtos->name, counter++, time(NULL));
-            if (n > 0) {
-                ssize_t written = write(rtos->pty_master_fd, buf, (size_t)n);
-                (void)written;
+            pthread_mutex_lock(&rtos->state_mutex);
+            int state = rtos->writer_state;
+            int counter = rtos->output_counter;
+            pthread_mutex_unlock(&rtos->state_mutex);
+
+            char buf[1024];
+            int n = 0;
+
+            if (state == 1) {  /* Logo state - display Zephyr ASCII logo */
+                n = snprintf(buf, sizeof(buf),
+                    "\r\n"
+                    "  _   _ _____ _     _____         ____  _   _  ____ _____ ____  _   _\n"
+                    " | | | | ____| \\   |  _  \\ ____  / ___|| | | |/ ___|_   _|  _ \\| | | |\n"
+                    " | |_| |  _| |  \\  | | | |/ _  \\ \\___ \\| | | | |     | | | |_) | |_| |\n"
+                    " |  _  | |___| |\\ \\ | |_| | (_) |  ___) | |_| | |___  | | |  __/|  _  |\n"
+                    " |_| |_|_____|_| \\ \\|____/ \\___/  |____/ \\___/ \\____| |_| |_|   |_| |_|\n"
+                    "                   \\_/\n"
+                    "  _                 _             _    ___ ___  ___  ___  _   _\n"
+                    " | |    ___   __ _| | ___  ___| |   |_ _| _ \\/ _ \\|   \\| \\ | |\n"
+                    " | |   / _ \\ / _` | |/ _ \\/ __| |    | ||   / (_) | |) |  \\| |\n"
+                    " | |__| (_) | (_| | |  __/ (__| |___ | ||_| \\__, |___/|_|\\_|\n"
+                    " |_____\\___/ \\__, |_|\\___|\\___|_____|___|     |___/\n"
+                    "             |___/\n"
+                    "\r\n"
+                    "Zephyr RTOS initialized successfully.\n"
+                    "Build version: v3.7.1\n"
+                    "Boot Time: %ld ms\n"
+                    "\r\n"
+                    "Initializing system resources...\n", time(NULL) % 10000);
+
+                if (n > 0) {
+                    ssize_t written = write(rtos->pty_master_fd, buf, (size_t)n);
+                    (void)written;
+                }
+
+                pthread_mutex_lock(&rtos->state_mutex);
+                rtos->writer_state = 2;  /* Move to launch info state */
+                rtos->output_counter = 0;
+                pthread_mutex_unlock(&rtos->state_mutex);
+
+                usleep(logo_interval_us);
+                continue;
+            } else if (state == 2) {  /* Launch info state - display 2 lines per second */
+                switch (counter % 30) {  /* 30 lines * 0.5s = 15 seconds */
+                    case 0:
+                        n = snprintf(buf, sizeof(buf),
+                            "[00:00:00.100][%s][INF] MCUMGR: MP correctly enabled\n", rtos->name);
+                        break;
+                    case 1:
+                        n = snprintf(buf, sizeof(buf),
+                            "[00:00:00.600][%s][INF] CPU: Running on core %u\n", rtos->name, rtos->cpu_id);
+                        break;
+                    case 2:
+                        n = snprintf(buf, sizeof(buf),
+                            "[00:00:01.100][%s][INF] Heap: 1024 KB total, 512 KB available\n", rtos->name);
+                        break;
+                    case 3:
+                        n = snprintf(buf, sizeof(buf),
+                            "[00:00:01.600][%s][INF] Stack: 4096 bytes per thread\n", rtos->name);
+                        break;
+                    case 4:
+                        n = snprintf(buf, sizeof(buf),
+                            "[00:00:02.100][%s][INF] Memory regions initialized\n", rtos->name);
+                        break;
+                    case 5:
+                        n = snprintf(buf, sizeof(buf),
+                            "[00:00:02.600][%s][INF] Device drivers loaded\n", rtos->name);
+                        break;
+                    case 6:
+                        n = snprintf(buf, sizeof(buf),
+                            "[00:00:03.100][%s][INF] Networking stack initialized\n", rtos->name);
+                        break;
+                    case 7:
+                        n = snprintf(buf, sizeof(buf),
+                            "[00:00:03.600][%s][INF] Starting application...\n", rtos->name);
+                        break;
+                    case 8:
+                        n = snprintf(buf, sizeof(buf),
+                            "[00:00:04.100][%s][INF] Initializing sensors...\n", rtos->name);
+                        break;
+                    case 9:
+                        n = snprintf(buf, sizeof(buf),
+                            "[00:00:04.600][%s][DBG] Temperature sensor: OK\n", rtos->name);
+                        break;
+                    case 10:
+                        n = snprintf(buf, sizeof(buf),
+                            "[00:00:05.100][%s][DBG] Humidity sensor: OK\n", rtos->name);
+                        break;
+                    case 11:
+                        n = snprintf(buf, sizeof(buf),
+                            "[00:00:05.600][%s][DBG] Pressure sensor: OK\n", rtos->name);
+                        break;
+                    case 12:
+                        n = snprintf(buf, sizeof(buf),
+                            "[00:00:06.100][%s][INF] Sensor monitoring started\n", rtos->name);
+                        break;
+                    case 13:
+                        n = snprintf(buf, sizeof(buf),
+                            "[00:00:06.600][%s][INF] Sample rate: 100 Hz\n", rtos->name);
+                        break;
+                    case 14:
+                        n = snprintf(buf, sizeof(buf),
+                            "[00:00:07.100][%s][INF] Buffer size: 1024 samples\n", rtos->name);
+                        break;
+                    case 15:
+                        n = snprintf(buf, sizeof(buf),
+                            "[00:00:07.600][%s][DATA] Temperature: 23.5 C\n", rtos->name);
+                        break;
+                    case 16:
+                        n = snprintf(buf, sizeof(buf),
+                            "[00:00:08.100][%s][DATA] Humidity: 45.2 %%\n", rtos->name);
+                        break;
+                    case 17:
+                        n = snprintf(buf, sizeof(buf),
+                            "[00:00:08.600][%s][DATA] Pressure: 1013.25 hPa\n", rtos->name);
+                        break;
+                    case 18:
+                        n = snprintf(buf, sizeof(buf),
+                            "[00:00:09.100][%s][DATA] Temperature: 23.6 C\n", rtos->name);
+                        break;
+                    case 19:
+                        n = snprintf(buf, sizeof(buf),
+                            "[00:00:09.600][%s][DATA] Humidity: 45.3 %%\n", rtos->name);
+                        break;
+                    case 20:
+                        n = snprintf(buf, sizeof(buf),
+                            "[00:00:10.100][%s][DATA] Pressure: 1013.20 hPa\n", rtos->name);
+                        break;
+                    case 21:
+                        n = snprintf(buf, sizeof(buf),
+                            "[00:00:10.600][%s][DATA] Temperature: 23.7 C\n", rtos->name);
+                        break;
+                    case 22:
+                        n = snprintf(buf, sizeof(buf),
+                            "[00:00:11.100][%s][DATA] Humidity: 45.4 %%\n", rtos->name);
+                        break;
+                    case 23:
+                        n = snprintf(buf, sizeof(buf),
+                            "[00:00:11.600][%s][DATA] Pressure: 1013.18 hPa\n", rtos->name);
+                        break;
+                    case 24:
+                        n = snprintf(buf, sizeof(buf),
+                            "[00:00:12.100][%s][DATA] Temperature: 23.6 C\n", rtos->name);
+                        break;
+                    case 25:
+                        n = snprintf(buf, sizeof(buf),
+                            "[00:00:12.600][%s][DATA] Humidity: 45.5 %%\n", rtos->name);
+                        break;
+                    case 26:
+                        n = snprintf(buf, sizeof(buf),
+                            "[00:00:13.100][%s][DATA] Pressure: 1013.22 hPa\n", rtos->name);
+                        break;
+                    case 27:
+                        n = snprintf(buf, sizeof(buf),
+                            "[00:00:13.600][%s][INF] Task completed successfully\n", rtos->name);
+                        break;
+                    case 28:
+                        n = snprintf(buf, sizeof(buf),
+                            "[00:00:14.100][%s][INF] Total samples: 500\n", rtos->name);
+                        break;
+                    case 29:
+                        n = snprintf(buf, sizeof(buf),
+                            "[00:00:14.600][%s][INF] Application finished\n", rtos->name);
+                        pthread_mutex_lock(&rtos->state_mutex);
+                        rtos->writer_state = 3;  /* Move to done state */
+                        pthread_mutex_unlock(&rtos->state_mutex);
+                        break;
+                    default:
+                        n = 0;
+                        break;
+                }
+
+                if (n > 0) {
+                    ssize_t written = write(rtos->pty_master_fd, buf, (size_t)n);
+                    (void)written;
+                }
+
+                pthread_mutex_lock(&rtos->state_mutex);
+                rtos->output_counter++;
+                pthread_mutex_unlock(&rtos->state_mutex);
+
+                usleep(info_interval_us);
+                continue;
+            } else if (state == 3) {  /* Done state - stop output */
+                break;
             }
         }
-        usleep(interval_us);
+
+        elapsed_time = (time(NULL) - start_time) * 1000 * 1000;
     }
+
+    /* Close PTY after 15 seconds */
+    INFO("PTY simulation completed after %d seconds, closing connection", total_runtime_seconds);
+
     pthread_exit(NULL);
 }
 
@@ -739,6 +959,7 @@ static void free_rtos_instance(struct rtos_instance *rtos)
         pthread_join(rtos->pty_writer_thread, NULL);
         rtos->writer_started = false;
     }
+    pthread_mutex_destroy(&rtos->state_mutex);
     remove_tty_device(rtos);
     free(rtos);
 }
@@ -753,7 +974,7 @@ static int create_rtos_instance(const char *name, uint32_t cpu_id)
 		printf("RTOS instance '%s' already exists\n", name);
 		return 0;
 	}
-	
+
 	/* Allocate new instance */
 	rtos = calloc(1, sizeof(*rtos));
 	if (!rtos) {
@@ -766,9 +987,13 @@ static int create_rtos_instance(const char *name, uint32_t cpu_id)
 	snprintf(rtos->name, sizeof(rtos->name), "%s", name);
 	rtos->cpu_id = cpu_id;
 	rtos->active = true;
+	rtos->writer_state = 0;  /* Start in init state */
+	rtos->output_counter = 0;
+	pthread_mutex_init(&rtos->state_mutex, NULL);
 
 	/* Create PTY device for console */
 	if (create_tty_device(rtos, name) != 0) {
+		pthread_mutex_destroy(&rtos->state_mutex);
 		free(rtos);
 		return -1;
 	}
@@ -776,7 +1001,9 @@ static int create_rtos_instance(const char *name, uint32_t cpu_id)
 	/* Start PTY writer thread */
 	if (pthread_create(&rtos->pty_writer_thread, NULL, pty_writer_task, rtos) != 0) {
 		perror("Failed to create PTY writer thread");
-		free_rtos_instance(rtos);
+		pthread_mutex_destroy(&rtos->state_mutex);
+		remove_tty_device(rtos);
+		free(rtos);
 		return -1;
 	}
 	rtos->writer_started = true;
@@ -787,7 +1014,7 @@ static int create_rtos_instance(const char *name, uint32_t cpu_id)
 	rtos_instances = rtos;
 	pthread_mutex_unlock(&rtos_mutex);
 
-	printf("RTOS instance '%s' created successfully (ID=%d, CPU=%u)\n", 
+	printf("RTOS instance '%s' created successfully (ID=%d, CPU=%u)\n",
 	       name, rtos->instance_id, cpu_id);
 	return 0;
 }
@@ -885,6 +1112,8 @@ static void cleanup_listeners(void)
 	while (client) {
 		client_next = client->next;
 		INFO("Cleaning up client: %s (status: %s)", client->name, client->status[0] ? client->status : "Unknown");
+		/* Destroy the shell for this client */
+		destroy_client_shell(client);
 		/* Remove client socket for each client */
 		remove_socket(client->name);
 		free(client);
@@ -924,42 +1153,29 @@ static void handle_client_ctrl(int client_fd, struct listen_unit *unit)
 	buffer[bytes_received] = '\0';
 	printf("Received control command for client '%s': %s\n", client_name, buffer);
 
-    /* Handle different control commands with state checks */
-    int success = 0; /* 1=ok, 0=fail */
-    if (strncmp(buffer, "start", 5) == 0) {
-        INFO("Starting client: %s\n", client_name);
-        struct client_entry *e;
-        pthread_mutex_lock(&client_mutex);
-        e = client_list;
-        while (e && strncmp(e->name, client_name, MAX_NAME_LEN) != 0) e = e->next;
-        if (e && strcasecmp(e->status, "Running") == 0) {
-            ERROR("Cannot start client '%s' - already Running", client_name);
-            success = 0;
-        } else if (e) {
-            snprintf(e->status, sizeof(e->status), "%s", "Running");
-            success = 1;
+    /* Find the client entry */
+    struct client_entry *client;
+    pthread_mutex_lock(&client_mutex);
+    client = client_list;
+    while (client && strncmp(client->name, client_name, MAX_NAME_LEN) != 0) {
+        client = client->next;
+    }
+    pthread_mutex_unlock(&client_mutex);
+
+    if (!client) {
+        ERROR("Client '%s' not found", client_name);
+        if (send_response) {
+            respond_with_status(client_fd, RESPONSE_FAILED);
+        } else {
+            respond_with_status(-1, NULL);
         }
-        pthread_mutex_unlock(&client_mutex);
-    } else if (strncmp(buffer, "stop", 4) == 0) {
-        INFO("Stopping client: %s\n", client_name);
-        struct client_entry *e;
-        pthread_mutex_lock(&client_mutex);
-        e = client_list;
-        while (e && strncmp(e->name, client_name, MAX_NAME_LEN) != 0) e = e->next;
-        if (e) {
-            if (strcasecmp(e->status, "Created") == 0) {
-                INFO("Should not stop client '%s' - status is 'Created', must be 'Running' or 'Stopped'", client_name);
-                success = 0;
-            } else {
-                snprintf(e->status, sizeof(e->status), "%s", "Stopped");
-                success = 1;
-            }
-        }
-        pthread_mutex_unlock(&client_mutex);
-    } else if (strncmp(buffer, "status", 6) == 0) {
-        INFO("Getting status for client: %s\n", client_name);
-        success = 1;
-    } else if (strncmp(buffer, "rm", 2) == 0) {
+        printf(">>");
+        return;
+    }
+
+    /* Handle different control commands */
+    int success = 0;
+    if (strncmp(buffer, "rm", 2) == 0) {
         INFO("Removing client: %s\n", client_name);
         /* Remove RTOS instance */
         destroy_rtos_instance(client_name);
@@ -967,8 +1183,10 @@ static void handle_client_ctrl(int client_fd, struct listen_unit *unit)
         remove_client(client_name);
         success = 1;
     } else {
-        INFO("Unknown command for client '%s': %s\n", client_name, buffer);
-        success = 0;
+        /* Forward all other commands to the client shell */
+        INFO("Forwarding command '%s' to shell for client '%s'", buffer, client_name);
+        forward_to_client_shell(client, buffer);
+        success = 1;
     }
 
     if (send_response) {
@@ -1139,6 +1357,165 @@ static void handle_client(int client_fd)
 }
 #endif
 
+/* Shell management functions */
+
+static int create_client_shell(const char *client_name)
+{
+    int sv[2];  /* socketpair for communication */
+    pid_t pid;
+
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0) {
+        perror("socketpair failed");
+        return -1;
+    }
+
+    pid = fork();
+    if (pid < 0) {
+        perror("fork failed");
+        close(sv[0]);
+        close(sv[1]);
+        return -1;
+    }
+
+    if (pid == 0) {  /* Child process - the shell */
+        close(sv[0]);  /* Close parent end */
+
+        /* Redirect stdin, stdout, stderr to the socket */
+        dup2(sv[1], STDIN_FILENO);
+        dup2(sv[1], STDOUT_FILENO);
+        dup2(sv[1], STDERR_FILENO);
+        close(sv[1]);
+
+        /* Execute the client shell */
+        char *args[] = {"./client_shell", NULL};
+        execve("./client_shell", args, NULL);
+
+        /* If we get here, exec failed */
+        perror("exec client_shell failed");
+        exit(EXIT_FAILURE);
+    } else {  /* Parent process - mock_micad */
+        close(sv[1]);  /* Close child end */
+
+        /* Store the shell PID and fd in the client entry */
+        struct client_entry *client;
+        pthread_mutex_lock(&client_mutex);
+        client = client_list;
+        while (client) {
+            if (strncmp(client->name, client_name, MAX_NAME_LEN) == 0) {
+                client->shell_pid = pid;
+                client->shell_fd = sv[0];
+                INFO("Created shell for client '%s' (PID=%d, fd=%d)", client_name, pid, sv[0]);
+                pthread_mutex_unlock(&client_mutex);
+                return 0;
+            }
+            client = client->next;
+        }
+        pthread_mutex_unlock(&client_mutex);
+
+        /* Client not found - cleanup */
+        close(sv[0]);
+        kill(pid, SIGTERM);
+        return -1;
+    }
+}
+
+static void destroy_client_shell(struct client_entry *client)
+{
+    if (!client) return;
+
+    if (client->shell_pid > 0) {
+        INFO("Terminating shell for client '%s' (PID=%d)", client->name, client->shell_pid);
+        kill(client->shell_pid, SIGTERM);
+
+        /* Wait with timeout - try to wait for up to 3 seconds */
+        int timeout_ms = 3000;
+        int wait_time_ms = 100;
+        int total_waited_ms = 0;
+        int status;
+        pid_t ret;
+
+        while (total_waited_ms < timeout_ms) {
+            ret = waitpid(client->shell_pid, &status, WNOHANG);
+            if (ret == client->shell_pid) {
+                /* Child has terminated */
+                INFO("Shell for client '%s' terminated gracefully", client->name);
+                break;
+            } else if (ret == -1) {
+                /* Error or child doesn't exist */
+                INFO("Shell for client '%s' already terminated or error occurred", client->name);
+                break;
+            }
+            /* Child still running, wait a bit more */
+            usleep(wait_time_ms * 1000);
+            total_waited_ms += wait_time_ms;
+        }
+
+        /* If timeout reached, force kill */
+        if (total_waited_ms >= timeout_ms) {
+            INFO("Shell for client '%s' didn't terminate gracefully, sending SIGKILL", client->name);
+            kill(client->shell_pid, SIGKILL);
+            /* Final wait without timeout to reap the zombie */
+            waitpid(client->shell_pid, NULL, 0);
+        }
+
+        client->shell_pid = -1;
+    }
+
+    if (client->shell_fd >= 0) {
+        close(client->shell_fd);
+        client->shell_fd = -1;
+    }
+}
+
+static void forward_to_client_shell(struct client_entry *client, const char *command)
+{
+    if (!client || !command) return;
+
+    if (client->shell_fd < 0) {
+        ERROR("No shell available for client '%s'", client->name);
+        return;
+    }
+
+    /* Send command to shell */
+    ssize_t len = strlen(command);
+    if (write(client->shell_fd, command, len) != len) {
+        ERROR("Failed to send command to shell for client '%s'", client->name);
+        return;
+    }
+
+    /* Send newline if not already present */
+    if (command[len-1] != '\n') {
+        if (write(client->shell_fd, "\n", 1) != 1) {
+            ERROR("Failed to send newline to shell for client '%s'", client->name);
+            return;
+        }
+    }
+
+    /* Read response from shell and send it back to the client */
+    char response_buffer[BUFFER_SIZE];
+    ssize_t bytes_read;
+
+    /* Give the shell a moment to respond */
+    usleep(100000);  /* 100ms */
+
+    /* Try to read response (non-blocking) */
+    int flags = fcntl(client->shell_fd, F_GETFL, 0);
+    fcntl(client->shell_fd, F_SETFL, flags | O_NONBLOCK);
+
+    bytes_read = read(client->shell_fd, response_buffer, sizeof(response_buffer) - 1);
+    if (bytes_read > 0) {
+        response_buffer[bytes_read] = '\0';
+        INFO("Shell response for client '%s': %s", client->name, response_buffer);
+    } else if (bytes_read == 0) {
+        INFO("Shell for client '%s' closed connection", client->name);
+    } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
+        ERROR("Error reading from shell for client '%s': %s", client->name, strerror(errno));
+    }
+
+    /* Restore blocking mode */
+    fcntl(client->shell_fd, F_SETFL, flags);
+}
+
 int main(int argc, char *argv[])
 {
 	pthread_t thread;
@@ -1175,6 +1552,7 @@ int main(int argc, char *argv[])
 	printf("Mock micad started. Listening on %s\n", SOCKET_PATH);
 	printf("Press Ctrl+C to stop\n");
 	printf("Response mode: %s\n", send_response ? "enabled" : "disabled");
+	fflush(stdout);
 
 	while (is_running) {
 		sleep(1);

@@ -31,20 +31,24 @@ func main() {
 		createSock  string
 		forceCreate bool
 		timeout     time.Duration
+		tail        bool
 	)
 
 	flag.StringVar(&containerID, "id", "", "Container ID (long or short). Required for control commands and PTY tailing.")
 	flag.StringVar(&socketDir, "socket-dir", defaultSocketDir, "Directory containing per-client control sockets.")
 	flag.StringVar(&createSock, "create-socket", defaultCreateSocket, "mica-create control socket path (mock mode fallback).")
 	flag.BoolVar(&forceCreate, "create", false, "Send control commands via mica-create socket instead of per-client sockets.")
+	flag.BoolVar(&tail, "t", false, "Enable PTY tailing mode for 'start' command (equivalent to 'tail' after start)")
 	flag.DurationVar(&timeout, "timeout", defaultTimeout, "Socket read/write timeout.")
     flag.Usage = func() {
         fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [flags] <command>\n", os.Args[0])
-        fmt.Fprintln(flag.CommandLine.Output(), "Commands: create | start | stop | status | rm | tail")
+        fmt.Fprintln(flag.CommandLine.Output(), "Commands: create | start | stop | status | remove | rm | tail")
         fmt.Fprintln(flag.CommandLine.Output(), "Examples:")
         fmt.Fprintf(flag.CommandLine.Output(), "  %s --id codex-test create\n", os.Args[0])
         fmt.Fprintf(flag.CommandLine.Output(), "  %s --id codex-test start\n", os.Args[0])
+        fmt.Fprintf(flag.CommandLine.Output(), "  %s -t --id codex-test start  # Start and tail PTY output\n", os.Args[0])
         fmt.Fprintf(flag.CommandLine.Output(), "  %s --id codex-test status\n", os.Args[0])
+        fmt.Fprintf(flag.CommandLine.Output(), "  %s --id codex-test remove\n", os.Args[0])
         fmt.Fprintf(flag.CommandLine.Output(), "  %s --id codex-test tail\n", os.Args[0])
         fmt.Fprintln(flag.CommandLine.Output())
         flag.PrintDefaults()
@@ -63,7 +67,7 @@ func main() {
 		os.Exit(2)
 	}
 
-    if command != "tail" && command != "start" && command != "stop" && command != "status" && command != "rm" && command != "create" {
+    if command != "tail" && command != "start" && command != "stop" && command != "status" && command != "rm" && command != "remove" && command != "create" {
         fmt.Fprintf(os.Stderr, "unknown command: %s\n", command)
         os.Exit(2)
     }
@@ -71,14 +75,14 @@ func main() {
 	shortID := truncateID(containerID)
 
 	switch command {
-	case "tail":
-		ptyPath := ptyPrefix + shortID
-		fmt.Printf(">>> tailing PTY %s (press Ctrl+C to stop)\n", ptyPath)
-		if err := tailPTY(ptyPath); err != nil && !errors.Is(err, os.ErrClosed) {
-			fmt.Fprintf(os.Stderr, "tail error: %v\n", err)
-			os.Exit(1)
-		}
-		return
+		case "tail":
+			ptyPath := ptyPrefix + shortID
+			fmt.Printf(">>> tailing PTY %s (press Ctrl+C to stop)\n", ptyPath)
+			if err := tailPTY(ptyPath); err != nil && !errors.Is(err, os.ErrClosed) {
+				fmt.Fprintf(os.Stderr, "tail error: %v\n", err)
+				os.Exit(1)
+			}
+			return
     case "create":
         if containerID == "" {
             fmt.Fprintln(os.Stderr, "--id is required for create")
@@ -91,6 +95,41 @@ func main() {
         }
         fmt.Printf("[create] %s OK\n", createSock)
         return
+    case "start":
+        if containerID == "" {
+            fmt.Fprintln(os.Stderr, "--id is required for start")
+            os.Exit(2)
+        }
+        path := commandSocketPath(shortID, socketDir, createSock, forceCreate)
+        sentPath := path
+        if err := sendCommand(path, command, timeout); err != nil {
+            if !forceCreate && path != createSock {
+                fmt.Fprintf(os.Stderr, "command via %s failed (%v), retrying via %s\n", path, err, createSock)
+                if err2 := sendCommand(createSock, command, timeout); err2 != nil {
+                    fmt.Fprintf(os.Stderr, "command via %s failed: %v\n", createSock, err2)
+                    os.Exit(1)
+                }
+                sentPath = createSock
+            } else {
+                fmt.Fprintf(os.Stderr, "command via %s failed: %v\n", path, err)
+                os.Exit(1)
+            }
+        }
+        fmt.Printf("[%s] %s OK\n", command, sentPath)
+
+        // If -t flag is set, start PTY tailing
+        if tail {
+            ptyPath := ptyPrefix + shortID
+            fmt.Printf(">>> Starting PTY monitor for %s (press Ctrl+C to stop)\n", ptyPath)
+            if err := tailPTY(ptyPath); err != nil && !errors.Is(err, os.ErrClosed) {
+                fmt.Fprintf(os.Stderr, "tail error: %v\n", err)
+                os.Exit(1)
+            }
+        }
+        return
+    case "remove":
+        // Convert "remove" to "rm" for the actual command
+        command = "rm"
     default:
         if containerID == "" {
             fmt.Fprintln(os.Stderr, "--id is required for control commands")
