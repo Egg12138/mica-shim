@@ -43,6 +43,44 @@ type container struct {
 	terminal    bool
 	mounted     bool
 	pid         uint32
+	execs       map[string]*execProcess
+}
+
+type execProcess struct {
+	id         string
+	pid        uint32
+	// we use contaienrd shim task status to represent process status
+	status     task.Status
+	exitStatus uint32
+	exitTime   time.Time
+	waitCh     chan struct{}
+	waitOnce   sync.Once
+}
+
+func newExecProcess(id string) *execProcess {
+	return &execProcess{
+		id:     id,
+		status: task.Status_CREATED,
+		waitCh: make(chan struct{}),
+	}
+}
+
+func (p *execProcess) markStarted(pid uint32) {
+	p.pid = pid
+	p.status = task.Status_RUNNING
+}
+
+func (p *execProcess) markExited(exitStatus uint32) (changed bool) {
+	if p.status != task.Status_STOPPED {
+		p.status = task.Status_STOPPED
+		p.exitStatus = exitStatus
+		p.exitTime = time.Now()
+		changed = true
+	}
+	p.waitOnce.Do(func() {
+		close(p.waitCh)
+	})
+	return changed
 }
 
 // newContainer creates a new container object for the shim.
@@ -71,6 +109,7 @@ func newContainer(s *shimService, r *taskAPI.CreateTaskRequest, cType cntr.Conta
 		terminal:    r.Terminal,
 		mounted:     mounted,
 		pid:         shimPid,
+		execs:       make(map[string]*execProcess),
 	}
 
 	return c, nil
@@ -381,6 +420,9 @@ func waitContainerExit(ctx context.Context, s *shimService, c *container) (int32
 	c.status = task.Status_STOPPED
 	c.exit = uint32(ret)
 	c.exitTime = timeStamp
+	for _, exec := range c.execs {
+		exec.markExited(uint32(ret))
+	}
 
 	c.exitCh <- uint32(ret)
 	log.Debugf("The container %s status is StatusStopped.", c.id)
