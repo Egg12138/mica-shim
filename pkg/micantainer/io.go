@@ -11,6 +11,7 @@ import (
 	er "mica-shim/errors"
 	log "mica-shim/logger"
 	"mica-shim/pkg/libmica"
+	ped "mica-shim/pkg/pedestal"
 	utils "mica-shim/pkg/utils"
 )
 
@@ -60,7 +61,7 @@ func (s *iostream) ensureDevice() error {
 		return nil
 	}
 	// Highest priority: explicit override for debugging/testing.
-	if override := os.Getenv("MICRAN_PTY_DEVICE"); override != "" {
+	if override := os.Getenv("MICRAN_DEBUG_PTY_DEVICE"); override != "" {
 		f, err := os.OpenFile(override, os.O_RDWR, 0)
 		if err == nil {
 			s.pty = f
@@ -75,6 +76,15 @@ func (s *iostream) ensureDevice() error {
 
 	if shortID == "" {
 		return er.EmptyContainerID
+	}
+
+	if defs.WorkaroundPty {
+		f, err := openConsolePTYFallback(s.container.id)
+		if err != nil {
+			return fmt.Errorf("console PTY fallback failed for %s: %w", shortID, err)
+		}
+		s.pty = f
+		return nil
 	}
 
 	// Prefer client-name based symlink provided by micad (ttyRPMSG_<name> -> /dev/pts/N).
@@ -93,21 +103,7 @@ func (s *iostream) ensureDevice() error {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-    // Legacy numeric discovery ONLY in mock mode
-    if defs.IsMock {
-        deadline := time.Now().Add(2 * time.Second)
-        for time.Now().Before(deadline) {
-            for i := range libmica.MaxPTYDevLegacyNum {
-                path := fmt.Sprintf(libmica.PTYDevLegacyPattern, i)
-                if f, err := os.OpenFile(path, os.O_RDWR, 0); err == nil {
-                    s.pty = f
-                    return nil
-                }
-            }
-            time.Sleep(100 * time.Millisecond)
-        }
-    }
-    return fmt.Errorf("pty device not found for client %s", s.container.id)
+	return fmt.Errorf("pty device not found for client %s", s.container.id)
 }
 
 func (s *iostream) stdin() io.WriteCloser {
@@ -177,4 +173,17 @@ func (s *stderrStream) Read(data []byte) (n int, err error) {
 
 	// same as stdout for now
 	return (&stdoutStream{s.iostream}).Read(data)
+}
+
+func openConsolePTYFallback(containerID string) (*os.File, error) {
+	path, err := ped.ConsolePTYPathForDomain(containerID)
+	if err != nil {
+		return nil, err
+	}
+
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		return nil, fmt.Errorf("opening console PTY %s: %w", path, err)
+	}
+	return f, nil
 }
