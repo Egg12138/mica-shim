@@ -1,6 +1,3 @@
-//go:build !debug
-// +build !debug
-
 package defs
 
 import "os"
@@ -15,7 +12,7 @@ const (
 )
 
 const (
-	DefaultMicranStateDir       = "/run/micran"
+	MicranContainerStateDir       = "/run/micran"
 	DefaultMicaContainersRoot   = "/run/micran/containers"
 	MicantainerStateFile = "state.json"
 	SandboxStateFile     = "state.json"

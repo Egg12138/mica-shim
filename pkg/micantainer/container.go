@@ -476,11 +476,6 @@ func (c *Container) kill() error {
 		return err
 	}
 	log.Debugf("Container state is %s.", currentState)
-	if currentState != StateRunning &&
-		currentState != StateReady &&
-		currentState != StatePaused {
-		return fmt.Errorf("container is not running, ready or paused, can not be killed")
-	}
 
 	if err := c.doStop(true); err != nil {
 		log.Debugf("+++++ failed to stop contaienr %s", c.id)
@@ -894,7 +889,7 @@ func (c *Container) SaveState() error {
 		cwd = "."
 	}
 	stateInBundle := filepath.Join(cwd, c.containerPath, defs.MicantainerStateFile)
-	stateInMicranDir := filepath.Join(defs.DefaultMicranStateDir, c.containerPath, defs.MicantainerStateFile)
+	stateInMicranDir := filepath.Join(defs.MicranContainerStateDir, c.containerPath, defs.MicantainerStateFile)
 	log.Infof("stateInBundle: %s", stateInBundle)
 
 	bundleDir := filepath.Dir(stateInBundle)
@@ -935,7 +930,7 @@ func (c *Container) RestoreState() error {
 
 	var storage ContainerStorage
 
-	stateInMicranDir := filepath.Join(defs.DefaultMicranStateDir, c.id, defs.MicantainerStateFile)
+	stateInMicranDir := filepath.Join(defs.MicranContainerStateDir, c.id, defs.MicantainerStateFile)
 	raw, err := utils.RestoreStructFromJSON(stateInMicranDir)
 
 	if err != nil {

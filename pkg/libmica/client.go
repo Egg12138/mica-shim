@@ -68,7 +68,7 @@ const (
 
 type MicaExecutor struct {
 	records MicaClientConf
-	Id string
+	Id      string
 }
 
 // Structs and Methods
@@ -103,7 +103,7 @@ func (ms MicaStatus) IsStopped() bool {
 func (ms MicaStatus) hasService(service MicaService) bool {
 	for _, s := range ms.Services {
 		if s == service {
-			return true
+			return s == service
 		}
 	}
 	return false
@@ -135,36 +135,34 @@ type MicaClientConfCreateOptions struct {
 	MaxVCPUs    int
 	CPUWeight   int
 	CPUCapacity int
-	// TODO: add maxmem
 	MemoryMB    int
-	MaxMemMB   	int
+	MaxMemMB    int
 	Network     string
 }
 
 // This is the conf struct mica daemon will see
-// New struct based on mica daemon msg definition:
-// #define MAX_NAME_LEN			32
-// #define MAX_FIRMWARE_PATH_LEN	128
-// #define MAX_CPUSTR_LEN			128
-// #define MAX_NETWORK_LEN		512
-// struct create msg {
-// /* required configs */
-// char name[MAX NAME LEN];
-// char path[MAX FIRMWARE PATH LEN];
-// /*optional configs for MICA*/
-// char ped[MAX NAME LEN];
-// char ped cfgIMAX FIRMWARE PATH LEN];
-// bool debug;
-// /*optional configs for pedestal */
-// char cpu str[MAX CPUSTR LEN];
-// int vcpu num;
-// int maxvcpus num;
-// int cpu weight;
-// int cpu capacity;
-// int memory; // in MB
-// int maxmem; // in MB
-// char network[MAX NETWORK LEN];
-// };
+// Layout mirrors mica daemon's struct create_msg definition:
+// #define MAX_NAME_LEN         32
+// #define MAX_FIRMWARE_PATH_LEN 128
+// #define MAX_CPUSTR_LEN       128
+// #define MAX_NETWORK_LEN      512
+//
+//	struct create_msg {
+//		/* required configs */
+//		char name[MAX_NAME_LEN];
+//		char path[MAX_FIRMWARE_PATH_LEN];
+//		/* optional configs for MICA*/
+//		char ped[MAX_NAME_LEN];
+//		char ped_cfg[MAX_FIRMWARE_PATH_LEN];
+//		bool debug;
+//		/* optional configs for pedestal */
+//		char cpu_str[MAX_CPUSTR_LEN];
+//		int vcpu_num;            // 4
+//		int cpu_weight;          // 4
+//		int cpu_capacity;        // 4
+//		int memory;              // 4
+//		char network[MAX_NETWORK_LEN]; // 512
+//	};
 type MicaClientConf struct {
 	// name is container ID, assigned by containerd.
 	name [MaxNameLen]byte
@@ -184,13 +182,10 @@ type MicaClientConf struct {
 	cpuWeight int
 	// cpuCapacity is the capacity of cpu
 	cpuCapacity int
-    // memoryMB size in MiB
-    memoryMB int
-    // maxMemMB is the upper bound memory in MiB.
-    // MARKER: Added to support maxmem transmission in create message.
-    maxMemMB int
-    // network config
-    network [MaxNetworkLen]byte
+	// memoryMB size in MiB
+	memoryMB int
+	// network config
+	network [MaxNetworkLen]byte
 }
 
 // dummyCPUArr is a dummy CPU array for testing, always [1,4,5]
@@ -198,39 +193,18 @@ func dummyCPUArr() []int {
 	return []int{1, 4, 5}
 }
 
-
-// Deprecated: Use InitWithOpts instead for new implementations.
-func (m *MicaClientConf) MockInit(cpu uint32, name string, path string, ped string, pedCfg string, debug bool) {
-	name = utils.ShortID(name)
-	copy(m.name[:], name)
-	copy(m.path[:], path)
-	copy(m.ped[:], ped)
-	copy(m.pedcfg[:], pedCfg)
-	m.debug = debug
-
-	// Set default values for new fields
-	// Use dummy CPU array and convert to string
-	cpuStr := pedestal.ParseCPUArr(dummyCPUArr())
-	copy(m.cpuStr[:], cpuStr)
-
-	m.vcpuNum = 0
-	m.cpuWeight = 0
-	m.cpuCapacity = 0
-	m.memoryMB = 0
-
-	// Clear network field
-	for i := range m.network {
-		m.network[i] = 0
-	}
-}
-
 // InitWithOpts initializes MicaClientConf with the new options struct
 func (m *MicaClientConf) InitWithOpts(opts MicaClientConfCreateOptions) {
+	*m = MicaClientConf{}
 	name := utils.ShortID(opts.Name)
 	copy(m.name[:], name)
+
 	copy(m.path[:], opts.Path)
+
 	copy(m.ped[:], opts.Ped)
+
 	copy(m.pedcfg[:], opts.PedCfg)
+
 	m.debug = opts.Debug
 
 	// Convert CPU array to string
@@ -242,16 +216,22 @@ func (m *MicaClientConf) InitWithOpts(opts MicaClientConfCreateOptions) {
 	m.vcpuNum = opts.VCPUs
 	m.cpuWeight = opts.CPUWeight
 	m.cpuCapacity = opts.CPUCapacity
-    m.memoryMB = opts.MemoryMB
-    m.maxMemMB = opts.MaxMemMB
-    copy(m.network[:], opts.Network)
+	m.memoryMB = opts.MemoryMB
+
+	copy(m.network[:], opts.Network)
+
+	if opts.MaxMemMB != 0 {
+		log.Debugf("MaxMemMB provided but not yet sent to micad: %d", opts.MaxMemMB)
+	}
 }
 
 func (m *MicaClientConf) pack() []byte {
-    // Calculate total buffer size:
-    // name[32] + path[128] + ped[32] + pedcfg[128] + debug(1) + cpuStr[128] +
-    // vcpuNum(4) + cpuWeight(4) + cpuCapacity(4) + memory(4) + maxmem(4) + network[512]
-    buf := make([]byte, MaxNameLen+MaxFirmwarePathLen+MaxNameLen+MaxFirmwarePathLen+1+MaxCPUStringLen+4+4+4+4+4+MaxNetworkLen)
+	const paddingAfterCPUString = 3
+
+	// Calculate total buffer size:
+	// name[32] + path[128] + ped[32] + pedcfg[128] + debug(1) + cpuStr[128] +
+	// padding(3) + vcpuNum(4) + cpuWeight(4) + cpuCapacity(4) + memory(4) + network[512]
+	buf := make([]byte, MaxNameLen+MaxFirmwarePathLen+MaxNameLen+MaxFirmwarePathLen+1+MaxCPUStringLen+paddingAfterCPUString+4+4+4+4+MaxNetworkLen)
 
 	offset := 0
 	copy(buf[offset:offset+MaxNameLen], m.name[:])
@@ -272,17 +252,19 @@ func (m *MicaClientConf) pack() []byte {
 
 	copy(buf[offset:offset+MaxCPUStringLen], m.cpuStr[:])
 	offset += MaxCPUStringLen
+
+	// The C struct naturally inserts 3 padding bytes after cpu_str to align int fields.
+	offset += paddingAfterCPUString
+
 	binary.LittleEndian.PutUint32(buf[offset:], uint32(m.vcpuNum))
 	offset += 4
 	binary.LittleEndian.PutUint32(buf[offset:], uint32(m.cpuWeight))
 	offset += 4
 	binary.LittleEndian.PutUint32(buf[offset:], uint32(m.cpuCapacity))
 	offset += 4
-    binary.LittleEndian.PutUint32(buf[offset:], uint32(m.memoryMB))
-    offset += 4
-    binary.LittleEndian.PutUint32(buf[offset:], uint32(m.maxMemMB))
-    offset += 4
-    copy(buf[offset:offset+MaxNetworkLen], m.network[:])
+	binary.LittleEndian.PutUint32(buf[offset:], uint32(m.memoryMB))
+	offset += 4
+	copy(buf[offset:offset+MaxNetworkLen], m.network[:])
 
 	return buf
 }
@@ -307,10 +289,10 @@ func NewMicaCreateMsg(cpu uint32, name string, path string, ped string, pedCfg s
 		Ped:         ped,
 		PedCfg:      pedCfg,
 		Debug:       debug,
-		VCPUs:        0,
+		VCPUs:       0,
 		CPUWeight:   0,
 		CPUCapacity: 0,
-		MemoryMB:      0,
+		MemoryMB:    0,
 		Network:     "",
 	}
 	msg.InitWithOpts(opts)
@@ -342,7 +324,7 @@ func CreateMicaClient(conf MicaClientConf) error {
 }
 
 // TODO: consider better way to parse variable parameters
-func micaCtl(cmd MicaCommand, rawId string, opts... string) error {
+func micaCtl(cmd MicaCommand, rawId string, opts ...string) error {
 	if !validSocketPath(defs.MicaCreatSocketPath) {
 		return er.MicadNotRunning
 	}
@@ -368,7 +350,7 @@ func Start(id string) error {
 }
 
 // TODO: Extend mica response data, loading more information
-// TODO: if client.socket does not exist, return nil; the logic is in dangerous, 
+// TODO: if client.socket does not exist, return nil; the logic is in dangerous,
 // we have to make sure that client os is down really
 func Stop(id string) error {
 	if ClientNotExist(id) {
@@ -383,7 +365,7 @@ func Stop(id string) error {
 // TODO: might passthrough mica, directly to ped?
 func Pause(id string) error {
 	if pedestal.GetHostPed() == pedestal.Xen {
-		return pedestal.Pause(utils.ShortID(id))	
+		return pedestal.Pause(utils.ShortID(id))
 	} else {
 		if err := micaCtl(MPause, id); err != nil {
 			return fmt.Errorf("failed to pause mica client %s %w", id, err)
@@ -395,7 +377,7 @@ func Pause(id string) error {
 // TODO: mica may not support, we handle this via ped directly
 func Resume(id string) error {
 	if pedestal.GetHostPed() == pedestal.Xen {
-		return pedestal.Resume(utils.ShortID(id))	
+		return pedestal.Resume(utils.ShortID(id))
 	} else {
 		if err := micaCtl(MResume, id); err != nil {
 			return fmt.Errorf("failed to pause mica client %s %w", id, err)

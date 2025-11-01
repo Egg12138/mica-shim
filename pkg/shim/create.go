@@ -223,7 +223,7 @@ func loadConfigFromFile(configPath string) (*oci.RuntimeConfig, error) {
 
 // setupMicranStateDir ensures the state directory for micran exists.
 func setupMicranStateDir() error {
-	if err := os.MkdirAll(defs.DefaultMicranStateDir, 0755); err != nil {
+	if err := os.MkdirAll(defs.MicranContainerStateDir, 0755); err != nil {
 		return fmt.Errorf("failed to create micran state directory: %w", err)
 	}
 	return nil
