@@ -330,10 +330,6 @@ func (s *Sandbox) Stop(ctx context.Context, force bool) error {
 		return err
 	}
 
-	if err := s.removeNetwork(); err != nil && !force {
-		return err
-	}
-
 	if err := s.StoreSandbox(ctx); err != nil {
 		return err
 	}
@@ -641,6 +637,21 @@ func (s *Sandbox) WaitContainerExit(ctx context.Context, containerID string) (in
 
 	log.Infof("WaitContainerExit: container=%s ", containerID)
 
+	if c.config != nil && c.config.IsInfra {
+		if c.helperExitCh == nil {
+			return ok0, nil
+		}
+		select {
+		case <-ctx.Done():
+			return ok0, ctx.Err()
+		case result, ok := <-c.helperExitCh:
+			if !ok {
+				return ok0, nil
+			}
+			return int32(result.code), result.err
+		}
+	}
+
 	if c.exitNotifier == nil {
 		c.updateExitNotifier(state)
 	}
@@ -871,7 +882,7 @@ func newSandbox(ctx context.Context, config SandboxConfig) (sb *Sandbox, retErr 
 	if !config.valid() {
 		return nil, fmt.Errorf("invalid sandbox configuration")
 	}
-	network := DummyNetwork{}
+	network := &config.NetworkConfig
 	s := &Sandbox{
 		ctx:        ctx,
 		config:     &config,
@@ -882,7 +893,7 @@ func newSandbox(ctx context.Context, config SandboxConfig) (sb *Sandbox, retErr 
 			Ped:     HostPedType.String(),
 			Version: defs.SandboxVersion,
 		},
-		network:    &network,
+		network:    network,
 		resManager: *NewAgent(),
 		wg:         &sync.WaitGroup{},
 		annotaLock: &sync.RWMutex{},

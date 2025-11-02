@@ -5,17 +5,21 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	defs "mica-shim/definitions"
 	er "mica-shim/errors"
 	log "mica-shim/logger"
 	"mica-shim/pkg/libmica"
+	"mica-shim/pkg/netns"
 	ped "mica-shim/pkg/pedestal"
 	utils "mica-shim/pkg/utils"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -25,7 +29,6 @@ import (
 	vc "github.com/kata-containers/kata-containers/src/runtime/virtcontainers"
 	"github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/cpuset"
 	"github.com/opencontainers/runtime-spec/specs-go"
-	"github.com/pkg/errors"
 )
 
 // ContainerStats holds statistics for a container.
@@ -174,6 +177,11 @@ type RootFs struct {
 	Mounted bool
 }
 
+type helperExit struct {
+	code int
+	err  error
+}
+
 // ContainerType is a string representing the type of a container.
 type ContainerType string
 
@@ -208,6 +216,8 @@ type Container struct {
 	taskInfo      RTOSTask
 	exitNotifier  chan struct{}
 	exitOnce      sync.Once
+	helperCmd     *exec.Cmd
+	helperExitCh  chan helperExit
 }
 
 func (ct ContainerType) IsRegularContainer() bool {
@@ -371,6 +381,9 @@ func (c *Container) start(ctx context.Context) error {
 		if err := c.state.ValidTransition(currentState, StateRunning); err != nil {
 			return err
 		}
+		if err := c.startInfraProcess(ctx); err != nil {
+			return err
+		}
 		return c.setContainerState(ctx, StateRunning)
 	}
 
@@ -395,6 +408,224 @@ func (c *Container) start(ctx context.Context) error {
 	}
 
 	return c.setContainerState(ctx, StateRunning)
+}
+
+func (c *Container) startInfraProcess(ctx context.Context) error {
+	if c.helperCmd != nil {
+		return nil
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get cwd: %v", err)
+	}
+
+	bundle, err := utils.ValidBundle(c.id, cwd)
+	if err != nil {
+		return err
+	}
+
+	spec, err := loadSpecFromBundle(bundle)
+	if err != nil {
+		return fmt.Errorf("failed to load sandbox spec: %w", err)
+	}
+
+	nsenterPath, err := exec.LookPath("nsenter")
+	if err != nil {
+		return fmt.Errorf("nsenter not found: %w", err)
+	}
+
+	rootfs := filepath.Join(bundle, "rootfs")
+	if c.config.Rootfs.Target != "" {
+		rootfs = c.config.Rootfs.Target
+	}
+
+	netPath := ""
+	if c.sandbox != nil && c.sandbox.config != nil {
+		netPath = c.sandbox.config.NetworkConfig.NetworkID
+	}
+
+	args, err := buildNsenterArgs(spec, rootfs, netPath)
+	if err != nil {
+		return err
+	}
+
+	cmd := exec.CommandContext(ctx, nsenterPath, args...)
+
+	env := assembleHelperEnv(spec)
+	cmd.Env = env
+
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setsid:    true,
+		Pdeathsig: syscall.SIGKILL,
+	}
+
+	devNull, err := os.OpenFile("/dev/null", os.O_RDWR, 0)
+	if err != nil {
+		return fmt.Errorf("failed to open /dev/null: %w", err)
+	}
+	defer devNull.Close()
+
+	cmd.Stdin = devNull
+	cmd.Stdout = devNull
+	cmd.Stderr = devNull
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start sandbox pause helper: %w", err)
+	}
+
+	c.helperCmd = cmd
+	c.helperExitCh = make(chan helperExit, 1)
+
+	go c.monitorHelperExit(cmd)
+
+	c.config.Pid = cmd.Process.Pid
+	if c.sandbox != nil && c.sandbox.config != nil {
+		prev := c.sandbox.config.NetworkConfig.HolderPid
+		c.sandbox.config.NetworkConfig.HolderPid = cmd.Process.Pid
+		if c.sandbox.config.NetworkConfig.NetworkCreated && prev > 0 && prev != cmd.Process.Pid {
+			if err := netns.Cleanup(c.sandbox.id, prev); err != nil && !errors.Is(err, os.ErrProcessDone) {
+				log.Warnf("failed to cleanup previous netns holder %d: %v", prev, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func (c *Container) monitorHelperExit(cmd *exec.Cmd) {
+	err := cmd.Wait()
+	exitCode := extractExitCode(err)
+	if c.helperExitCh != nil {
+		c.helperExitCh <- helperExit{code: exitCode, err: nil}
+		close(c.helperExitCh)
+	}
+	c.helperCmd = nil
+	c.helperExitCh = nil
+	if c.config != nil {
+		c.config.Pid = 0
+	}
+	if c.sandbox != nil && c.sandbox.config != nil {
+		c.sandbox.config.NetworkConfig.HolderPid = 0
+	}
+}
+
+func extractExitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode()
+	}
+	return 255
+}
+
+func buildNsenterArgs(spec specs.Spec, rootfs, fallbackNetPath string) ([]string, error) {
+	if spec.Process == nil || len(spec.Process.Args) == 0 {
+		return nil, fmt.Errorf("invalid sandbox process definition")
+	}
+
+	args := make([]string, 0)
+	nsSeen := make(map[specs.LinuxNamespaceType]struct{})
+	if spec.Linux != nil {
+		for _, ns := range spec.Linux.Namespaces {
+			if ns.Path == "" {
+				continue
+			}
+			switch ns.Type {
+			case specs.NetworkNamespace:
+				args = append(args, "--net="+ns.Path)
+				nsSeen[specs.NetworkNamespace] = struct{}{}
+			case specs.IPCNamespace:
+				args = append(args, "--ipc="+ns.Path)
+			case specs.UTSNamespace:
+				args = append(args, "--uts="+ns.Path)
+			case specs.PIDNamespace:
+				args = append(args, "--pid="+ns.Path)
+			case specs.UserNamespace:
+				args = append(args, "--user="+ns.Path)
+			case specs.MountNamespace:
+				args = append(args, "--mount="+ns.Path)
+			}
+		}
+	}
+
+	if fallbackNetPath != "" {
+		if _, ok := nsSeen[specs.NetworkNamespace]; !ok {
+			args = append(args, "--net="+fallbackNetPath)
+		}
+	}
+
+	if rootfs != "" {
+		args = append(args, "--root="+rootfs)
+	}
+	if spec.Process.Cwd != "" {
+		args = append(args, "--wd="+spec.Process.Cwd)
+	}
+
+	args = append(args, "--")
+	args = append(args, spec.Process.Args...)
+	return args, nil
+}
+
+func assembleHelperEnv(spec specs.Spec) []string {
+	env := append([]string{}, os.Environ()...)
+
+	if spec.Process != nil && len(spec.Process.Env) > 0 {
+		env = mergeEnv(env, spec.Process.Env)
+	}
+
+	if !envHasKey(env, "PATH") {
+		env = append(env, "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+	}
+	return env
+}
+
+func envHasKey(env []string, key string) bool {
+	prefix := key + "="
+	for _, e := range env {
+		if strings.HasPrefix(e, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func mergeEnv(base, override []string) []string {
+	result := append([]string{}, base...)
+	index := make(map[string]int, len(result))
+	for i, kv := range result {
+		if pos := strings.Index(kv, "="); pos >= 0 {
+			index[kv[:pos]] = i
+		}
+	}
+
+	for _, kv := range override {
+		if pos := strings.Index(kv, "="); pos >= 0 {
+			key := kv[:pos]
+			if idx, ok := index[key]; ok {
+				result[idx] = kv
+			} else {
+				index[key] = len(result)
+				result = append(result, kv)
+			}
+		}
+	}
+	return result
+}
+
+func loadSpecFromBundle(bundle string) (specs.Spec, error) {
+	configPath := filepath.Join(bundle, "config.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return specs.Spec{}, fmt.Errorf("failed to read %s: %w", configPath, err)
+	}
+	var spec specs.Spec
+	if err := json.Unmarshal(data, &spec); err != nil {
+		return specs.Spec{}, fmt.Errorf("failed to unmarshal %s: %w", configPath, err)
+	}
+	return spec, nil
 }
 
 // create prepares the container to be started.
@@ -427,6 +658,12 @@ func (c *Container) create(ctx context.Context) error {
 // doStop performs the actual stop operation on the client.
 func (c *Container) doStop(force bool) error {
 	if c.config != nil && c.config.IsInfra {
+		if c.helperCmd == nil || c.helperCmd.Process == nil {
+			return nil
+		}
+		if err := c.helperCmd.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) && !errors.Is(err, syscall.ESRCH) {
+			return err
+		}
 		return nil
 	}
 	currentState := c.checkState()
@@ -476,17 +713,23 @@ func (c *Container) kill() error {
 		return err
 	}
 	log.Debugf("Container state is %s.", currentState)
-	if currentState != StateRunning &&
-		currentState != StateReady &&
-		currentState != StatePaused {
-		return fmt.Errorf("container is not running, ready or paused, can not be killed")
+	if currentState == StateDown {
+		return fmt.Errorf("container is not active, cannot kill container")
 	}
 
-	if err := c.doStop(true); err != nil {
-		log.Debugf("+++++ failed to stop contaienr %s", c.id)
-		return err
+	if c.config != nil && c.config.IsInfra {
+		if c.helperCmd != nil && c.helperCmd.Process != nil {
+			if err := c.helperCmd.Process.Signal(syscall.SIGKILL); err != nil && !errors.Is(err, os.ErrProcessDone) && !errors.Is(err, syscall.ESRCH) {
+				return err
+			}
+		}
+	} else {
+		if err := c.doStop(true); err != nil {
+			log.Debugf("+++++ failed to stop contaienr %s", c.id)
+			return err
+		}
+		log.Debugf("+++++ stopped contaienr %s", c.id)
 	}
-	log.Debugf("+++++ stopped contaienr %s", c.id)
 
 	if err := c.setContainerState(c.ctx, StateStopped); err != nil {
 		return err

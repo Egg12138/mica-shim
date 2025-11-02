@@ -277,6 +277,10 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 	}
 
 	// init
+	containerAnnotations := map[string]string{
+		defs.BundlePathKey: bundle,
+	}
+
 	config := &cntr.ContainerConfig{
 		// Container ID
 		ID: id,
@@ -300,6 +304,7 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 		MemoryKernelMB:      0,
 		MemorySwappinessMB:  nil,
 		OomKillDisable:      false,
+		Annotations:         containerAnnotations,
 	}
 	config.IsInfra = isInfra
 
@@ -358,6 +363,14 @@ func SandboxConfig(ocispec *specs.Spec, rc RuntimeConfig, bundle, sbContainerID 
 	// TODO: allocated shared resources
 
 	networkConfig := cntr.NetworkConfig{}
+	if ocispec != nil && ocispec.Linux != nil {
+		for _, ns := range ocispec.Linux.Namespaces {
+			if ns.Type == specs.NetworkNamespace && ns.Path != "" {
+				networkConfig.NetworkID = ns.Path
+				break
+			}
+		}
+	}
 	ped := cntr.HostPedType
 	if ped == pedestal.Xen {
 		pedcfg := filepath.Join(bundleRootfs(bundle), defs.DefaultXenBin)

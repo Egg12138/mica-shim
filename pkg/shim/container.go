@@ -47,8 +47,8 @@ type container struct {
 }
 
 type execProcess struct {
-	id         string
-	pid        uint32
+	id  string
+	pid uint32
 	// we use contaienrd shim task status to represent process status
 	status     task.Status
 	exitStatus uint32
@@ -385,18 +385,27 @@ func ioCopy(exitch, stdinCloser chan struct{}, tty *ttyIO, stdinPipe io.WriteClo
 
 // waitContainerExit waits for the container to exit and updates its status.
 func waitContainerExit(ctx context.Context, s *shimService, c *container) (int32, error) {
-	// Wait for IO streams to close, or mock an exit after a timeout since micad
-	// cannot yet detect client OS exit.
-	const mockExitTimeout = 5 * time.Second
-	select {
-	case <-c.exitIOch:
-		log.WithField("container", c.id).Debug("The container IO streams closed.")
-	case <-time.After(mockExitTimeout):
-		log.WithField("container", c.id).Infof("No IO activity; mock exit after %s.", mockExitTimeout)
-	}
+	exitStatus, waitErr := s.sandbox.WaitContainerExit(ctx, c.id)
 
-	timeStamp := time.Now()
-	ret := okExitCode
+	var (
+		ret       = okExitCode
+		timeStamp time.Time
+	)
+
+	if waitErr != nil {
+		log.WithError(waitErr).Debugf("WaitContainerExit fallback for container %s", c.id)
+		const mockExitTimeout = 5 * time.Second
+		select {
+		case <-c.exitIOch:
+			log.WithField("container", c.id).Debug("The container IO streams closed.")
+		case <-time.After(mockExitTimeout):
+			log.WithField("container", c.id).Infof("No IO activity; mock exit after %s.", mockExitTimeout)
+		}
+		timeStamp = time.Now()
+	} else {
+		ret = int(exitStatus)
+		timeStamp = time.Now()
+	}
 
 	s.mu.Lock()
 	// Update container status and exit information.
@@ -423,17 +432,24 @@ func waitContainerExit(ctx context.Context, s *shimService, c *container) (int32
 	for _, exec := range c.execs {
 		exec.markExited(uint32(ret))
 	}
+	if c.pid != 0 {
+		c.pid = 0
+	}
 
 	c.exitCh <- uint32(ret)
 	log.Debugf("The container %s status is StatusStopped.", c.id)
 	s.mu.Unlock()
 
 	go func(ts time.Time, cid string, status int) {
+		pid := shimPid
+		if c.pid != 0 {
+			pid = c.pid
+		}
 		s.ec <- exit{
 			ts:     ts,
 			cid:    cid,
 			execid: "",
-			pid:    shimPid,
+			pid:    pid,
 			status: status,
 		}
 	}(timeStamp, c.id, int(ret))

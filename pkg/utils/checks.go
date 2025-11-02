@@ -114,3 +114,31 @@ func LsofSocket(socketPath string, command string) []int {
 	}
 	return pids
 }
+
+
+// Validate the bundle and rootfs.
+func ValidBundle(containerID, bundlePath string) (string, error) {
+	if containerID == "" {
+		return "", fmt.Errorf("container ID is empty")
+	}
+
+	if bundlePath == "" {
+		return "", fmt.Errorf("bundle path is required")
+	}
+
+	// resolve path first to handle symlinks before other checks
+	resolved, err := ResolvePath(bundlePath)
+	if err != nil {
+		return "", err
+	}
+
+	stat, err := os.Stat(resolved)
+	if err != nil {
+		return "", fmt.Errorf("invalid resolved bundle path '%s': %w", resolved, err)
+	}
+	if !stat.IsDir() {
+		return "", fmt.Errorf("invalid resolved bundle path '%s', it should be a directory", resolved)
+	}
+
+	return resolved, nil
+}

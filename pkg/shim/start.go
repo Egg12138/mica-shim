@@ -42,6 +42,12 @@ func startContainer(ctx context.Context, s *shimService, c *container) (retErr e
 		}
 	}
 
+	if sandboxContainer := s.sandbox.GetContainer(c.id); sandboxContainer != nil {
+		if pid := sandboxContainer.GetPid(); pid > 0 {
+			c.pid = uint32(pid)
+		}
+	}
+
 	oldst := c.status
 	c.status = task.Status_RUNNING
 	log.Debugf("container status from %s => %s ", oldst, c.status)

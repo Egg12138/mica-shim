@@ -15,6 +15,7 @@ import (
 	log "mica-shim/logger"
 	cntr "mica-shim/pkg/micantainer"
 	"mica-shim/pkg/oci"
+	"mica-shim/pkg/utils"
 
 	"github.com/containerd/containerd/api/events"
 	taskAPI "github.com/containerd/containerd/api/runtime/task/v2"
@@ -235,7 +236,7 @@ func (s *shimService) StartShim(ctx context.Context, opts shimv2.StartOpts) (_ s
 		return "", err
 	}
 
-	bundle, err = validBundle(opts.ID, bundle)
+	bundle, err = utils.ValidBundle(opts.ID, bundle)
 	if err != nil {
 		return "", err
 	}

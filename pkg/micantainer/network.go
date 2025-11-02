@@ -74,8 +74,16 @@ func (n *NetworkConfig) NetworkCleanup(id string) error {
 		return nil
 	}
 
-	if err := netns.Cleanup(id, n.HolderPid); err != nil {
-		return err
+	if n.HolderPid > 0 {
+		if err := netns.Cleanup(id, n.HolderPid); err != nil {
+			return err
+		}
+	}
+
+	if n.NetworkCreated {
+		if err := netns.RemovePersistent(n.NetworkID); err != nil {
+			return err
+		}
 	}
 
 	n.NetworkID = ""

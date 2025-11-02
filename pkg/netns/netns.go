@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -222,4 +223,27 @@ func firstNonZero(values ...int) int {
 		}
 	}
 	return 0
+}
+
+// RemovePersistent attempts to remove a bind-mounted network namespace path.
+// It is a best-effort cleanup used when micran creates auxiliary namespaces
+// for non-CRI flows. When the namespace lives under /proc, removal is skipped.
+func RemovePersistent(path string) error {
+	if path == "" {
+		return nil
+	}
+
+	if strings.HasPrefix(path, "/proc/") {
+		return nil
+	}
+
+	if err := unix.Unmount(path, unix.MNT_DETACH); err != nil && !errors.Is(err, syscall.ENOENT) && !errors.Is(err, syscall.EINVAL) {
+		return fmt.Errorf("failed to unmount netns %s: %w", path, err)
+	}
+
+	if err := os.RemoveAll(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("failed to remove netns path %s: %w", path, err)
+	}
+
+	return nil
 }

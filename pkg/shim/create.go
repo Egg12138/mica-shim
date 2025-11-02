@@ -263,7 +263,7 @@ func createSandbox(ctx context.Context, ocispec *specs.Spec,
 		sandboxConfig.ContainerConfigs[containerId].Rootfs = rootfs
 	}
 
-	if err := setupNS(sandboxConfig.ID, &sandboxConfig.NetworkConfig); err != nil {
+	if err := setupNS(sandboxConfig.ID, &sandboxConfig.NetworkConfig, ocispec); err != nil {
 		return nil, err
 	}
 
@@ -339,9 +339,19 @@ func cleanupNetNS(sandboxID string, netcfg *cntr.NetworkConfig) error {
 	return nil
 }
 
-func setupNS(sandboxID string, netcfg *cntr.NetworkConfig) error {
+func setupNS(sandboxID string, netcfg *cntr.NetworkConfig, spec *specs.Spec) error {
 	if netcfg == nil {
 		return fmt.Errorf("setup netns: nil network config")
+	}
+
+	if spec != nil && spec.Linux != nil {
+		for _, ns := range spec.Linux.Namespaces {
+			if ns.Type == specs.NetworkNamespace && ns.Path != "" {
+				netcfg.NetworkID = ns.Path
+				netcfg.NetworkCreated = false
+				return nil
+			}
+		}
 	}
 
 	if netcfg.HolderPid > 0 {
