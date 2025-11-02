@@ -12,7 +12,6 @@ import (
 	"strings"
 )
 
-
 func MaxMemMB() uint32 {
 	_, max := ped.MemoryMB()
 	return max
@@ -32,7 +31,6 @@ func MaxClientCPUNum() int {
 func dummyCPUNum() int {
 	return runtime.NumCPU()
 }
-
 
 // validStatusResponse validates if the response string contains valid status information
 // This function is kept for backward compatibility, but new code should use parseMicaStatus
@@ -253,6 +251,6 @@ func ClientNotExist(id string) bool {
 	clientId := utils.ShortID(id)
 	socketPath := filepath.Join(defs.MicaStateDir, clientId+".socket")
 	valid := validSocketPath(socketPath)
-	log.Debugf("check socket path: %s is valid=%t", socketPath, valid)
+	log.Debugf("check socket path: %s is present=%t", socketPath, valid)
 	return !valid
 }

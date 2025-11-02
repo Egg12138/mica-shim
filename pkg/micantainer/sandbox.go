@@ -541,6 +541,11 @@ func (s *Sandbox) KillContainer(ctx context.Context, id string) (ContainerTraits
 	if !ok {
 		return nil, er.ContainerNotFound
 	}
+
+	if libmica.ClientNotExist(c.id) {
+		return c, nil
+	}
+
 	if err := c.kill(); err != nil {
 		return nil, err
 	}

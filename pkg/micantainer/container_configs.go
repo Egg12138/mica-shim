@@ -31,7 +31,9 @@ func (r *ContainerConfig) ParseOCICPUResources(spec *specs.Spec) error {
 	r.CpuLimit = *essentialRes.CpuCpacity
 	r.CpuPeriod = *essentialRes.CpuPeriod
 	r.CpuQuota = *essentialRes.CpuQuota
-	r.CpuShares = *essentialRes.CPUWeight
+	if cpu := spec.Linux.Resources.CPU; cpu != nil && cpu.Shares != nil {
+		r.CpuShares = *cpu.Shares
+	}
 	r.VCPUNum = *essentialRes.Vcpu
 	r.CpusetCpus = essentialRes.ClientCpuSet
 
@@ -39,23 +41,29 @@ func (r *ContainerConfig) ParseOCICPUResources(spec *specs.Spec) error {
 	if r.CpusetCpus != "" {
 		cpus, err := libmica.ParseCPUString(r.CpusetCpus)
 		if err == nil {
-            if ok, out := CpusetRangeValid(cpus); !ok {
+			if ok, out := CpusetRangeValid(cpus); !ok {
 				// Filter out-of-range CPUs and rebuild cpuset string.
 				valid := make([]int, 0, len(cpus))
 				bad := map[int]struct{}{}
-				for _, x := range out { bad[x] = struct{}{} }
-				for _, x := range cpus { if _, miss := bad[x]; !miss { valid = append(valid, x) } }
-                if len(valid) > 0 {
-                    r.CpusetCpus = pedestal.ParseCPUArr(valid)
-                    r.VCPUNum = uint32(len(valid))
-                } else {
-                    // All invalid; clear cpuset and keep a sane default for VCPUs.
-                    r.CpusetCpus = ""
-                    r.VCPUNum = 1
-                }
-            }
-        }
-    }
+				for _, x := range out {
+					bad[x] = struct{}{}
+				}
+				for _, x := range cpus {
+					if _, miss := bad[x]; !miss {
+						valid = append(valid, x)
+					}
+				}
+				if len(valid) > 0 {
+					r.CpusetCpus = pedestal.ParseCPUArr(valid)
+					r.VCPUNum = uint32(len(valid))
+				} else {
+					// All invalid; clear cpuset and keep a sane default for VCPUs.
+					r.CpusetCpus = ""
+					r.VCPUNum = 1
+				}
+			}
+		}
+	}
 	r.MemoryLimitMB = *essentialRes.MemoryLimitMB
 	log.Debugf(`
 		EssentialResource:
@@ -68,7 +76,6 @@ func (r *ContainerConfig) ParseOCICPUResources(spec *specs.Spec) error {
 		MemoryLimit = %d
 	}
 	`, r.CpuLimit, r.CpuPeriod, r.CpuQuota, r.CpuShares, r.VCPUNum, r.CpusetCpus, r.MemoryLimitMB)
-	
 
 	return nil
 }
@@ -105,7 +112,6 @@ func (r *ContainerConfig) ParseOCIMemoryResources(spec *specs.Spec) error {
 
 	return nil
 }
-
 
 // validateResourceLimits validates container resource limits against system constraints
 func ValidateResourceLimits(config *ContainerConfig) error {

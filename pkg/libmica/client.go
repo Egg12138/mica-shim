@@ -277,29 +277,6 @@ type Filter struct {
 
 // Public API
 
-// NewMicaCreateMsg creates and initializes a MicaClientConf.
-// Deprecated: Use NewMicaCreateMsgWithOpts instead for new implementations.
-func NewMicaCreateMsg(cpu uint32, name string, path string, ped string, pedCfg string, debug bool) MicaClientConf {
-	msg := MicaClientConf{}
-	// Convert simple parameters to the new options format
-	opts := MicaClientConfCreateOptions{
-		CPU:         pedestal.ParseCPUArr(dummyCPUArr()),
-		Name:        name,
-		Path:        path,
-		Ped:         ped,
-		PedCfg:      pedCfg,
-		Debug:       debug,
-		VCPUs:       0,
-		CPUWeight:   0,
-		CPUCapacity: 0,
-		MemoryMB:    0,
-		Network:     "",
-	}
-	msg.InitWithOpts(opts)
-	return msg
-}
-
-// NewMicaCreateMsgWithOpts creates and initializes a MicaClientConf with the new options struct.
 func NewMicaCreateMsgWithOpts(opts MicaClientConfCreateOptions) MicaClientConf {
 	msg := MicaClientConf{}
 	msg.InitWithOpts(opts)

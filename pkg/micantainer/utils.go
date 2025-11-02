@@ -48,7 +48,7 @@ func startClient(ctx context.Context, sandbox SandboxTraits, c *Container) error
 // TODO: Only copy values, the evaluation procedure is in the caller function
 func createMicaClientConf(container *Container) (libmica.MicaClientConf, error) {
 	config := container.config
-	pedestal := HostPedType
+	pedType := HostPedType
 	name := utils.ShortID(container.id)
 	cpus, err := container.GetClientCPU()
 	conf := libmica.MicaClientConf{}
@@ -76,15 +76,15 @@ func createMicaClientConf(container *Container) (libmica.MicaClientConf, error) 
 	conf.InitWithOpts(libmica.MicaClientConfCreateOptions{
 		CPU:         cpus,
 		CPUCapacity: cpuCap,
-		CPUWeight:   int(config.CpuShares),
+		CPUWeight:   int(pedestal.ShareToWeight(config.CpuShares)),
 		VCPUs:       vcpus,
 		MemoryMB:    memMB,
 		MaxMemMB:    maxMB,
 		Name:        name,
 		Path:        config.ElfAbsPath,
-		Ped:         pedestal.String(),
+		Ped:         pedType.String(),
 		PedCfg:      config.PedestalConf,
-		Debug:       true,
+		Debug:       false,
 	})
 	return conf, nil
 }

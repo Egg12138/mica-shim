@@ -26,6 +26,26 @@ const DefaultXenWeight = 256
 const ShareWeightRatio = DefaultCgroupShare / DefaultXenWeight
 const balloonDriverName = "xen_balloon"
 
+// ShareToWeight converts an OCI cpu.shares style value into the Xen credit2
+// scheduler weight range [1, 65535]. When shares is 0 (unset) we fall back to
+// Xen's default weight.
+func ShareToWeight(shares uint64) uint32 {
+	if ShareWeightRatio <= 0 {
+		return DefaultXenWeight
+	}
+	if shares == 0 {
+		return DefaultXenWeight
+	}
+	weight := shares / uint64(ShareWeightRatio)
+	if weight == 0 {
+		return 1
+	}
+	if weight > 65535 {
+		return 65535
+	}
+	return uint32(weight)
+}
+
 // xl info:
 // `host                   : qemu-aarch64
 // release                : 5.10.0-openeuler
@@ -513,15 +533,7 @@ func LinuxResource2Essential(spec *specs.Spec) *EssentialResource {
 	}
 
 	if cpu.Shares != nil {
-		calculatedWeight := *cpu.Shares / ShareWeightRatio
-		if calculatedWeight < 1 {
-			*r.CPUWeight = 1
-		} else if calculatedWeight > 65535 {
-			log.Debugf("cpu.Shares %d is too high, resulting weight is greater than 65535. Clamping to 65535.", *cpu.Shares)
-			*r.CPUWeight = 65535
-		} else {
-			*r.CPUWeight = uint32(calculatedWeight)
-		}
+		weight = ShareToWeight(uint64(*cpu.Shares))
 	} else {
 		log.Debugf("cpu shares is nil, use default weight %d", DefaultXenWeight)
 		*r.CPUWeight = DefaultXenWeight

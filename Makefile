@@ -28,6 +28,12 @@ CROSS_DEV_BUILD_FLAGS := $(DEV_BUILD_FLAGS) -a -installsuffix cgo
 RELEASE_BUILD_FLAGS := -ldflags "-s -w -X 'main.ShimName=${SHIM_NAME}'"
 CROSS_RELEASE_BUILD_FLAGS := $(RELEASE_BUILD_FLAGS) -a -installsuffix cgo
 
+-include .env
+TARGET_HOST ?= $(DEPLOY_HOST)
+TARGET_PATH ?= $(DEPLOY_PATH)
+TARGET_PASS ?= $(DEPLOY_PASS)
+
+
 all: build
 
 build-prod:
@@ -126,6 +132,31 @@ install-nonroot: build
 	@echo "Installed:   $$(md5sum ${SHIM_DIR_NONROOT}/$(BINNAME))"
 	@echo "pass --runtime ${SHIM_NAME} to use it"
 	@echo "Make sure ${SHIM_DIR_NONROOT} is in your PATH"
+
+.PHONY: remote
+remote: build-arm64
+	@if [ -z "${TARGET_HOST}" ] || [ -z "${TARGET_PATH}" ]; then \
+		echo "Error: Deployment requires environment variables:"; \
+		echo "  DEPLOY_HOST - Target host (e.g., root@192.168.7.2)"; \
+		echo "  DEPLOY_PATH - Target path (e.g., /root)"; \
+		echo ""; \
+		echo "Optional variable:"; \
+		echo "  DEPLOY_PASS - SSH password (if using password authentication)"; \
+		echo ""; \
+		echo "  DEPLOY_HOST=root@192.168.7.2 DEPLOY_PATH=/root make deploy"; \
+		echo "Usage examples:"; \
+		echo "  DEPLOY_HOST=root@192.168.7.2 DEPLOY_PATH=/root DEPLOY_PASS=mypassword make deploy"; \
+		exit 1; \
+	fi
+	@echo "Deploying to ${TARGET_HOST}:${TARGET_PATH}/"
+	@if [ -n "${TARGET_PASS}" ]; then \
+		sshpass -p '${TARGET_PASS}' scp ${BIN_ARM64} ${TARGET_HOST}:${TARGET_PATH}/; \
+	else \
+		scp ${BIN_ARM64} ${TARGET_HOST}:${TARGET_PATH}/; \
+	fi
+	@echo "Deployment complete."
+
+
 
 dev-setup:
 	@echo "🔧 Setting up development environment..."

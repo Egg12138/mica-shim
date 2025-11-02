@@ -15,7 +15,7 @@ import (
 var (
 	hostPedCache PedType
 	hostPedOnce  sync.Once
-	// TODO: considering calculate default max vcpu number when 
+	// TODO: considering calculate default max vcpu number when
 	DefaultMaxVCPUs uint32
 )
 

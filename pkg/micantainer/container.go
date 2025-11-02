@@ -129,7 +129,7 @@ type ContainerConfig struct {
 	// CpusetCpus is the set of physical CPUs the client is allowed to use (e.g., "1,3-5").
 	CpusetCpus string `json:"cpuset_cpus"`
 	// CpuShares is the relative weight of the container for CPU time.
-	CpuShares uint32 `json:"cpu_shares"`
+	CpuShares uint64 `json:"cpu_shares"`
 	// VCPUNum is the number of virtual CPUs. Equals CpuLimit if not pinning; otherwise, equals the size of the cpuset.
 	VCPUNum uint32 `json:"vcpu_num"`
 	// PCPUNum is the number of allocated physical CPUs.
@@ -340,7 +340,7 @@ func newContainer(ctx context.Context, s *Sandbox, cc *ContainerConfig) (*Contai
 		rootfs:        cc.Rootfs,
 		containerPath: filepath.Join(s.id, cc.ID),
 		mounts:        cc.Mount,
-		state:         ContainerState{},
+		state:         ContainerState{State: StateDown},
 		taskInfo:      RTOSTask{},
 		ctx:           s.ctx,
 	}
@@ -453,7 +453,7 @@ func (c *Container) stop(ctx context.Context, force bool) error {
 
 	var err error
 	if err = c.doStop(force); err != nil {
-		log.Debugf("+++++ failed to stop contaienr %s", c.id)
+		log.Debugf("+++++ failed to stop contaienr %s: %v", c.id, err)
 		return err
 	}
 	log.Debugf("+++++ stopped contaienr %s", c.id)
@@ -468,6 +468,7 @@ func (c *Container) stop(ctx context.Context, force bool) error {
 // kill forcibly stops the container.
 // Due to the 1:1:1 relationship of Container:ClientOS:Task in mica, kill() is essentially stop().
 func (c *Container) kill() error {
+
 	if c.sandbox.state.State != StateReady && c.sandbox.state.State != StateRunning {
 		return fmt.Errorf("sandbox is not running or ready, can not signal container")
 	}
@@ -477,7 +478,9 @@ func (c *Container) kill() error {
 	}
 	log.Debugf("Container state is %s.", currentState)
 
-	if err := c.doStop(true); err != nil {
+	if libmica.ClientNotExist(c.id) {
+		return c.setContainerState(c.ctx, StateStopped)
+	} else if err := c.doStop(true); err != nil {
 		log.Debugf("+++++ failed to stop contaienr %s", c.id)
 		return err
 	}
@@ -718,6 +721,16 @@ func (c *Container) validMicaContainer() bool {
 		return true
 	}
 
+	cwd, err := os.Getwd()
+	if err != nil {
+		log.Errorf("failed to get current working directory: %v", err)
+		return false
+	}
+
+	log.Debugf("current working dir: %s", cwd)
+	log.Debugf("current env variable $PATH: %s", os.Getenv("PATH"))
+	mCpuNum := ped.MaxCPUNum()
+	log.Debugf("*******************max machine cpu number: %d", mCpuNum)
 	osValid := validOS(c.GetOS())
 	fwValid := validFirmware(c.GetFirmwarePath())
 	if HostPedType == ped.Xen {
@@ -756,16 +769,12 @@ func (c *Container) setContainerState(ctx context.Context, state StateString) er
 }
 
 func (c *Container) checkState() StateString {
-	if c == nil {
+	if c == nil && c.id == "" {
 		return StateDown
 	}
 
 	if c.config != nil && c.config.IsInfra {
 		return c.state.State
-	}
-
-	if c.id == "" {
-		return StateDown
 	}
 
 	if libmica.ClientNotExist(c.id) {
