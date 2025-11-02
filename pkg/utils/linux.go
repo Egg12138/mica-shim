@@ -124,7 +124,7 @@ func findModuleFile(dirPath, moduleName string) string {
 		if !info.IsDir() && strings.HasSuffix(info.Name(), ".ko") {
 			baseName := strings.TrimSuffix(info.Name(), ".ko")
 			if baseName == moduleName {
-				return filepath.SkipAll 
+				return filepath.SkipAll
 			}
 		}
 		return nil

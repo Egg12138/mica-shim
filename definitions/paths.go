@@ -12,10 +12,10 @@ const (
 )
 
 const (
-	MicranContainerStateDir       = "/run/micran"
-	DefaultMicaContainersRoot   = "/run/micran/containers"
-	MicantainerStateFile = "state.json"
-	SandboxStateFile     = "state.json"
+	MicranContainerStateDir   = "/run/micran"
+	DefaultMicaContainersRoot = "/run/micran/containers"
+	MicantainerStateFile      = "state.json"
+	SandboxStateFile          = "state.json"
 	// directory for sandbox data storage
 	SandboxDataDir = "/run/micran/sandbox"
 

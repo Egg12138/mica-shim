@@ -140,7 +140,6 @@ func RestoreStructFromJSON(file string) (any, error) {
 }
 
 func SaveStructToJSON(file string, state any) error {
-	log.Debugf("***SAVING %T TO %s", state, file)
 	structBytes, err := json.Marshal(state)
 	if err != nil {
 		log.Pretty("err: %v, state: %v", err, state)
@@ -170,7 +169,6 @@ func RemoveExternalStatFile(id string) error {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil
 	}
-	log.Debugf("removing state file: %s", path)
 	return os.Remove(path)
 }
 
@@ -203,32 +201,30 @@ func IsELFForHost(path string) (bool, error) {
 }
 
 func MountDirs(mounts []*cdtypes.Mount, dest string) error {
-    if len(mounts) == 0 {
-        return nil
-    }
+	if len(mounts) == 0 {
+		return nil
+	}
 
-		if err := os.Mkdir(dest, 0711); err != nil && !os.IsExist(err) {
-			return err
+	if err := os.Mkdir(dest, 0711); err != nil && !os.IsExist(err) {
+		return err
+	}
+	for _, rm := range mounts {
+
+		m := &mount.Mount{
+			Type:    rm.Type,
+			Source:  rm.Source,
+			Options: rm.Options,
 		}
-		for _, rm := range mounts {
 
-			m := &mount.Mount{
-					Type:    rm.Type,
-					Source:  rm.Source,
-					Options: rm.Options, 
-			}
-
-			if err := m.Mount(dest); err != nil {
-					return fmt.Errorf("failed to mount to %s: %v", dest, err)
-			}
+		if err := m.Mount(dest); err != nil {
+			return fmt.Errorf("failed to mount to %s: %v", dest, err)
 		}
-    return nil
+	}
+	return nil
 
 }
 func Backup(srcDir string) error {
 	backupDir := "/tmp/backupbundle"
-
-	log.Debugf("=== BACKUP: starting backup from %s to %s ===", srcDir, backupDir)
 
 	// Test source directory access first
 	if stat, err := os.Stat(srcDir); err != nil {

@@ -83,73 +83,72 @@ func ShareToWeight(shares uint64) uint32 {
 // build_id               : d54faddad0e57e72305a485d9b89288188c56ae8
 // xend_config_format     : 4`
 
-
 type XlInfo struct {
-	host        string
-	machine     string
+	host    string
+	machine string
 	// max physical cpus that Xen can handle
-	nrCpus      uint32
+	nrCpus        uint32
 	totalMemoryMB uint32
 	freeMemoryMB  uint32
-	xlver string
-	
-	maxCpuId         uint32  
+	xlver         string
+
+	maxCpuId uint32
 	// Cores per socket (NUMA/topology awareness)
-	coresPerSocket   uint32  
+	coresPerSocket uint32
 	// Threads per core (SMT/hyperthreading info)
-	threadsPerCore   uint32  
-	cpuMhz          float64  
+	threadsPerCore uint32
+	cpuMhz         float64
 	// number of cpus that are not allocated in **a cpu pool**
-	freeCpus        uint32   
-	
-	xenCaps         string   
+	freeCpus uint32
+
+	xenCaps string
 	// Scheduler type (credit, credit2, etc.)
 	// decides in Xen building, default to be credit2 for now
-	xenScheduler    string   
-	xenPagesize     uint32   
-	virtCaps        string   
+	xenScheduler string
+	xenPagesize  uint32
+	virtCaps     string
 
 	// Memory claims pending (affects available memory calculations)
-	outstandingClaims uint64 
+	outstandingClaims uint64
 	// Shared memory freed (memory reuse optimization)
-	sharingFreedMemory uint64 
+	sharingFreedMemory uint64
 	// Shared memory used (current shared memory usage)
-	sharingUsedMemory  uint64 
-	
-	platformParams  string   
-	// Xen boot parameters 
-	xenCommandline  string   
-	
+	sharingUsedMemory uint64
+
+	platformParams string
+	// Xen boot parameters
+	xenCommandline string
+
 	// ARM-specific fields (for aarch64 systems - architecture optimizations)
 	// turn off by default
 	armSVEVectorLength uint32
 }
 
-
-//  xl vcpu-list Output Format
-//   Header Line:
-//   Name                              ID  VCPU  CPU  State  Time(s)  Affinity (Hard / Soft)
-//   Data Lines:
-//   <domain_name>                    <domid> <vcpuid> <cpu> <state> <time> <hard_affinity> / <soft_affinity>
-//   Field Details:
-//   1. Name (32 chars, left-aligned): Domain name
-//   2. ID (5 chars, right-aligned): Domain ID (numeric)
-//   3. VCPU (5 chars, right-aligned): VCPU ID (numeric)
-//   4. CPU (5 chars, right-aligned):
-//     - If VCPU is offline: -
-//     - If VCPU is online: CPU number the VCPU is currently running on
-//   5. State (5 chars):
-//     - Format: XYZ- where:
-//         - X: r if running, - if not
-//       - Y: b if blocked, - if not
-//       - Z: - (always)
-//     - If VCPU is offline: ---
-//   6. Time(s) (9 chars, right-aligned): CPU time consumed by this VCPU in seconds (with 1 decimal place)
-//   7. Affinity (variable width):
-//     - Hard affinity: CPU bitmap showing which CPUs the VCPU is allowed to run on
-//     - Soft affinity: CPU bitmap showing preferred CPUs for the VCPU
-//     - Format: <hard_bitmap> / <soft_bitmap>
-//   Example Output:
+//	xl vcpu-list Output Format
+//	 Header Line:
+//	 Name                              ID  VCPU  CPU  State  Time(s)  Affinity (Hard / Soft)
+//	 Data Lines:
+//	 <domain_name>                    <domid> <vcpuid> <cpu> <state> <time> <hard_affinity> / <soft_affinity>
+//	 Field Details:
+//	 1. Name (32 chars, left-aligned): Domain name
+//	 2. ID (5 chars, right-aligned): Domain ID (numeric)
+//	 3. VCPU (5 chars, right-aligned): VCPU ID (numeric)
+//	 4. CPU (5 chars, right-aligned):
+//	   - If VCPU is offline: -
+//	   - If VCPU is online: CPU number the VCPU is currently running on
+//	 5. State (5 chars):
+//	   - Format: XYZ- where:
+//	       - X: r if running, - if not
+//	     - Y: b if blocked, - if not
+//	     - Z: - (always)
+//	   - If VCPU is offline: ---
+//	 6. Time(s) (9 chars, right-aligned): CPU time consumed by this VCPU in seconds (with 1 decimal place)
+//	 7. Affinity (variable width):
+//	   - Hard affinity: CPU bitmap showing which CPUs the VCPU is allowed to run on
+//	   - Soft affinity: CPU bitmap showing preferred CPUs for the VCPU
+//	   - Format: <hard_bitmap> / <soft_bitmap>
+//	 Example Output:
+//
 // $xl vcpu-list
 // Name                                ID  VCPU   CPU State   Time(s) Affinity (Hard / Soft)
 // Domain-0                             0     0    1   -b-     271.1  all / all
@@ -162,22 +161,22 @@ type XlVcpuInfo struct {
 // VCPUEntry represents a single VCPU entry
 type VCPUEntry struct {
 	// short Id
-	DomainName    string
+	DomainName string
 	// micran ignore it acutally;
-	DomainID      int
-	VCPUID        int
-	CPU           int  // -1 if offline
-	State         string
-	TimeSeconds   float64
-	HardAffinity  string
-	SoftAffinity  string
+	DomainID     int
+	VCPUID       int
+	CPU          int // -1 if offline
+	State        string
+	TimeSeconds  float64
+	HardAffinity string
+	SoftAffinity string
 }
 
 type xlSubCmd string
 
 const (
-	info   xlSubCmd = "info"
-	vcpulist  xlSubCmd = "vcpu-list"
+	info     xlSubCmd = "info"
+	vcpulist xlSubCmd = "vcpu-list"
 	vcpupin  xlSubCmd = "vcpu-pin"
 	vmlist   xlSubCmd = "vm-list"
 	pause    xlSubCmd = "pause"
@@ -189,7 +188,6 @@ func newxl(subcmd xlSubCmd, args ...string) *exec.Cmd {
 	cmdArgs = append(cmdArgs, args...)
 	return exec.Command("xl", cmdArgs...)
 }
-
 
 func xlvcpu() (*XlVcpuInfo, error) {
 	var cmd *exec.Cmd
@@ -215,7 +213,6 @@ func xinfo() (*XlInfo, error) {
 
 	return parseXlInfo(out.String())
 }
-
 
 func parseXlInfo(output string) (*XlInfo, error) {
 	info := &XlInfo{}
@@ -269,7 +266,7 @@ func parseXlInfo(output string) (*XlInfo, error) {
 			if info.xlver != "" {
 				info.xlver += value
 			}
-			
+
 		case "max_cpu_id":
 			maxCpuId, err := strconv.ParseUint(value, 10, 32)
 			if err != nil {
@@ -301,7 +298,7 @@ func parseXlInfo(output string) (*XlInfo, error) {
 				return nil, fmt.Errorf("failed to parse free_cpus: %v", err)
 			}
 			info.freeCpus = uint32(freeCpus)
-			
+
 		case "xen_caps":
 			info.xenCaps = value
 		case "xen_scheduler":
@@ -359,9 +356,9 @@ func parseXlVcpuInfo(output string) (*XlVcpuInfo, error) {
 	info := &XlVcpuInfo{
 		DomainVCPUMap: make(map[string][]VCPUEntry),
 	}
-	
+
 	scanner := bufio.NewScanner(strings.NewReader(output))
-	
+
 	headerFound := false
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -370,25 +367,25 @@ func parseXlVcpuInfo(output string) (*XlVcpuInfo, error) {
 			break
 		}
 	}
-	
+
 	if !headerFound {
 		return nil, fmt.Errorf("could not find vcpu-list header")
 	}
-	
+
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
-		
+
 		vcpu, err := parseVcpuLine(line)
 		if err != nil {
 			return nil, fmt.Errorf("error parsing line '%s': %v", line, err)
 		}
-		
+
 		info.DomainVCPUMap[vcpu.DomainName] = append(info.DomainVCPUMap[vcpu.DomainName], vcpu)
 	}
-	
+
 	return info, nil
 }
 
@@ -399,23 +396,23 @@ func parseVcpuLine(line string) (VCPUEntry, error) {
 	if matches == nil {
 		return VCPUEntry{}, er.ErrOutputParse
 	}
-	
+
 	domainName := strings.TrimSpace(matches[1])
 	domainID, _ := strconv.Atoi(matches[2])
 	vcpuid, _ := strconv.Atoi(matches[3])
-	
+
 	cpu := -1
 	if matches[4] != "-" {
 		cpu, _ = strconv.Atoi(matches[4])
 	}
-	
+
 	state := "---"
 	if matches[4] != "-" {
 		state = matches[5] + matches[6] + matches[7]
 	}
-	
+
 	timeSeconds, _ := strconv.ParseFloat(matches[8], 64)
-	
+
 	affinity := matches[9]
 	parts := strings.Split(affinity, " / ")
 	hardAffinity := parts[0]
@@ -423,9 +420,9 @@ func parseVcpuLine(line string) (VCPUEntry, error) {
 	if len(parts) > 1 {
 		softAffinity = parts[1]
 	}
-	
+
 	return VCPUEntry{
-		DomainName:    domainName,
+		DomainName:   domainName,
 		DomainID:     domainID,
 		VCPUID:       vcpuid,
 		CPU:          cpu,
@@ -443,7 +440,7 @@ func (xi *XlInfo) nodePhysicalCPUNum() uint32 {
 // MemoryMB returns the amount of free and total memory in MB.
 func MemoryMB() (free, total uint32) {
 	v, _ := mem.VirtualMemory()
-	free = uint32(v.Free >> 20) // Convert bytes to MB
+	free = uint32(v.Free >> 20)   // Convert bytes to MB
 	total = uint32(v.Total >> 20) // Convert bytes to MB
 	if defs.IsMock {
 		return free, total
@@ -467,10 +464,6 @@ var (
 // This function uses sync.Once to ensure the value is calculated only once,
 // as the physical CPU count is static and won't change during runtime.
 func MaxCPUNum() uint32 {
-	if defs.IsMock {
-		return uint32(runtime.NumCPU())
-	}
-	
 	maxCPUNumOnce.Do(func() {
 		i, err := xinfo()
 		if err != nil {
@@ -481,7 +474,7 @@ func MaxCPUNum() uint32 {
 		}
 		log.Debugf("MaxCPUNum initialized to: %d", maxCPUNum)
 	})
-	
+
 	return maxCPUNum
 }
 
@@ -510,38 +503,38 @@ func Pause(id string) error {
 	return nil
 }
 
-
 func XenDefaultPedConf() string {
 	return "image.bin"
 }
 
-
 // LinuxResource2Essential converts Linux OCI resource specifications to essential resources for MICA.
 func LinuxResource2Essential(spec *specs.Spec) *EssentialResource {
-    r := InitResource()
-    // cpu
-    cpu := spec.Linux.Resources.CPU
+	r := InitResource()
+	// cpu
+	cpu := spec.Linux.Resources.CPU
 	if cpu.Quota != nil && cpu.Period != nil && *cpu.Period > 0 {
 		r.CpuPeriod = cpu.Period
 		r.CpuQuota = cpu.Quota
 		cpuCapacity := *cpu.Quota / int64(*cpu.Period)
 		if cpuCapacity > 0 {
 			*r.CpuCpacity = uint32(100 * cpuCapacity)
-		} 
+		}
 	} else {
 		log.Debugf("cpu quota/period pair = < %s:%s > is incomplete,Xen scheduler will allow all possible cpu to container", cpu.Quota, cpu.Period)
 	}
 
+	var weight uint32
 	if cpu.Shares != nil {
-		weight = ShareToWeight(uint64(*cpu.Shares))
+		weight = ShareToWeight(*cpu.Shares)
 	} else {
 		log.Debugf("cpu shares is nil, use default weight %d", DefaultXenWeight)
-		*r.CPUWeight = DefaultXenWeight
+		weight = DefaultXenWeight
 	}
+	r.CPUWeight = &weight
 
-    cpus, set, vcpuNum := validateCPUSet(cpu.Cpus)
+	cpus, set, vcpuNum := validateCPUSet(cpu.Cpus)
 
-    r.ClientCpuSet = cpus
+	r.ClientCpuSet = cpus
 
 	log.Debugf("pinning cpu set = %v, parse to %v", cpus, set)
 	// vcpuNum = calculateVCPU(&set, int(r.CpuCpacity))
@@ -552,7 +545,6 @@ func LinuxResource2Essential(spec *specs.Spec) *EssentialResource {
 	if mem != nil && mem.Limit != nil {
 		*r.MemoryLimitMB = uint32(*mem.Limit >> 20)
 	}
-
 
 	// net
 
@@ -595,7 +587,6 @@ func calculateVCPU(cpuSet *cpuset.CPUSet, vcpuAssigned int) int {
 	return cpuSet.Size()
 }
 
-
 func MemLowThreshold() uint32 {
 	if defs.IsMock {
 		return 32
@@ -604,7 +595,7 @@ func MemLowThreshold() uint32 {
 }
 
 func MemHighThreshold() uint32 {
-	xi, err :=xinfo()
+	xi, err := xinfo()
 	if err != nil {
 		return 0
 	}
@@ -620,19 +611,19 @@ func ControlOSCpuset() cpuset.CPUSet {
 	if defs.IsMock {
 		return cpuset.NewCPUSet(0, 1)
 	}
-	
+
 	vcpuInfo, err := xlvcpu()
 	if err != nil {
 		log.Debugf("failed to get vcpu info: %v", err)
 		return cpuset.NewCPUSet(0)
 	}
-	
+
 	dom0VCPUs, exists := vcpuInfo.DomainVCPUMap["Domain-0"]
 	if !exists {
 		log.Debugf("Domain-0 not found in vcpu list")
 		return cpuset.NewCPUSet(0)
 	}
-	
+
 	cpuSet := cpuset.NewCPUSet()
 	for _, vcpu := range dom0VCPUs {
 		affinityCPUs, err := parseAffinity(vcpu.HardAffinity)
@@ -642,11 +633,11 @@ func ControlOSCpuset() cpuset.CPUSet {
 		}
 		cpuSet = cpuSet.Union(affinityCPUs)
 	}
-	
+
 	if cpuSet.Size() == 0 {
 		return cpuset.NewCPUSet(0)
 	}
-	
+
 	return cpuSet
 }
 
@@ -662,11 +653,11 @@ func parseAffinity(affinity string) (cpuset.CPUSet, error) {
 		}
 		return cpuset.NewCPUSet(cpuList...), nil
 	}
-	
+
 	set, err := cpuset.Parse(affinity)
 	if err != nil {
 		return cpuset.NewCPUSet(), err
 	}
-	
+
 	return set, nil
 }

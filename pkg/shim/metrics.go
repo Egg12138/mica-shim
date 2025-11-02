@@ -77,9 +77,9 @@ func (s *shimService) DummyStats() (*ptypes.Any, error) {
 	dummyData := map[string]interface{}{
 		"cpu_stats": map[string]interface{}{
 			"cpu_usage": map[string]interface{}{
-				"total_usage":         1500000000,                       // 1.5 seconds in nanoseconds.
-				"usage_in_kernelmode": 300000000,                        // 300ms kernel time.
-				"usage_in_usermode":   1200000000,                       // 1.2 seconds user time.
+				"total_usage":         1500000000,                     // 1.5 seconds in nanoseconds.
+				"usage_in_kernelmode": 300000000,                      // 300ms kernel time.
+				"usage_in_usermode":   1200000000,                     // 1.2 seconds user time.
 				"percpu_usage":        []uint64{750000000, 750000000}, // Per-core usage.
 			},
 			"throttling_data": map[string]interface{}{

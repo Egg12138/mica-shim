@@ -17,7 +17,7 @@ import (
 // PTY device mapping and discovery constants
 const (
 	PTYDevLegacyPattern  = "/dev/ttyRPMSG%d"
-	PTYDevPattern      = "/dev/ttyRPMSG_%s"
+	PTYDevPattern        = "/dev/ttyRPMSG_%s"
 	PTYWaitTimeout       = 30 * time.Second
 	PTYDiscoveryInterval = 500 * time.Millisecond
 	MaxPTYDevLegacyNum   = 10

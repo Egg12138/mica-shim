@@ -50,7 +50,7 @@ const (
 	DefaultMaxCPU = PedPrefix + "defautl_max_cpu"
 	// DefaulaMemory specifies the maximum byte size of memory assigned for the client.
 	DefaulaMemory = PedPrefix + "default_memory"
-	PedestalConf = PedPrefix + "conf"
+	PedestalConf  = PedPrefix + "conf"
 )
 
 // Container-specific runtime settings.

@@ -431,7 +431,6 @@ func (c *Container) doStop(force bool) error {
 	}
 	currentState := c.checkState()
 	if currentState == StateStopped {
-		log.Debugf("Container %s is already stopped.", c.id)
 		return nil
 	}
 

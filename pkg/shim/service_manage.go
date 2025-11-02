@@ -115,7 +115,7 @@ func newCommand(ctx context.Context, opts shimv2.StartOpts, cwd string) (*exec.C
 
 	self, err := os.Executable()
 	if err != nil {
-			return nil, fmt.Errorf("failed to get current executable path: %w", err)
+		return nil, fmt.Errorf("failed to get current executable path: %w", err)
 	}
 
 	var args []string
@@ -266,9 +266,9 @@ func (s *shimService) StartShim(ctx context.Context, opts shimv2.StartOpts) (_ s
 		return "", err
 	}
 
-    socket, err := shimv2.NewSocket(sockAddr)
-    if err != nil {
-    log.Debugf("socket %s creation failed: %v", sockAddr, err)
+	socket, err := shimv2.NewSocket(sockAddr)
+	if err != nil {
+		log.Debugf("socket %s creation failed: %v", sockAddr, err)
 
 		// the only time where this would happen is if there is a bug and the socket
 		// was not cleaned up in the cleanup method of the shim or we are using the
@@ -285,7 +285,7 @@ func (s *shimService) StartShim(ctx context.Context, opts shimv2.StartOpts) (_ s
 			return sockAddr, nil
 		}
 
-        log.Debugf("removing stale socket and creating new one")
+		log.Debugf("removing stale socket and creating new one")
 		if err := shimv2.RemoveSocket(sockAddr); err != nil {
 			return "", errors.Wrap(err, "remove pre-existing socket")
 		}
@@ -293,7 +293,6 @@ func (s *shimService) StartShim(ctx context.Context, opts shimv2.StartOpts) (_ s
 			return "", errors.Wrap(err, "try create new shim socket second time")
 		}
 	}
-
 
 	defer func() {
 		if retErr != nil {
@@ -323,7 +322,6 @@ func (s *shimService) StartShim(ctx context.Context, opts shimv2.StartOpts) (_ s
 		log.Debugf("enable sched_core features")
 		handleSchedCore()
 	}
-
 
 	if err := cmd.Start(); err != nil {
 		_ = sock.Close()

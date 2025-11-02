@@ -13,7 +13,7 @@ import (
 func (me *MicaExecutor) UpdateSandboxPoolVCPUs() {}
 
 // number of visible vcpus
-func (me *MicaExecutor) UpdateVCPUNum(newVCPUs uint32) (oldCPUs, newCPUs uint32, retErr error)  {
+func (me *MicaExecutor) UpdateVCPUNum(newVCPUs uint32) (oldCPUs, newCPUs uint32, retErr error) {
 	cmdArgs := []string{"VCPU", strconv.Itoa(int(newVCPUs))}
 	s := strings.Join(cmdArgs, " ")
 	err := micaCtl(MUpdate, me.Id, s)
@@ -22,15 +22,15 @@ func (me *MicaExecutor) UpdateVCPUNum(newVCPUs uint32) (oldCPUs, newCPUs uint32,
 		return uint32(me.records.vcpuNum), uint32(me.records.vcpuNum), err
 	}
 	return uint32(me.records.cpuWeight), newVCPUs, err
-} 
+}
 
 // TODO: temporarily dirty-join string as command line, need to change to a better way
 func (me *MicaExecutor) UpdatePCPUConstrains(cpus string) error {
 	cmdArgs := []string{"CPU", cpus}
 	s := strings.Join(cmdArgs, " ")
-	err := micaCtl(MUpdate, me.Id,s)
+	err := micaCtl(MUpdate, me.Id, s)
 	if err != nil {
-		log.Warnf("failed to bind physical cpuset \"%s\" to container: %v", cpus,  err)
+		log.Warnf("failed to bind physical cpuset \"%s\" to container: %v", cpus, err)
 	} else {
 		me.records.cpuStr = [MaxCPUStringLen]byte{}
 		log.Info("updated to new cpuset")
@@ -38,13 +38,12 @@ func (me *MicaExecutor) UpdatePCPUConstrains(cpus string) error {
 	return err
 }
 
-
 func (me *MicaExecutor) UpdateCPUCapacity(cap uint32) error {
 	cmdArgs := []string{"CPUCpacity", strconv.Itoa(int(cap))}
 	s := strings.Join(cmdArgs, " ")
-	err := micaCtl(MUpdate, me.Id,s)
+	err := micaCtl(MUpdate, me.Id, s)
 	if err != nil {
-		log.Warnf("failed to update cap time to %d that container can run: %v", cap,  err)
+		log.Warnf("failed to update cap time to %d that container can run: %v", cap, err)
 	} else {
 		me.records.cpuCapacity = int(cap)
 		log.Info("updated to new cpu capacity")
@@ -55,9 +54,9 @@ func (me *MicaExecutor) UpdateCPUCapacity(cap uint32) error {
 func (me *MicaExecutor) UpdateCPUShare(weight uint32) error {
 	cmdArgs := []string{"CPUWeight", strconv.Itoa(int(weight))}
 	s := strings.Join(cmdArgs, " ")
-	err := micaCtl(MUpdate, me.Id,s)
+	err := micaCtl(MUpdate, me.Id, s)
 	if err != nil {
-		log.Warnf("failed to update cpu share time to %d that container can run: %v", weight,  err)
+		log.Warnf("failed to update cpu share time to %d that container can run: %v", weight, err)
 	} else {
 		me.records.cpuWeight = int(weight)
 		log.Info("updated to new cpu weight")
@@ -65,13 +64,12 @@ func (me *MicaExecutor) UpdateCPUShare(weight uint32) error {
 	return err
 }
 
-
 func (me *MicaExecutor) UpdateMemoryLimit(memMiB uint32) error {
 	cmdArgs := []string{"MaxMem", strconv.Itoa(int(memMiB))}
 	s := strings.Join(cmdArgs, " ")
-	err := micaCtl(MUpdate, me.Id,s)
+	err := micaCtl(MUpdate, me.Id, s)
 	if err != nil {
-		log.Warnf("failed to request new max memory \"%d\" to container: %v", memMiB,  err)
+		log.Warnf("failed to request new max memory \"%d\" to container: %v", memMiB, err)
 	} else {
 		me.records.memoryMB = int(memMiB)
 		log.Debugf("update max memory to %d", memMiB)
@@ -82,16 +80,15 @@ func (me *MicaExecutor) UpdateMemoryLimit(memMiB uint32) error {
 func (me *MicaExecutor) UpdateMemory(memMiB uint32) error {
 	cmdArgs := []string{"Memory", strconv.Itoa(int(memMiB))}
 	s := strings.Join(cmdArgs, " ")
-	err := micaCtl(MUpdate, me.Id,s)
+	err := micaCtl(MUpdate, me.Id, s)
 	if err != nil {
-		log.Warnf("failed to request new memory \"%d\" to container: %v", memMiB,  err)
+		log.Warnf("failed to request new memory \"%d\" to container: %v", memMiB, err)
 	} else {
 		me.records.memoryMB = int(memMiB)
 		log.Debugf("update memory to %d", memMiB)
 	}
 	return err
 }
-
 
 func (me *MicaExecutor) ReadResource() *pedestal.EssentialResource {
 	res := pedestal.InitResource()
@@ -123,8 +120,7 @@ func (me *MicaExecutor) ReadResource() *pedestal.EssentialResource {
 	return res
 }
 
-
-func (me *MicaExecutor) VcpuPin(cpuList []int) error {	
+func (me *MicaExecutor) VcpuPin(cpuList []int) error {
 	cpustr := pedestal.ParseCPUArr(cpuList)
 	if cpustr == "" {
 		return fmt.Errorf("received cpuList %v, parsed into an empty array", cpuList)

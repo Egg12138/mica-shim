@@ -217,9 +217,10 @@ func getDebugInfoPrefix(depth int) string {
 	pc_parent, _, _, ok := runtime.Caller(depth + 1)
 	if ok {
 		fullFuncName := runtime.FuncForPC(pc_parent).Name()
-		funcName := filepath.Base(fullFuncName)
-		splited := strings.Split(funcName, ".")
-		funcName = splited[len(splited)-1]
+		funcName := fullFuncName
+		if lastDot := strings.LastIndex(fullFuncName, "."); lastDot >= 0 {
+			funcName = fullFuncName[lastDot+1:]
+		}
 		if noColor {
 			prefix += fmt.Sprintf(" %s() --> ", funcName)
 		} else {
@@ -233,6 +234,9 @@ func getDebugInfoPrefix(depth int) string {
 		file, line := runtime.FuncForPC(pc).FileLine(pc)
 		file = filepath.Base(file)
 		callee = fullFuncName
+		if lastDot := strings.LastIndex(fullFuncName, "."); lastDot >= 0 {
+			callee = fullFuncName[lastDot+1:]
+		}
 		if noColor {
 			prefix += fmt.Sprintf("%s(), @[%s:%d]  ", callee, file, line)
 		} else {

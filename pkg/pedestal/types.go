@@ -5,9 +5,9 @@ import "strings"
 type PedType int
 
 type PedestalConfig struct {
-	PedType      PedType
-	PedConfig    string
-	MiniVCPUNum   uint32		
+	PedType     PedType
+	PedConfig   string
+	MiniVCPUNum uint32
 }
 
 const (

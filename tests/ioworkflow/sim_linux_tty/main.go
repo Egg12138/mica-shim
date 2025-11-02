@@ -26,10 +26,10 @@ func resolveFDPath(f *os.File) (string, error) {
 
 func main() {
 	var (
-		linkPath   string
-		shellPath  string
-		shellArgs  string
-		termEnv    string
+		linkPath  string
+		shellPath string
+		shellArgs string
+		termEnv   string
 	)
 
 	flag.StringVar(&linkPath, "link-path", "/tmp/ttyRPMSG3", "Symlink path to expose the PTY slave (no root required)")
@@ -50,12 +50,12 @@ func main() {
 	// Set PTY to raw mode for proper terminal handling
 	// Note: Commented out for now as it might interfere with shell
 	/*
-	oldState, err := term.MakeRaw(int(master.Fd()))
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to set pty to raw mode: %v\n", err)
-		os.Exit(1)
-	}
-	defer term.Restore(int(master.Fd()), oldState)
+		oldState, err := term.MakeRaw(int(master.Fd()))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to set pty to raw mode: %v\n", err)
+			os.Exit(1)
+		}
+		defer term.Restore(int(master.Fd()), oldState)
 	*/
 
 	// Resolve slave path (e.g., /dev/pts/N)

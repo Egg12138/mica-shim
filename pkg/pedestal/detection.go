@@ -109,13 +109,14 @@ func detectACRN() bool {
 }
 
 const hpsupport = false
+
 // for xen, if ballooning driver was enable, hugepage is not supported
-func HugePageSupport(dynamicMem bool) bool { 
+func HugePageSupport(dynamicMem bool) bool {
 	if dynamicMem || GetHostPed() != Xen {
 		return false
 	}
 
-	if ConflictKoLoaded, err := utils.KoLoaded(balloonDriverName); err != nil && hpsupport{
+	if ConflictKoLoaded, err := utils.KoLoaded(balloonDriverName); err != nil && hpsupport {
 		return !ConflictKoLoaded
 	}
 

@@ -292,7 +292,7 @@ func TestMicaExecutor_ReadResource(t *testing.T) {
 					vcpuNum:     4,
 					cpuWeight:   1024,
 					cpuCapacity: 50,
-					memoryMB:      256,
+					memoryMB:    256,
 					cpuStr:      [MaxCPUStringLen]byte{'0', '-', '3', ',', '5'},
 				},
 				Id: "test-container",
@@ -315,7 +315,7 @@ func TestMicaExecutor_ReadResource(t *testing.T) {
 					vcpuNum:     0,
 					cpuWeight:   0,
 					cpuCapacity: 0,
-					memoryMB:      0,
+					memoryMB:    0,
 					cpuStr:      [MaxCPUStringLen]byte{},
 				},
 				Id: "test-container-zero",
@@ -336,20 +336,20 @@ func TestMicaExecutor_ReadResource(t *testing.T) {
 					vcpuNum:     2,
 					cpuWeight:   0, // zero, so not set
 					cpuCapacity: 75,
-					memoryMB:      0, // zero, so not set
+					memoryMB:    0, // zero, so not set
 					cpuStr:      [MaxCPUStringLen]byte{'1', ',', '2'},
 				},
 				Id: "test-container-partial",
 			},
 			want: &pedestal.EssentialResource{
-				CpuPeriod:    func() *uint64 { v := uint64(10000); return &v }(),
-				CpuQuota:     func() *int64 { v := int64(0); return &v }(),
-				CpuCpacity:   func() *uint32 { v := uint32(75); return &v }(), // From records.cpuCapacity
-				Vcpu:         func() *uint32 { v := uint32(2); return &v }(),
-				CPUWeight:    nil, // not set because cpuWeight is 0
+				CpuPeriod:     func() *uint64 { v := uint64(10000); return &v }(),
+				CpuQuota:      func() *int64 { v := int64(0); return &v }(),
+				CpuCpacity:    func() *uint32 { v := uint32(75); return &v }(), // From records.cpuCapacity
+				Vcpu:          func() *uint32 { v := uint32(2); return &v }(),
+				CPUWeight:     nil, // not set because cpuWeight is 0
 				MemoryLimitMB: nil, // not set because memory is 0
-				ClientCpuSet: "1,2",
-				MemoryMinMB:  32,
+				ClientCpuSet:  "1,2",
+				MemoryMinMB:   32,
 			},
 		},
 		{
@@ -359,7 +359,7 @@ func TestMicaExecutor_ReadResource(t *testing.T) {
 					vcpuNum:     1,
 					cpuWeight:   512,
 					cpuCapacity: 25,
-					memoryMB:      128,
+					memoryMB:    128,
 					cpuStr:      [MaxCPUStringLen]byte{'0', '-', '7', 0, 0, 0}, // with null bytes
 				},
 				Id: "test-container-null",

@@ -93,21 +93,21 @@ func (s *iostream) ensureDevice() error {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-    // Legacy numeric discovery ONLY in mock mode
-    if defs.IsMock {
-        deadline := time.Now().Add(2 * time.Second)
-        for time.Now().Before(deadline) {
-            for i := range libmica.MaxPTYDevLegacyNum {
-                path := fmt.Sprintf(libmica.PTYDevLegacyPattern, i)
-                if f, err := os.OpenFile(path, os.O_RDWR, 0); err == nil {
-                    s.pty = f
-                    return nil
-                }
-            }
-            time.Sleep(100 * time.Millisecond)
-        }
-    }
-    return fmt.Errorf("pty device not found for client %s", s.container.id)
+	// Legacy numeric discovery ONLY in mock mode
+	if defs.IsMock {
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			for i := range libmica.MaxPTYDevLegacyNum {
+				path := fmt.Sprintf(libmica.PTYDevLegacyPattern, i)
+				if f, err := os.OpenFile(path, os.O_RDWR, 0); err == nil {
+					s.pty = f
+					return nil
+				}
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	return fmt.Errorf("pty device not found for client %s", s.container.id)
 }
 
 func (s *iostream) stdin() io.WriteCloser {

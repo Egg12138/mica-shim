@@ -25,7 +25,7 @@ type sectionFilter func(string) bool
 // with a simple lowercase section title filter
 func ParseConfigINI(configPath string, whiteList []string) (map[string]string, error) {
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		log.Debugf("ini config file %s does not exist, return an empty map",configPath)
+		log.Debugf("ini config file %s does not exist, return an empty map", configPath)
 		return make(map[string]string), nil
 	}
 
@@ -67,7 +67,7 @@ func ParseConfigINI(configPath string, whiteList []string) (map[string]string, e
 			sepIndex = strings.IndexByte(line, ':')
 		}
 		if sepIndex == -1 {
-			continue 
+			continue
 		}
 
 		key := strings.ToLower(strings.TrimSpace(line[:sepIndex]))
