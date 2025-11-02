@@ -352,8 +352,6 @@ class MicaImageBuilder:
         return description
 
     def get_image_names(self):
-        scratch_name = f"{self.registry}/mica-{self.os_type}-{self.pedestal}-scratch"
-
         # Three-part image naming: registry, app name, version
         print(f"\nImage naming (current registry: {self.registry})")
 
@@ -380,33 +378,31 @@ class MicaImageBuilder:
         )
         print(f"Final image name: {self.image_name}")
 
-        return scratch_name
+        return self.image_name
 
-    def generate_dockerfile_scratch(self):
-        labels, annotations = self.label_manager.get_scratch_labels_and_annotations(
-            self.pedestal, self.os_type
+    def generate_dockerfile_final(self):
+        scratch_labels, scratch_annotations = (
+            self.label_manager.get_scratch_labels_and_annotations(
+                self.pedestal, self.os_type
+            )
         )
+        final_labels, final_annotations = (
+            self.label_manager.get_final_labels_and_annotations(
+                self.pedestal,
+                self.os_type,
+                xen_image_path=self.xen_image_path if self.pedestal == "xen" else None,
+                firmware_path="/firmware.elf",  # Container path, not source path
+                custom_description=self.image_description,
+                zephyr_version=getattr(self, "zephyr_version", "3.7.1"),
+                uniproton_version=getattr(self, "uniproton_version", "latest"),
+            )
+        )
+
+        labels = {**scratch_labels, **final_labels}
+        annotations = {**scratch_annotations, **final_annotations}
         labels_formatted = self.label_manager.format_docker_labels(labels)
 
         dockerfile_content = f"""FROM scratch
-{labels_formatted}
-"""
-
-        return dockerfile_content.encode("utf-8"), labels, annotations
-
-    def generate_dockerfile_final(self, scratch_name):
-        labels, annotations = self.label_manager.get_final_labels_and_annotations(
-            self.pedestal,
-            self.os_type,
-            xen_image_path=self.xen_image_path if self.pedestal == "xen" else None,
-            firmware_path="/firmware.elf",  # Container path, not source path
-            custom_description=self.image_description,
-            zephyr_version=getattr(self, "zephyr_version", "3.7.1"),
-            uniproton_version=getattr(self, "uniproton_version", "latest"),
-        )
-        labels_formatted = self.label_manager.format_docker_labels(labels)
-
-        dockerfile_content = f"""FROM {scratch_name}:latest
 
 ARG FIRMWARE_BUNDLE_PATH="/firmware.elf"
 """
@@ -426,8 +422,8 @@ ADD {self.firmware_path} ${{FIRMWARE_BUNDLE_PATH}}
         # Add minimal CMD for RTOS containers
         # For RTOS, the firmware runs automatically via mica runtime
         # Use a portable shell script for OCI compliance across all architectures
-        dockerfile_content += "\nADD mica-image-builder/entry-mica.sh /entry-mica.sh\n"
-        dockerfile_content += 'CMD ["/entry-mica.sh"]\n'
+        # dockerfile_content += "\nADD mica-image-builder/entry-mica.sh /entry-mica.sh\n"
+        # dockerfile_content += 'CMD ["/entry-mica.sh"]\n'
 
         return dockerfile_content.encode("utf-8"), labels, annotations
 
@@ -448,7 +444,9 @@ ADD {self.firmware_path} ${{FIRMWARE_BUNDLE_PATH}}
         # In dry-run, just print and continue to show CLI commands that would be executed.
         if self.dry_run:
             print("[dry-run] Dockerfile printed above.")
-            return self._build_with_docker_cli(dockerfile_content, tag, build_context, annotations=annotations)
+            return self._build_with_docker_cli(
+                dockerfile_content, tag, build_context, annotations=annotations
+            )
 
         # Use Docker SDK with a Dockerfile path inside the build context.
         # Do not pass raw bytes as fileobj because the SDK expects a tar stream.
@@ -524,6 +522,7 @@ ADD {self.firmware_path} ${{FIRMWARE_BUNDLE_PATH}}
         try:
             # Use buildx for multi-architecture builds or regular docker build
             if self.platform:
+                multi_platform = "," in self.platform or self.platform == "all"
                 cmd = [
                     "docker",
                     "buildx",
@@ -537,10 +536,10 @@ ADD {self.firmware_path} ${{FIRMWARE_BUNDLE_PATH}}
                 ]
                 # For multi-arch builds, we need to push to registry
                 # unless it's a dry run
-                if not self.dry_run and (
-                    "," in self.platform or self.platform == "all"
-                ):
+                if not self.dry_run and multi_platform:
                     cmd.append("--push")
+                else:
+                    cmd.append("--load")
             else:
                 cmd = [
                     "docker",
@@ -620,6 +619,44 @@ ADD {self.firmware_path} ${{FIRMWARE_BUNDLE_PATH}}
             print(f"Failed to push {tag}: {e}")
             return False
 
+    def export_image(self, tag, export_dir="."):
+        """Export a Docker image to a tarball in the specified directory."""
+        export_dir_path = Path(export_dir or ".").expanduser()
+        print(f"Exporting image: {tag}")
+        print(f"Export directory: {export_dir_path}")
+
+        if self.dry_run:
+            print(f"[dry-run] Would export image {tag} to {export_dir_path}")
+            return True
+
+        try:
+            export_dir_path.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            print(f"Failed to prepare export directory {export_dir_path}: {e}")
+            return False
+
+        safe_name = tag.replace("/", "_").replace(":", "_")
+        export_path = export_dir_path / f"{safe_name}.tar"
+
+        try:
+            try:
+                image = self.client.images.get(tag)
+            except Exception:
+                print(
+                    f"Image {tag} not found locally. Attempting to pull from registry..."
+                )
+                image = self.client.images.pull(tag)
+
+            with export_path.open("wb") as f:
+                for chunk in image.save(named=True):
+                    f.write(chunk)
+
+            print(f"Image exported to {export_path}")
+            return True
+        except Exception as e:
+            print(f"Failed to export image {tag}: {e}")
+            return False
+
     def check_registry_access(self):
         import requests
 
@@ -641,14 +678,16 @@ ADD {self.firmware_path} ${{FIRMWARE_BUNDLE_PATH}}
             except Exception as e:
                 print(f"  Failed to remove {tag}: {e}")
 
-    def interactive_build(self, no_push=False, dry_run=False):
+    def interactive_build(self, no_push=False, dry_run=False, export_path=None):
         """Interactive build method with support for no_push and dry_run parameters"""
         print("=== Mica Image Builder ===")
 
         # Set dry_run mode if requested
         if dry_run:
             self.dry_run = True
-            print("[dry-run] Running in dry-run mode - no actual Docker operations will be performed")
+            print(
+                "[dry-run] Running in dry-run mode - no actual Docker operations will be performed"
+            )
 
         # Setup registry unless in dry-run mode or explicitly no_push
         if not self.dry_run and not no_push:
@@ -667,15 +706,33 @@ ADD {self.firmware_path} ${{FIRMWARE_BUNDLE_PATH}}
         # Get custom image description
         self.image_description = self.get_image_description()
 
-        # Get image names (this also sets self.image_name)
-        scratch_name = self.get_image_names()
+        # Get image name (this also sets self.image_name)
+        self.get_image_names()
+
+        # Determine export behavior
+        export_requested = False
+        export_dir = None
+        if export_path is not None:
+            export_dir = export_path or "."
+            export_requested = True
+            print(f"Exporting final image tarball to: {Path(export_dir).expanduser()}")
+        else:
+            export_choice = (
+                input("\nExport final image as tarball? (y/N): ").strip().lower()
+            )
+            if export_choice == "y":
+                export_dir_input = input(
+                    "Enter export directory (default: current directory): "
+                ).strip()
+                export_dir = export_dir_input or "."
+                export_requested = True
 
         # Determine push behavior
         push_images = False
         if not self.dry_run and not no_push:
             # Ask if user wants to push to registry
             push_local = input("\nPush to local registry? (y/N): ").strip().lower()
-            push_images = (push_local == "y")
+            push_images = push_local == "y"
 
         # Use the unified build method
         success = self.unified_build(push_images=push_images)
@@ -691,47 +748,33 @@ ADD {self.firmware_path} ${{FIRMWARE_BUNDLE_PATH}}
                     "Enter remote registry (e.g., registry.example.com): "
                 ).strip()
 
-                # Determine the local image names that were built
-                if push_images:
-                    local_scratch = f"{scratch_name}:latest"
-                    local_final = self.image_name
-                else:
-                    # Extract names from full image paths
-                    local_scratch = f"{scratch_name.split('/')[-1]}:latest"
-                    local_final = self.image_name.split('/')[-1]
-
-                remote_scratch = f"{remote_registry}/{scratch_name.split('/')[-1]}"
-                remote_final = f"{remote_registry}/{self.image_name.split('/')[-1]}"
-
                 try:
-                    # Tag and push scratch image
-                    scratch_image = self.client.images.get(local_scratch)
-                    scratch_image.tag(remote_scratch, "latest")
-                    self.push_image(f"{remote_scratch}:latest")
+                    local_final = self.image_name
+                    local_repo = local_final
+                    local_tag = "latest"
+                    last_segment = local_final.rsplit("/", 1)[-1]
+                    if ":" in last_segment:
+                        local_repo, local_tag = local_final.rsplit(":", 1)
 
-                    # Tag and push final image
+                    remote_repo_suffix = local_repo.split("/", 1)[-1]
+                    remote_repo = f"{remote_registry}/{remote_repo_suffix}"
+
                     final_image = self.client.images.get(local_final)
-                    final_image.tag(remote_final, "latest")
-                    self.push_image(f"{remote_final}:latest")
+                    final_image.tag(remote_repo, local_tag)
+                    self.push_image(f"{remote_repo}:{local_tag}")
                 except Exception as e:
                     print(f"Failed to push to remote registry: {e}")
                     return False
+
+        if export_requested:
+            if not self.export_image(self.image_name, export_dir or "."):
+                return False
 
         return True
 
     def unified_build(self, push_images=False):
         """Unified build method that both interactive and CLI modes can use"""
         print(f"\n=== Building Mica {self.os_type} Container Images ===")
-
-        # Determine image naming strategy based on push flag
-        if push_images:
-            scratch_name = f"{self.registry}/mica-{self.os_type}-{self.pedestal}-scratch"
-        else:
-            scratch_name = f"mica-{self.os_type}-{self.pedestal}-scratch"
-            # Update builder image name to be local too if needed
-            if self.image_name and "/" in self.image_name:
-                local_name = self.image_name.split("/")[-1]
-                self.image_name = local_name
 
         built_images = []
         build_ctx = str(Path(__file__).absolute().parent.parent)
@@ -742,7 +785,6 @@ ADD {self.firmware_path} ${{FIRMWARE_BUNDLE_PATH}}
         print(f"Firmware: {self.firmware_path}")
         if self.pedestal == "xen":
             print(f"Xen image: {self.xen_image_path}")
-        print(f"Scratch image: {scratch_name}:latest")
         print(f"Final image: {self.image_name}")
         if self.platform:
             print(f"Platform(s): {self.platform}")
@@ -755,34 +797,10 @@ ADD {self.firmware_path} ${{FIRMWARE_BUNDLE_PATH}}
         if self.pedestal == "xen":
             print(f"Debug - Final Xen image path in Dockerfile: {self.xen_image_path}")
 
-        # Build scratch image
-        print("\nBuilding scratch image...")
-        scratch_dockerfile, scratch_labels, scratch_annotations = self.generate_dockerfile_scratch()
-
-        if self.dry_run:
-            print("[dry-run] Scratch Dockerfile preview below:")
-            print(scratch_dockerfile.decode("utf-8"))
-            print(f"[dry-run] Annotations to be applied: {scratch_annotations}")
-
-        if not self.build_image_with_dockerfile(
-            scratch_dockerfile,
-            f"{scratch_name}:latest",
-            build_context=build_ctx,
-            annotations=scratch_annotations,
-        ):
-            return False
-        built_images.append(f"{scratch_name}:latest")
-
-        # Push scratch image if requested
-        if push_images:
-            print("\nPushing scratch image...")
-            if not self.push_image(f"{scratch_name}:latest"):
-                self.cleanup_images(built_images)
-                return False
-
-        # Build final image
         print("\nBuilding final image...")
-        final_dockerfile, final_labels, final_annotations = self.generate_dockerfile_final(scratch_name)
+        final_dockerfile, final_labels, final_annotations = (
+            self.generate_dockerfile_final()
+        )
 
         if self.dry_run:
             print("[dry-run] Final Dockerfile preview below:")
@@ -807,7 +825,6 @@ ADD {self.firmware_path} ${{FIRMWARE_BUNDLE_PATH}}
                 return False
 
         print("\nBuild completed successfully!")
-        print(f"Scratch image: {scratch_name}:latest")
         print(f"Final image: {self.image_name}")
         if self.platform:
             print(f"Platform(s): {self.platform}")
@@ -839,6 +856,10 @@ Examples:
   # CLI mode with custom version
   python3 mica-image-builder.py --pedestal xen --os zephyr \\
     --firmware firmware.elf --xen-image xen.bin --version 2.0
+
+  # Export final image tarball to ./exports
+  python3 mica-image-builder.py --pedestal xen --os zephyr \\
+    --firmware firmware.elf --xen-image xen.bin --export ./exports
 
   # Multi-architecture build for amd64 and arm64
   python3 mica-image-builder.py --pedestal xen --os zephyr \\
@@ -912,6 +933,13 @@ Examples:
         "--dry-run",
         action="store_true",
         help="Generate Dockerfiles and print actions without invoking Docker (works with both interactive and CLI modes)",
+    )
+    parser.add_argument(
+        "--export",
+        nargs="?",
+        const=".",
+        default=None,
+        help="Export the final image as a tarball. Optionally provide the target directory (defaults to current directory).",
     )
     parser.add_argument(
         "--platform",
@@ -1018,7 +1046,14 @@ def cli_build(builder, args):
                 return False
 
         # Use the unified build method
-        return builder.unified_build(push_images=args.push)
+        success = builder.unified_build(push_images=args.push)
+
+        if success and args.export is not None:
+            export_dir = args.export or "."
+            if not builder.export_image(builder.image_name, export_dir):
+                return False
+
+        return success
 
     finally:
         # Restore original working directory
@@ -1034,7 +1069,9 @@ if __name__ == "__main__":
             success = cli_build(builder, args)
         else:
             # Interactive mode - pass no_push and dry_run arguments if provided
-            success = builder.interactive_build(no_push=args.no_push, dry_run=args.dry_run)
+            success = builder.interactive_build(
+                no_push=args.no_push, dry_run=args.dry_run, export_path=args.export
+            )
         sys.exit(0 if success else 1)
     except KeyboardInterrupt:
         print("\nBuild cancelled by user")
