@@ -205,7 +205,7 @@ func CleanDebugFile() error {
 func getDebugInfoPrefix(depth int) string {
 	var prefix = ""
 
-	noColor := os.Getenv("LOG_COLOR") == ""
+	noColor := os.Getenv("LOG_COLOR") != ""
 
 	timestamp := time.Now().Format("15:04:05")
 	if noColor {

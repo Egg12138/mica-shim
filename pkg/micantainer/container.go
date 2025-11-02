@@ -452,10 +452,10 @@ func (c *Container) stop(ctx context.Context, force bool) error {
 
 	var err error
 	if err = c.doStop(force); err != nil {
-		log.Debugf("+++++ failed to stop contaienr %s: %v", c.id, err)
+		log.Debugf("failed to stop container %s: %v", c.id, err)
 		return err
 	}
-	log.Debugf("+++++ stopped contaienr %s", c.id)
+	log.Debugf("container %s stopped", c.id)
 
 	if err = c.setContainerState(ctx, StateStopped); err != nil {
 		return err
@@ -480,10 +480,10 @@ func (c *Container) kill() error {
 	if libmica.ClientNotExist(c.id) {
 		return c.setContainerState(c.ctx, StateStopped)
 	} else if err := c.doStop(true); err != nil {
-		log.Debugf("+++++ failed to stop contaienr %s", c.id)
+		log.Debugf("failed to stop container %s: %v", c.id, err)
 		return err
 	}
-	log.Debugf("+++++ stopped contaienr %s", c.id)
+	log.Debugf("container %s stopped", c.id)
 
 	if err := c.setContainerState(c.ctx, StateStopped); err != nil {
 		return err
@@ -546,7 +546,7 @@ func (c *Container) resume(ctx context.Context) error {
 	if c.config != nil && c.config.IsInfra {
 		return c.setContainerState(ctx, StateRunning)
 	}
-	log.Debugf("Micran restart a client os, acting as `resume`.")
+	log.Debugf("resuming container %s (restarting RTOS)", c.id)
 	if err := libmica.Start(c.id); err != nil {
 		return er.MicadOpFailed
 	}
@@ -674,8 +674,6 @@ func validOS(os string) bool {
 
 // validComponent checks if a component file is a regular file.
 func validComponent(component string) bool {
-	log.Debugf("File %s exist: %v.", component, utils.FileExist(component))
-	log.Debugf("File %s is regular: %v.", component, utils.IsRegular(component))
 	if !utils.IsRegular(component) {
 		return false
 	}
@@ -720,16 +718,6 @@ func (c *Container) validMicaContainer() bool {
 		return true
 	}
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		log.Errorf("failed to get current working directory: %v", err)
-		return false
-	}
-
-	log.Debugf("current working dir: %s", cwd)
-	log.Debugf("current env variable $PATH: %s", os.Getenv("PATH"))
-	mCpuNum := ped.MaxCPUNum()
-	log.Debugf("*******************max machine cpu number: %d", mCpuNum)
 	osValid := validOS(c.GetOS())
 	fwValid := validFirmware(c.GetFirmwarePath())
 	if HostPedType == ped.Xen {
@@ -737,12 +725,7 @@ func (c *Container) validMicaContainer() bool {
 		fwValid = binFile && fwValid
 	}
 	judge := osValid && fwValid
-	log.Debugf(`
-	validMicaContainer:
-		osValid = %v,
-		fwValid = %v,
-		judge = %v
-	`, osValid, fwValid, judge)
+	log.Debugf("container validation: os=%v, firmware=%v, valid=%v", osValid, fwValid, judge)
 
 	return judge
 }
@@ -1033,7 +1016,7 @@ func (c *Container) winresize(height, width uint32) error {
 	if c.notOperational() {
 		return fmt.Errorf("container not ready or running, impossible to resize the container pty")
 	}
-	log.Debugf("Resize pty -> %dx%d.", width, height)
+	log.Debugf("resizing PTY for container %s to %dx%d", c.id, width, height)
 	return nil
 }
 

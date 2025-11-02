@@ -87,7 +87,7 @@ func InList(list []string, item string) bool {
 
 // LsofSocket returns a slice of PIDs using the given socket path
 // It runs lsof to check which processes are using the socket
-func LsofSocket(socketPath string) []int {
+func LsofSocket(socketPath string, command string) []int {
 	var pids []int
 	cmd := exec.Command("lsof", socketPath)
 	output, err := cmd.Output()
@@ -104,6 +104,9 @@ func LsofSocket(socketPath string) []int {
 
 		fields := strings.Fields(line)
 		if len(fields) >= 2 {
+			if fields[0] != command {
+				continue
+			}
 			if pid, err := strconv.Atoi(fields[1]); err == nil {
 				pids = append(pids, pid)
 			}

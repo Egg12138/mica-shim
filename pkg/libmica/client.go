@@ -327,12 +327,12 @@ func Start(id string) error {
 }
 
 // TODO: Extend mica response data, loading more information
-// TODO: if client.socket does not exist, return nil; the logic is in dangerous,
+// TODO: completely migrate remove to stop, currently use remove instead of stop
 // we have to make sure that client os is down really
 func Stop(id string) error {
 	if ClientNotExist(id) {
 		log.Infof("%s is already down, not need to stop it", id)
-	} else if err := micaCtl(MStop, id); err != nil {
+	} else if err := micaCtl(MRemove, id); err != nil {
 		return fmt.Errorf("failed to stop mica client %s %w", id, err)
 	}
 	return nil

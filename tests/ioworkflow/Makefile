@@ -7,14 +7,18 @@ OUT_DIR := out
 CMD_DIR := cmd
 SIM_DIR := sim_rtos
 LINUX_TTY_DIR := sim_linux_tty
+XEN_TERMINAL_DIR := xen_terminal
+XEN_OUTPUT_DIR := xen_output_handler
 
 # Binaries
 HOST_DRIVER := $(BIN_DIR)/host-driver
 SIM_RTOS := $(BIN_DIR)/sim_rtos
 SIM_LINUX_TTY := $(BIN_DIR)/sim_linux_tty
+XEN_TERMINAL := $(BIN_DIR)/xen_terminal
+XEN_OUTPUT_HANDLER := $(BIN_DIR)/xen_output_handler
 
 # Go build flags
-GO_BUILD_FLAGS := 
+GO_BUILD_FLAGS :=
 GO_ARM64_FLAGS := GOOS=linux GOARCH=arm64
 GO_X64_FLAGS := GOOS=linux GOARCH=amd64
 
@@ -36,11 +40,11 @@ all: native
 
 # Native x64 build for simulation testing
 .PHONY: native
-native: $(HOST_DRIVER)-native $(SIM_RTOS)-native $(SIM_LINUX_TTY)-native
+native: $(HOST_DRIVER)-native $(SIM_RTOS)-native $(SIM_LINUX_TTY)-native $(XEN_TERMINAL)-native $(XEN_OUTPUT_HANDLER)-native
 
 # ARM64 cross-compilation for real MCU testing
 .PHONY: arm64
-arm64: $(HOST_DRIVER)-arm64 $(SIM_RTOS)-arm64 $(SIM_LINUX_TTY)-arm64
+arm64: $(HOST_DRIVER)-arm64 $(SIM_RTOS)-arm64 $(SIM_LINUX_TTY)-arm64 $(XEN_TERMINAL)-arm64 $(XEN_OUTPUT_HANDLER)-arm64
 
 # Build host-driver for native x64
 $(HOST_DRIVER)-native:
@@ -75,6 +79,28 @@ $(SIM_LINUX_TTY)-arm64:
 	@mkdir -p $(BIN_DIR)
 	$(GO_ARM64_FLAGS) go build $(GO_BUILD_FLAGS) -o $@ ./$(LINUX_TTY_DIR)
 
+# Build xen_terminal for native x64
+$(XEN_TERMINAL)-native:
+	@mkdir -p $(BIN_DIR)
+	$(GO_X64_FLAGS) go build $(GO_BUILD_FLAGS) -o $@ ./$(XEN_TERMINAL_DIR)
+	@ln -sf $(notdir $@) $(XEN_TERMINAL) 2>/dev/null || true
+
+# Build xen_output_handler for native x64
+$(XEN_OUTPUT_HANDLER)-native:
+	@mkdir -p $(BIN_DIR)
+	$(GO_X64_FLAGS) go build $(GO_BUILD_FLAGS) -o $@ ./$(XEN_OUTPUT_DIR)
+	@ln -sf $(notdir $@) $(XEN_OUTPUT_HANDLER) 2>/dev/null || true
+
+# Build xen_terminal for ARM64
+$(XEN_TERMINAL)-arm64:
+	@mkdir -p $(BIN_DIR)
+	$(GO_ARM64_FLAGS) go build $(GO_BUILD_FLAGS) -o $@ ./$(XEN_TERMINAL_DIR)
+
+# Build xen_output_handler for ARM64
+$(XEN_OUTPUT_HANDLER)-arm64:
+	@mkdir -p $(BIN_DIR)
+	$(GO_ARM64_FLAGS) go build $(GO_BUILD_FLAGS) -o $@ ./$(XEN_OUTPUT_DIR)
+
 # Build both architectures
 .PHONY: both
 both: native arm64
@@ -100,10 +126,14 @@ deploy: arm64
 		sshpass -p '$(TARGET_PASS)' scp $(HOST_DRIVER)-arm64 $(TARGET_HOST):$(TARGET_PATH)/host-driver; \
 		sshpass -p '$(TARGET_PASS)' scp $(SIM_RTOS)-arm64 $(TARGET_HOST):$(TARGET_PATH)/sim_rtos; \
 		sshpass -p '$(TARGET_PASS)' scp $(SIM_LINUX_TTY)-arm64 $(TARGET_HOST):$(TARGET_PATH)/sim_linux_tty; \
+		sshpass -p '$(TARGET_PASS)' scp $(XEN_OUTPUT_HANDLER)-arm64 $(TARGET_HOST):$(TARGET_PATH)/xen_output_handler; \
+		sshpass -p '$(TARGET_PASS)' scp $(XEN_TERMINAL)-arm64 $(TARGET_HOST):$(TARGET_PATH)/xen_terminal; \
 	else \
 		scp $(HOST_DRIVER)-arm64 $(TARGET_HOST):$(TARGET_PATH)/host-driver; \
 		scp $(SIM_RTOS)-arm64 $(TARGET_HOST):$(TARGET_PATH)/sim_rtos; \
 		scp $(SIM_LINUX_TTY)-arm64 $(TARGET_HOST):$(TARGET_PATH)/sim_linux_tty; \
+		scp $(XEN_OUTPUT_HANDLER)-arm64 $(TARGET_HOST):$(TARGET_PATH)/xen_output_handler; \
+		scp $(XEN_TERMINAL)-arm64 $(TARGET_HOST):$(TARGET_PATH)/xen_terminal; \
 	fi
 	@echo "Deployment complete."
 

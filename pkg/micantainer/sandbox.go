@@ -254,7 +254,7 @@ func (s *Sandbox) Start(ctx context.Context) error {
 
 	// If already running, ensure all containers are running
 	if cur == StateRunning {
-		log.Debugf("sandbox %s is already running; ensuring containers are running", s.id)
+		log.Debugf("sandbox %s already running, checking containers", s.id)
 		for _, c := range s.containers {
 			if c.checkState() != StateRunning {
 				if err := c.start(ctx); err != nil {
@@ -279,7 +279,7 @@ func (s *Sandbox) Start(ctx context.Context) error {
 		log.Info("setstate error")
 		return err
 	}
-	log.Debugf("1, state from %s => %s", oldState, s.state.State)
+	log.Debugf("sandbox state: %s -> %s", oldState, s.state.State)
 
 	var startErr error
 	defer func() {
@@ -298,15 +298,13 @@ func (s *Sandbox) Start(ctx context.Context) error {
 		return err
 	}
 
-	log.Debugf("sandbox %s started", s.id)
-	return nil
+		return nil
 }
 
 // Stop stops all containers inside the sandbox as well as sandbox itself
 func (s *Sandbox) Stop(ctx context.Context, force bool) error {
 	if s.state.State == StateStopped {
-		log.Debugf("sandbox %s is already stopped", s.id)
-		return nil
+				return nil
 	}
 
 	if err := s.state.Transition(s.state.State, StateStopped); err != nil {

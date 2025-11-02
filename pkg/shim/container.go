@@ -43,6 +43,44 @@ type container struct {
 	terminal    bool
 	mounted     bool
 	pid         uint32
+	execs       map[string]*execProcess
+}
+
+type execProcess struct {
+	id         string
+	pid        uint32
+	// we use contaienrd shim task status to represent process status
+	status     task.Status
+	exitStatus uint32
+	exitTime   time.Time
+	waitCh     chan struct{}
+	waitOnce   sync.Once
+}
+
+func newExecProcess(id string) *execProcess {
+	return &execProcess{
+		id:     id,
+		status: task.Status_CREATED,
+		waitCh: make(chan struct{}),
+	}
+}
+
+func (p *execProcess) markStarted(pid uint32) {
+	p.pid = pid
+	p.status = task.Status_RUNNING
+}
+
+func (p *execProcess) markExited(exitStatus uint32) (changed bool) {
+	if p.status != task.Status_STOPPED {
+		p.status = task.Status_STOPPED
+		p.exitStatus = exitStatus
+		p.exitTime = time.Now()
+		changed = true
+	}
+	p.waitOnce.Do(func() {
+		close(p.waitCh)
+	})
+	return changed
 }
 
 // newContainer creates a new container object for the shim.
@@ -71,6 +109,7 @@ func newContainer(s *shimService, r *taskAPI.CreateTaskRequest, cType cntr.Conta
 		terminal:    r.Terminal,
 		mounted:     mounted,
 		pid:         shimPid,
+		execs:       make(map[string]*execProcess),
 	}
 
 	return c, nil
@@ -130,10 +169,10 @@ func newTtyIO(ctx context.Context, id, stdin, stdout, stderr string, terminal bo
 	case "fifo":
 		ioImpl, err = newPipeIO(ctx, stream)
 	case "binary":
-		log.Debugf("************ binary io ************")
+		log.Debugf("using binary IO for container %s", id)
 		ioImpl, err = newBinaryIO(ctx, id, uri)
 	case "file":
-		log.Debugf("************ file io ************")
+		log.Debugf("using file IO for container %s", id)
 		ioImpl, err = newFileIO(ctx, stream, uri)
 	default:
 		return nil, fmt.Errorf("unknown STDIO scheme %s", uri.Scheme)
@@ -223,22 +262,18 @@ func (p *pipeIO) Close() error {
 }
 
 func (p *pipeIO) Stdin() io.ReadCloser {
-	log.Debugf("<== io stream: %v", p.in)
 	return p.in
 }
 
 func (p *pipeIO) Stdout() io.Writer {
-	log.Debugf("=> io stream: %v", p.out)
 	return p.out
 }
 
 func (p *pipeIO) Stderr() io.Writer {
-	log.Debugf("=> io stream: %v", p.out)
 	return p.out
 }
 
 func (b *binaryIO) Close() error {
-	log.Debugf("=> io stream: %v, %v", b.cmd, b.out)
 	err0 := b.out.Close()
 	err1 := b.cmd.Cancel()
 	return errors.Join(err0, err1)
@@ -249,17 +284,14 @@ func (b *binaryIO) Stdin() io.ReadCloser {
 }
 
 func (b *binaryIO) Stdout() io.Writer {
-	log.Debugf("=> io stream: %v", b.out)
 	return b.out.w
 }
 
 func (b *binaryIO) Stderr() io.Writer {
-	log.Debugf("=> io stream: %v", b.out)
 	return b.out.w
 }
 
 func (f *fileIO) Close() error {
-	log.Debugf("io stream, close file: %v", f.in)
 	var err error
 	if err = f.out.Close(); err != nil && f.out != nil {
 		return err
@@ -268,17 +300,14 @@ func (f *fileIO) Close() error {
 }
 
 func (f *fileIO) Stdin() io.ReadCloser {
-	log.Debugf("<== io stream, open file: %v", f.in)
 	return nil
 }
 
 func (f *fileIO) Stdout() io.Writer {
-	log.Debugf("=> io stream, open file: %v", f.out)
 	return f.out
 }
 
 func (f *fileIO) Stderr() io.Writer {
-	log.Debugf("=> io stream, open file: %v", f.out)
 	return f.out
 }
 
@@ -381,6 +410,9 @@ func waitContainerExit(ctx context.Context, s *shimService, c *container) (int32
 	c.status = task.Status_STOPPED
 	c.exit = uint32(ret)
 	c.exitTime = timeStamp
+	for _, exec := range c.execs {
+		exec.markExited(uint32(ret))
+	}
 
 	c.exitCh <- uint32(ret)
 	log.Debugf("The container %s status is StatusStopped.", c.id)

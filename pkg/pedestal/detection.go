@@ -30,10 +30,7 @@ func GetHostPed() PedType {
 
 // computeHostPed performs the actual pedestal type detection
 func computeHostPed() PedType {
-	if defs.IsMock {
-		return Xen
-	}
-	if detectXen() {
+	if defs.IsMock || detectXen() {
 		return Xen
 	}
 
@@ -44,7 +41,6 @@ func computeHostPed() PedType {
 }
 
 func detectXen() bool {
-	// xl binary exist
 	if !utils.FileExist("/proc/xen/xenbus") {
 		log.Debug("missing xen bus")
 		return false
@@ -55,17 +51,15 @@ func detectXen() bool {
 		return false
 	}
 
-	// TODO: check new xen ko
 	if err := checkXenKos(); err != nil {
-		log.Debug("xen kernel modules requirements not met")
-		return false
+		log.Debug("xen kernel modules requirements may not met")
 	}
 
 	return true
 }
 
 func checkXenKos() error {
-	// xen_netback, xen_blkback, xen_gntalloc, xen_gntdev
+	// xen_gntalloc, xen_gntdev, xen-mcsback
 	// TODO: migrate xen-essentials ko to mica-xen related ko
 	essentials := []string{"xen_gntalloc", "xen_gntdev", "xen-mcsback"}
 	for i, ko := range essentials {
@@ -75,7 +69,7 @@ func checkXenKos() error {
 		}
 		if !loaded {
 			err = utils.FindAndLoadKo(ko)
-			return fmt.Errorf("xl: %s is not loaded", essentials[i])
+			return fmt.Errorf("kernel module %s is not loaded", essentials[i])
 		}
 	}
 	return nil

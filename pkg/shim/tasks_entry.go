@@ -19,6 +19,7 @@ import (
 	"github.com/containerd/containerd/api/types/task"
 	"github.com/containerd/containerd/errdefs"
 	ptypes "github.com/containerd/containerd/protobuf/types"
+	shimv2 "github.com/containerd/containerd/runtime/v2/shim"
 )
 
 const (
@@ -32,8 +33,7 @@ var emptyResponse = &ptypes.Empty{}
 // The init process satisfies containerd's requirements and acts as an agent for future needs.
 // TALK: The init process receives signals from containerd.
 func (s *shimService) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) (*taskAPI.CreateTaskResponse, error) {
-	log.Debugf("task create request details - bundle: %s, stdin: %s, stdout: %s, stderr: %s, terminal: %v",
-		r.Bundle, r.Stdin, r.Stdout, r.Stderr, r.Terminal)
+	log.Debugf("creating task %s (bundle: %s, terminal: %v)", r.ID, r.Bundle, r.Terminal)
 
 	if err := utils.ValidContainerID(r.ID); err != nil {
 		return nil, er.InvalidCID
@@ -105,9 +105,17 @@ func (s *shimService) Start(ctx context.Context, r *taskAPI.StartRequest) (*task
 	s.eventSendMu.Lock()
 	defer s.eventSendMu.Unlock()
 
+	respPid := shimPid
 	// wannna start a exec process in a container
 	if r.ExecID != "" {
-		log.Debugf("container %s has no exec process", r.ID)
+		execProc, exists := c.execs[r.ExecID]
+		if !exists {
+			return nil, errdefs.ToGRPCf(errdefs.ErrNotFound, "exec %s not found in container %s", r.ExecID, r.ID)
+		}
+		if c.status != task.Status_RUNNING {
+			return nil, errdefs.ToGRPCf(errdefs.ErrFailedPrecondition, "container %s must be running to start exec %s", r.ID, r.ExecID)
+		}
+		execProc.markStarted(shimPid)
 		s.send(&events.TaskExecStarted{
 			ContainerID: c.id,
 			ExecID:      r.ExecID,
@@ -127,15 +135,11 @@ func (s *shimService) Start(ctx context.Context, r *taskAPI.StartRequest) (*task
 			ContainerID: c.id,
 			Pid:         pid,
 		})
+		respPid = pid
 	}
 
 	return &taskAPI.StartResponse{
-		Pid: func() uint32 {
-			if c.pid == 0 {
-				return shimPid
-			}
-			return c.pid
-		}(),
+		Pid: respPid,
 	}, nil
 }
 
@@ -157,11 +161,38 @@ func (s *shimService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*ta
 	}
 
 	if r.ExecID != "" {
-		log.Debugf("container %s has no exec process", r.ID)
+		execProc, exists := c.execs[r.ExecID]
+		if !exists {
+			return &taskAPI.DeleteResponse{
+				ExitStatus: okExitCode,
+				ExitedAt:   timestamppb.Now(),
+				Pid:        shimPid,
+			}, nil
+		}
+
+		changed := execProc.markExited(okExitCode)
+		exitStatus := execProc.exitStatus
+		exitTime := execProc.exitTime
+		pid := execProc.pid
+		if pid == 0 {
+			pid = shimPid
+		}
+		delete(c.execs, r.ExecID)
+
+		if changed {
+			s.send(&events.TaskExit{
+				ContainerID: r.ID,
+				ID:          r.ExecID,
+				Pid:         pid,
+				ExitStatus:  exitStatus,
+				ExitedAt:    timestamppb.New(exitTime),
+			})
+		}
+
 		return &taskAPI.DeleteResponse{
-			ExitStatus: okExitCode,
-			ExitedAt:   timestamppb.Now(),
-			Pid:        shimPid,
+			ExitStatus: exitStatus,
+			ExitedAt:   timestamppb.New(exitTime),
+			Pid:        pid,
 		}, nil
 	}
 
@@ -219,10 +250,10 @@ func (s *shimService) Pause(ctx context.Context, r *taskAPI.PauseRequest) (*ptyp
 
 	status, err := s.getContainerStatus(c.id)
 	if err != nil {
-		log.Debugf("failed to get container status, current status: %s, error: %v", status, err)
+		log.Debugf("container %s status query failed: %v", r.ID, err)
 		c.status = task.Status_UNKNOWN
 	} else {
-		log.Debugf("successfully got container status: %s", status)
+		log.Debugf("container %s status: %s", r.ID, status)
 		c.status = status
 	}
 
@@ -289,9 +320,9 @@ func (s *shimService) Kill(ctx context.Context, r *taskAPI.KillRequest) (*ptypes
 		killed, err := s.sandbox.KillContainer(ctx, c.id)
 		if err != nil {
 			st, err1 := s.getContainerStatus(c.id)
-			log.Debugf("kill container failed %v, status remains %s", err, st.String())
+			log.Debugf("kill container %s failed: %v", c.id, err)
 			if err1 != nil {
-				log.Debugf("failed to get container status: %v, marking status as UNKNOWN", err1)
+				log.Debugf("container %s status query failed during kill: %v", c.id, err1)
 				c.status = task.Status_UNKNOWN
 			} else {
 				c.status = st
@@ -344,8 +375,24 @@ func (s *shimService) KillBySignal(ctx context.Context, r *taskAPI.KillRequest) 
 }
 
 func (s *shimService) Exec(ctx context.Context, r *taskAPI.ExecProcessRequest) (*ptypes.Empty, error) {
-	log.Warn("exec a new task is not supported")
-	log.Pretty("exec request: %v", r)
+	if r.ExecID == "" {
+		return nil, errdefs.ToGRPCf(errdefs.ErrInvalidArgument, "missing exec id for container %s", r.ID)
+	}
+
+	s.mu.Lock()
+	c, found := s.containers[r.ID]
+	if c == nil || !found {
+		s.mu.Unlock()
+		return nil, er.ContainerNotFound
+	}
+	if _, exists := c.execs[r.ExecID]; exists {
+		s.mu.Unlock()
+		return nil, errdefs.ToGRPCf(errdefs.ErrAlreadyExists, "exec %s already exists in container %s", r.ExecID, r.ID)
+	}
+	c.execs[r.ExecID] = newExecProcess(r.ExecID)
+	s.mu.Unlock()
+
+	log.Debugf("registered exec %s for container %s", r.ExecID, r.ID)
 	s.send(&events.TaskExecAdded{
 		ContainerID: r.ID,
 		ExecID:      r.ExecID,
@@ -355,7 +402,7 @@ func (s *shimService) Exec(ctx context.Context, r *taskAPI.ExecProcessRequest) (
 
 // NOTICE: Always consider resizepty request is to container, whatever r.ExecID is.
 func (s *shimService) ResizePty(ctx context.Context, r *taskAPI.ResizePtyRequest) (*ptypes.Empty, error) {
-	log.Debugf("resize pty: (%d, %d)", r.Height, r.Width)
+	log.Debugf("resizing PTY for container %s to %dx%d", r.ID, r.Width, r.Height)
 	c, found := s.containers[r.ID]
 	if !found || c == nil {
 		return nil, er.ContainerNotFound
@@ -377,8 +424,26 @@ func (s *shimService) CloseIO(ctx context.Context, r *taskAPI.CloseIORequest) (*
 		return nil, er.ContainerNotFound
 	}
 
-	// TALK: if execid is not empty, should we close IO still?
+	// Exec IO shares the container PTY; mark exec completion when IO is closed.
 	if r.ExecID != "" {
+		if execProc, exists := c.execs[r.ExecID]; exists {
+			changed := execProc.markExited(okExitCode)
+			pid := execProc.pid
+			if pid == 0 {
+				pid = shimPid
+			}
+			exitStatus := execProc.exitStatus
+			exitTime := execProc.exitTime
+			if changed {
+				s.send(&events.TaskExit{
+					ContainerID: r.ID,
+					ID:          r.ExecID,
+					Pid:         pid,
+					ExitStatus:  exitStatus,
+					ExitedAt:    timestamppb.New(exitTime),
+				})
+			}
+		}
 		return emptyResponse, nil
 	}
 
@@ -432,6 +497,35 @@ func (s *shimService) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*taskAP
 		s.mu.Unlock()
 		return nil, er.ContainerNotFound
 	}
+
+	if r.ExecID != "" {
+		execProc, exists := c.execs[r.ExecID]
+		if !exists {
+			s.mu.Unlock()
+			return nil, errdefs.ToGRPCf(errdefs.ErrNotFound, "exec %s not found in container %s", r.ExecID, r.ID)
+		}
+		waitCh := execProc.waitCh
+		exited := execProc.status == task.Status_STOPPED
+		exitStatus := execProc.exitStatus
+		exitAt := execProc.exitTime
+		s.mu.Unlock()
+
+		if !exited {
+			select {
+			case <-ctx.Done():
+				return nil, fmt.Errorf("wait canceled: %w", ctx.Err())
+			case <-waitCh:
+				exitStatus = execProc.exitStatus
+				exitAt = execProc.exitTime
+			}
+		}
+
+		return &taskAPI.WaitResponse{
+			ExitStatus: exitStatus,
+			ExitedAt:   timestamppb.New(exitAt),
+		}, nil
+	}
+
 	// Capture current status and the exit channel, then release the lock while waiting
 	exitCh := c.exitCh
 	exited := c.status == task.Status_STOPPED
@@ -482,6 +576,17 @@ func (s *shimService) Shutdown(ctx context.Context, r *taskAPI.ShutdownRequest) 
 
 	s.mu.Unlock()
 	s.ss()
+
+	// Clean up the shim socket before exiting to prevent "address already in use" errors
+	// when the shim is restarted. The socket address is stored in the "address" file.
+	if sockAddr, err := shimv2.ReadAddress("address"); err == nil && sockAddr != "" {
+		log.Debugf("cleaning up shim socket: %s", sockAddr)
+		if err := shimv2.RemoveSocket(sockAddr); err != nil {
+			log.Warnf("failed to remove shim socket %s: %v", sockAddr, err)
+		}
+	} else if err != nil {
+		log.Debugf("failed to read socket address file: %v", err)
+	}
 
 	// os.Exit() will terminate program immediately, the defer functions won't be executed,
 	// so we add defer functions again before os.Exit().

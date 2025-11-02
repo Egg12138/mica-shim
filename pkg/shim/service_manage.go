@@ -80,8 +80,7 @@ func New(ctx context.Context, id string, publisher shimv2.Publisher, shutdown fu
 	if !found {
 		return nil, fmt.Errorf("namespace is required")
 	}
-	log.Debugf("got namespace: %s", ns)
-	micadPid, err := getMicadPid()
+		micadPid, err := getMicadPid()
 	if err != nil {
 		log.Warnf("failed to get micad PID, setting to 0: %v", err)
 		return nil, err
