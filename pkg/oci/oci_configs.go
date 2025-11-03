@@ -38,10 +38,10 @@ var (
 	// CRIContainerTypeList lists all the maps from CRI ContainerTypes annotations
 	// to a virtcontainers ContainerType.
 	CRIContainerTypeList = []annotationContainerType{
-		{podmanAnnotations.ContainerTypeSandbox, cntr.PodSandbox},
-		{podmanAnnotations.ContainerTypeContainer, cntr.PodContainer},
 		{ctrAnnotations.ContainerTypeSandbox, cntr.PodSandbox},
 		{ctrAnnotations.ContainerTypeContainer, cntr.PodContainer},
+		{podmanAnnotations.ContainerTypeSandbox, cntr.PodSandbox},
+		{podmanAnnotations.ContainerTypeContainer, cntr.PodContainer},
 	}
 )
 
@@ -185,7 +185,6 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 		log.Debugf("found OS annotation: %s", osName)
 	}
 
-	utils.TravelDir(baseRootfs)
 	resolveFirmwarePath := func(p string) (string, error) {
 		trimmed := strings.TrimSpace(p)
 		if trimmed == "" {
@@ -235,6 +234,10 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 	isInfra := hasCRIInfraAnnotation
 	if isCRIInfra && !hasCRIInfraAnnotation {
 		log.Debugf("container %s missing infra annotation; treating it as micran workload", id)
+	}
+
+	if !isInfra {
+		utils.TravelDir(baseRootfs)
 	}
 
 	// Resolve firmware path priority: annotation > runtime default > discovery
@@ -395,6 +398,7 @@ func SandboxConfig(ocispec *specs.Spec, rc RuntimeConfig, bundle, sbContainerID 
 		StaticResourceMgmt: staticResMngt,
 		HugePageSupport:    hugePage,
 		EnableVCPUsPining:  false,
+		InfraOnly:          containerConfig.IsInfra,
 	}
 
 	applySandboxAnnotations(*ocispec, &sandboxConfig)

@@ -329,7 +329,8 @@ func (s *shimService) Kill(ctx context.Context, r *taskAPI.KillRequest) (*ptypes
 			}
 			return nil, err
 		}
-		c.status = task.Status_STOPPED
+		c.status = task.Status_UNKNOWN
+		c.signalExit()
 		log.Pretty("killed contaienr %v", killed.Status())
 		return emptyResponse, nil
 	case syscall.SIGSTOP, syscall.SIGCONT:
@@ -447,14 +448,26 @@ func (s *shimService) CloseIO(ctx context.Context, r *taskAPI.CloseIORequest) (*
 		return emptyResponse, nil
 	}
 
-	stdin := c.stdinPipe
+	if !r.Stdin {
+		return emptyResponse, nil
+	}
+
 	stdinCloser := c.stdinCloser
 
-	<-stdinCloser
-	if err := stdin.Close(); err != nil {
-		log.Errorf("failed to close stdin pipe: %v", err)
-		return nil, fmt.Errorf("failed to close stdin pipe: %w", err)
+	if c.ttyio != nil && c.ttyio.io != nil && c.ttyio.io.Stdin() != nil {
+		if err := c.ttyio.io.Stdin().Close(); err != nil {
+			log.Debugf("failed to drain containerd stdin reader for %s: %v", r.ID, err)
+		}
 	}
+
+	<-stdinCloser
+
+	if c.stdinPipe != nil {
+		if err := c.stdinPipe.Close(); err != nil {
+			log.Debugf("stdin pipe close for %s returned: %v", r.ID, err)
+		}
+	}
+
 	return emptyResponse, nil
 }
 

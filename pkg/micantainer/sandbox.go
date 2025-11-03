@@ -51,6 +51,7 @@ type SandboxConfig struct {
 	EnableVCPUsPining  bool
 	StaticResourceMgmt bool
 	HugePageSupport    bool
+	InfraOnly          bool
 }
 
 func (sc *SandboxConfig) valid() bool {
@@ -59,7 +60,7 @@ func (sc *SandboxConfig) valid() bool {
 		return false
 	}
 
-	if sc.PedConfig.PedType == ped.Unsupported {
+	if sc.PedConfig.PedType == ped.Unsupported && !sc.InfraOnly {
 		log.Warn("pedestal type is unsupported")
 		return false
 	}
@@ -298,13 +299,13 @@ func (s *Sandbox) Start(ctx context.Context) error {
 		return err
 	}
 
-		return nil
+	return nil
 }
 
 // Stop stops all containers inside the sandbox as well as sandbox itself
 func (s *Sandbox) Stop(ctx context.Context, force bool) error {
 	if s.state.State == StateStopped {
-				return nil
+		return nil
 	}
 
 	if err := s.state.Transition(s.state.State, StateStopped); err != nil {
@@ -370,6 +371,9 @@ func (s *Sandbox) CreateContainer(ctx context.Context, config ContainerConfig) (
 		return nil, er.AlreadyExists
 	}
 	s.config.ContainerConfigs[id] = &config
+	if s.config.InfraOnly && !config.IsInfra {
+		s.config.InfraOnly = false
+	}
 	newc := s.config.ContainerConfigs[id]
 
 	var err error
@@ -1039,6 +1043,9 @@ func (s *Sandbox) postNetworkCreated() error {
 // Add containers (new or restored) to sandbox
 func (s *Sandbox) initContainers(ctx context.Context) error {
 	for _, cc := range s.config.ContainerConfigs {
+		if s.config.InfraOnly && cc != nil && !cc.IsInfra {
+			s.config.InfraOnly = false
+		}
 		c, err := newContainer(ctx, s, cc)
 		if err != nil {
 			return err
@@ -1180,6 +1187,10 @@ func (s *Sandbox) updateResources(ctx context.Context) error {
 
 	if s.config == nil {
 		return fmt.Errorf("sandbox config is nil")
+	}
+
+	if s.config.InfraOnly {
+		return nil
 	}
 
 	if s.config.StaticResourceMgmt {

@@ -70,7 +70,9 @@ func create(ctx context.Context, s *shimService, r *taskAPI.CreateTaskRequest) (
 			s.config.SandboxCPUs, s.config.SandboxMemMB = oci.CalculateContainerSizing(ociSpec)
 		}
 
-		utils.TravelDir(r.Rootfs[0].GetSource())
+		if containerType != cntr.PodSandbox {
+			utils.TravelDir(r.Rootfs[0].GetSource())
+		}
 		if err := mountRootfs(rootfsPath, r.Rootfs); err != nil {
 			return nil, err
 		}

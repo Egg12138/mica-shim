@@ -74,7 +74,7 @@ const (
 const (
 	// TODO: We need a special Pause image.
 	// PauseImage is the image used for pausing a container.
-	PauseImage = "k8s.gcr.io/pause"
+	PauseImage = "registry.k8s.io/pause"
 	// SandboxVersion is the version of the sandbox.
 	SandboxVersion = 1
 )

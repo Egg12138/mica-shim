@@ -29,6 +29,7 @@ type container struct {
 	spec        *specs.Spec
 	exitTime    time.Time
 	exitIOch    chan struct{}
+	exitOnce    sync.Once
 	stdinPipe   io.WriteCloser
 	stdinCloser chan struct{}
 	exitCh      chan uint32
@@ -113,6 +114,15 @@ func newContainer(s *shimService, r *taskAPI.CreateTaskRequest, cType cntr.Conta
 	}
 
 	return c, nil
+}
+
+func (c *container) signalExit() {
+	if c == nil {
+		return
+	}
+	c.exitOnce.Do(func() {
+		close(c.exitIOch)
+	})
 }
 
 // stdio defines the standard IO paths for a container.
@@ -378,11 +388,19 @@ func waitContainerExit(ctx context.Context, s *shimService, c *container) (int32
 	// Wait for IO streams to close, or mock an exit after a timeout since micad
 	// cannot yet detect client OS exit.
 	const mockExitTimeout = 5 * time.Second
-	select {
-	case <-c.exitIOch:
-		log.WithField("container", c.id).Debug("The container IO streams closed.")
-	case <-time.After(mockExitTimeout):
-		log.WithField("container", c.id).Infof("No IO activity; mock exit after %s.", mockExitTimeout)
+	if c.cType.IsCriSandbox() {
+		// Pod infra containers must remain alive until the runtime explicitly
+		// tears them down (e.g. via Kill/Delete). Block here until we receive
+		// that signal.
+		<-c.exitIOch
+		log.WithField("container", c.id).Debug("Received explicit exit signal for infra container.")
+	} else {
+		select {
+		case <-c.exitIOch:
+			log.WithField("container", c.id).Debug("The container IO streams closed.")
+		case <-time.After(mockExitTimeout):
+			log.WithField("container", c.id).Infof("No IO activity; mock exit after %s.", mockExitTimeout)
+		}
 	}
 
 	timeStamp := time.Now()

@@ -80,7 +80,7 @@ func New(ctx context.Context, id string, publisher shimv2.Publisher, shutdown fu
 	if !found {
 		return nil, fmt.Errorf("namespace is required")
 	}
-		micadPid, err := getMicadPid()
+	micadPid, err := getMicadPid()
 	if err != nil {
 		log.Warnf("failed to get micad PID, setting to 0: %v", err)
 		return nil, err
@@ -350,7 +350,7 @@ func (s *shimService) StartShim(ctx context.Context, opts shimv2.StartOpts) (_ s
 
 }
 
-func getTopic(e interface{}) string {
+func getTopic(e any) string {
 	log.Debugf("topic event: %v", e)
 	switch e.(type) {
 	case *events.TaskCreate:

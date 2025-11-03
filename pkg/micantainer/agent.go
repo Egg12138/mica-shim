@@ -5,8 +5,6 @@ import (
 	er "mica-shim/errors"
 	log "mica-shim/logger"
 	"mica-shim/pkg/libmica"
-	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/cpuset"
@@ -14,8 +12,6 @@ import (
 
 const (
 	maxHostnameLength = 64
-	// End Of Transmission control characters
-	eotAscii = 0x04
 )
 
 type SandboxAgent struct {
@@ -111,9 +107,6 @@ func (n *SandboxAgent) startContainer(sandbox *Sandbox, c *Container) error {
 
 // closeContainerStdin is the Noop agent process stdin closer. It does nothing.
 // nolint
-// closeContainerStdin signals EOF to the container's PTY input without tearing down output.
-// Rationale: For a PTY, closing the file descriptor would also affect reads; sending EOF (Ctrl-D)
-// is the conventional way to indicate stdin closure while allowing stdout to continue.
 func (n *SandboxAgent) closeContainerStdin(c *Container) error {
 	if c == nil || c.config == nil {
 		return er.EmptyContainerID
@@ -126,20 +119,6 @@ func (n *SandboxAgent) closeContainerStdin(c *Container) error {
 		return er.EmptyContainerID
 	}
 
-	// mica creates a symlink /dev/ttyRPMSG_<clientID> -> /dev/pts/N.
-	// it's better to resolve the link and write Ctrl-D to the pty slave.
-	symlink := filepath.Clean("/dev/ttyRPMSG_" + c.id)
-	target, err := filepath.EvalSymlinks(symlink)
-	if err != nil {
-		// Best-effort: in mock mode or legacy systems we may not have the symlink.
-		return nil
-	}
-	f, err := os.OpenFile(target, os.O_WRONLY, 0)
-	if err != nil {
-		return nil
-	}
-	defer f.Close()
-	_, _ = f.Write([]byte{eotAscii})
 	return nil
 }
 

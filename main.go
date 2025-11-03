@@ -65,7 +65,7 @@ func setupLogger(c *shimv2.Config) {
 func isBootstrapStart() bool {
 	for _, arg := range os.Args[1:] {
 		if arg == "start" {
-			return true
+			return arg == "start"
 		}
 	}
 	return false

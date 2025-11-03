@@ -134,15 +134,15 @@ func isPauseContainer(spec *specs.Spec) bool {
 // choose by priority:
 // 1. runtime configurated
 // 2. alternatives, in defs.
-// 3. default k8s.gcr.io/pause
+// 3. default k8s.gcr.io/pause, registry.k8s.io/pause, rancher.k8s.io/pause..
 func getPausePatterns() []string {
-	return []string{"pause", "/pause", defs.PauseImage}
+	return []string{"pause", "/pause", defs.PauseImage, "registry.k8s.io/pause", "rancher.k8s.io/pause", "docker.io/pause"}
 }
 
 // Handle SCHED_CORE.
 func handleSchedCore() {
-	log.Debugf(`The functions and features of SCHED_CORE can currently be partially accomplished and replaced by Pedestal (default is Xen), 
-	and micran does not need it for now. 
+	log.Debugf(`The functions and features of SCHED_CORE can currently be partially accomplished and replaced by Pedestal (default is Xen),
+	and micran does not need it for now.
 	However, in the future, we may provide a more unique way to combine the advantages of SCHED_CORE with the isolation strategy of Pedestal.`)
 }
 

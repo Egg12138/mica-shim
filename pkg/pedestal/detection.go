@@ -47,7 +47,7 @@ func detectXen() bool {
 	}
 
 	if err := checkXenKos(); err != nil {
-		log.Debug("xen kernel modules requirements may not met")
+		log.Debugf("xen kernel modules requirements may not met: %v", err)
 	}
 
 	return true
@@ -56,7 +56,7 @@ func detectXen() bool {
 func checkXenKos() error {
 	// xen_gntalloc, xen_gntdev, xen-mcsback
 	// TODO: migrate xen-essentials ko to mica-xen related ko
-	essentials := []string{"xen_gntalloc", "xen_gntdev", "xen-mcsback"}
+	essentials := []string{"xen_gntalloc", "xen_gntdev", "xen_mcsback"}
 	for i, ko := range essentials {
 		loaded, err := utils.KoLoaded(ko)
 		if err != nil {

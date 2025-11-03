@@ -23,6 +23,9 @@ func stripQuotes(s string) string {
 
 // parseOCICPUResources parses CPU resource limits from OCI spec
 func (r *ContainerConfig) ParseOCICPUResources(spec *specs.Spec) error {
+	if r.IsInfra {
+		return nil
+	}
 	if spec.Linux == nil || spec.Linux.Resources == nil || spec.Linux.Resources.CPU == nil {
 		return nil
 	}
@@ -82,6 +85,9 @@ func (r *ContainerConfig) ParseOCICPUResources(spec *specs.Spec) error {
 
 // parseOCIMemoryResources parses Memory resource limits from OCI spec
 func (r *ContainerConfig) ParseOCIMemoryResources(spec *specs.Spec) error {
+	if r.IsInfra {
+		return nil
+	}
 	if spec.Linux == nil || spec.Linux.Resources == nil || spec.Linux.Resources.Memory == nil {
 		log.Warn("No Memory resources specified in OCI spec")
 		return nil
@@ -115,6 +121,9 @@ func (r *ContainerConfig) ParseOCIMemoryResources(spec *specs.Spec) error {
 
 // validateResourceLimits validates container resource limits against system constraints
 func ValidateResourceLimits(config *ContainerConfig) error {
+	if config.IsInfra {
+		return nil
+	}
 	// Validate CPU limits
 	if config.CpuLimit > 0 {
 		systemCPUs := libmica.MaxClientCPUNum()

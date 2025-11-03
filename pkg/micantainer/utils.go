@@ -249,7 +249,7 @@ func updateContainerResource(c *Container, updated *pedestal.EssentialResource) 
 	}
 
 	if needUpdateMemLimit(*old.MemoryLimitMB, *updated.MemoryLimitMB) {
-		err := c.me.UpdateMemoryLimit(*updated.MemoryLimitMB)
+		err := c.me.UpdateMemory(*updated.MemoryLimitMB)
 		if err != nil {
 			return fmt.Errorf("failed to update max memory of %s: %v", c.id, err)
 		}
@@ -263,7 +263,7 @@ func updateContainerResource(c *Container, updated *pedestal.EssentialResource) 
 	}
 
 	if needUpdateCpuShare(*old.CPUWeight, *updated.CPUWeight) {
-		err := c.me.UpdateCPUShare(*updated.CPUWeight)
+		err := c.me.UpdateCPUWeight(*updated.CPUWeight)
 		if err != nil {
 			return fmt.Errorf("failed to set a different cpu weight for %s: %v", c.id, err)
 		}
@@ -281,20 +281,19 @@ func updateContainerResource(c *Container, updated *pedestal.EssentialResource) 
 }
 
 func needUpdateCpuCap(old, updated uint32) bool {
-	if old == updated {
+	if old == updated && updated >= num2CapRatio*pedestal.MaxCPUNum() {
 		return false
 	}
 	return true
 }
 
 func needUpdateMemLimit(old, updated uint32) bool {
-
-	return true
+	return updated > old
 }
 
+// vcpu:pcpu => default to be 1:1,
 func needUpdateVCpus(old, updated uint32) bool {
-
-	return true
+	return updated <= pedestal.MaxCPUNum()
 }
 
 func needUpdateCpuSet(old, updated string) bool {

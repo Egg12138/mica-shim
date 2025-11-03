@@ -51,7 +51,7 @@ func (me *MicaExecutor) UpdateCPUCapacity(cap uint32) error {
 	return err
 }
 
-func (me *MicaExecutor) UpdateCPUShare(weight uint32) error {
+func (me *MicaExecutor) UpdateCPUWeight(weight uint32) error {
 	cmdArgs := []string{"CPUWeight", strconv.Itoa(int(weight))}
 	s := strings.Join(cmdArgs, " ")
 	err := micaCtl(MUpdate, me.Id, s)
@@ -64,7 +64,10 @@ func (me *MicaExecutor) UpdateCPUShare(weight uint32) error {
 	return err
 }
 
-func (me *MicaExecutor) UpdateMemoryLimit(memMiB uint32) error {
+// NOTICE: MemoryLimit is not max memory of client.It is the max memory
+// that pedestal can allocate to container.
+// Memory is just the max memory of a client
+func (me *MicaExecutor) UpdateMemoryPedMax(memMiB uint32) error {
 	cmdArgs := []string{"MaxMem", strconv.Itoa(int(memMiB))}
 	s := strings.Join(cmdArgs, " ")
 	err := micaCtl(MUpdate, me.Id, s)
