@@ -669,7 +669,7 @@ ADD {self.firmware_path} ${{FIRMWARE_BUNDLE_PATH}}
             return False
 
     def cleanup_images(self, tags):
-        """Clean up images with given tags on build failure"""
+        """Clean up images with given tags on build failure (not used for push failures)"""
         print("Cleaning up images due to build failure...")
         for tag in tags:
             try:
@@ -821,7 +821,8 @@ ADD {self.firmware_path} ${{FIRMWARE_BUNDLE_PATH}}
         if push_images:
             print("\nPushing final image...")
             if not self.push_image(self.image_name):
-                self.cleanup_images(built_images)
+                print("Push failed, but keeping locally built image for debugging/manual push")
+                print(f"Image preserved locally: {self.image_name}")
                 return False
 
         print("\nBuild completed successfully!")
