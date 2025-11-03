@@ -12,42 +12,23 @@ import (
 	"strings"
 )
 
-const MAX_ID_LENGTH = 31
-const validCIDRegex = "^[a-zA-Z0-9][a-zA-Z0-9_.-]+$"
+const maxClientIDLength = 66
+
+var cidPattern = regexp.MustCompile("^[a-zA-Z0-9][a-zA-Z0-9_.-]+$")
 
 func ValidContainerID(id string) error {
 	if id == "" {
 		return fmt.Errorf("container ID cannot be empty")
 	}
 
-	if len(id) > MAX_ID_LENGTH {
-		log.Debugf("container is %s too long, we will pass a new shorted ID %s to micad", id, ShortID(id))
+	if len(id) > maxClientIDLength {
+		return fmt.Errorf("container/sandbox ID %q exceeds mica limit (%d characters)", id, maxClientIDLength)
 	}
 
-	pattern := regexp.MustCompile(validCIDRegex)
-	matched := pattern.MatchString(id)
-	if !matched {
+	if !cidPattern.MatchString(id) {
 		return fmt.Errorf("invalid container/sandbox ID: %s", id)
 	}
 	return nil
-}
-
-// Truncate the ID to the maximum allowed length.
-// Truncating the original hash is good at collision resistance.
-func truncateID(id string) string {
-	idBytes := []byte(id)
-	if len(idBytes) > MAX_ID_LENGTH {
-		idBytes = idBytes[:MAX_ID_LENGTH]
-	}
-	return string(idBytes)
-}
-
-func ShortID(id string) string {
-	return truncateID(id)
-}
-
-func IdMatched(longID string, shortID string) bool {
-	return truncateID(longID) == shortID
 }
 
 func FileExist(path string) bool {

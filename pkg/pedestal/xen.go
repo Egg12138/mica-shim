@@ -202,9 +202,9 @@ func xlvcpu() (*XlVcpuInfo, error) {
 	return parseXlVcpuInfo(out.String())
 }
 
-func xldomid(shortID string) (int, error) {
+func xldomid(clientID string) (int, error) {
 	var stdout, stderr bytes.Buffer
-	cmd := newxl(domid, shortID)
+	cmd := newxl(domid, clientID)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
@@ -213,17 +213,17 @@ func xldomid(shortID string) (int, error) {
 		if msg == "" {
 			msg = err.Error()
 		}
-		return 0, fmt.Errorf("xl domid %s: %s", shortID, msg)
+		return 0, fmt.Errorf("xl domid %s: %s", clientID, msg)
 	}
 
 	out := strings.TrimSpace(stdout.String())
 	if out == "" {
-		return 0, fmt.Errorf("xl domid %s returned empty output", shortID)
+		return 0, fmt.Errorf("xl domid %s returned empty output", clientID)
 	}
 
 	domid, err := strconv.Atoi(out)
 	if err != nil {
-		return 0, fmt.Errorf("xl domid %s invalid output %q: %w", shortID, out, err)
+		return 0, fmt.Errorf("xl domid %s invalid output %q: %w", clientID, out, err)
 	}
 
 	return domid, nil
@@ -581,14 +581,14 @@ func LinuxResource2Essential(spec *specs.Spec) *EssentialResource {
 
 // assume cpu set is valid
 // do hard affinity only
-func PinVCPU(shortId, cpus string) error {
+func PinVCPU(clientID, cpus string) error {
 	if defs.IsMock {
 		return nil
 	}
-	cmd := newxl(vcpupin, shortId, "all", cpus)
-	log.Debugf("run %s to pinning vcpu %s to %s", cmd.String(), cpus, shortId)
+	cmd := newxl(vcpupin, clientID, "all", cpus)
+	log.Debugf("run %s to pinning vcpu %s to %s", cmd.String(), cpus, clientID)
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("xl failed to pause %s: %v", shortId, err)
+		return fmt.Errorf("xl failed to pause %s: %v", clientID, err)
 	}
 	return nil
 }
@@ -690,17 +690,17 @@ func parseAffinity(affinity string) (cpuset.CPUSet, error) {
 	return set, nil
 }
 
-func domainID(shortID string) (int, error) {
-	if domid, err := xldomid(shortID); err == nil {
+func domainID(clientID string) (int, error) {
+	if domid, err := xldomid(clientID); err == nil {
 		return domid, nil
 	} else {
-		log.Debugf("xl domid fallback failed for %s: %v", shortID, err)
+		log.Debugf("xl domid fallback failed for %s: %v", clientID, err)
 	}
 
-	return parseXLListForDomain(shortID)
+	return parseXLListForDomain(clientID)
 }
 
-func parseXLListForDomain(shortID string) (int, error) {
+func parseXLListForDomain(clientID string) (int, error) {
 	var stdout, stderr bytes.Buffer
 	cmd := exec.Command("xl", "list")
 	cmd.Stdout = &stdout
@@ -726,13 +726,13 @@ func parseXLListForDomain(shortID string) (int, error) {
 			continue
 		}
 
-		if fields[0] != shortID {
+		if fields[0] != clientID {
 			continue
 		}
 
 		domid, err := strconv.Atoi(fields[1])
 		if err != nil {
-			return 0, fmt.Errorf("xl list returned invalid domid %q for %s: %w", fields[1], shortID, err)
+			return 0, fmt.Errorf("xl list returned invalid domid %q for %s: %w", fields[1], clientID, err)
 		}
 		return domid, nil
 	}
@@ -741,7 +741,7 @@ func parseXLListForDomain(shortID string) (int, error) {
 		return 0, fmt.Errorf("xl list parse error: %w", err)
 	}
 
-	return 0, fmt.Errorf("domain %s not found in xl list output", shortID)
+	return 0, fmt.Errorf("domain %s not found in xl list output", clientID)
 }
 
 const xenstorePathFmt = "/local/domain/%d/%s"

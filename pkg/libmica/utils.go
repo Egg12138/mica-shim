@@ -5,7 +5,6 @@ import (
 	defs "mica-shim/definitions"
 	log "mica-shim/logger"
 	ped "mica-shim/pkg/pedestal"
-	utils "mica-shim/pkg/utils"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -248,8 +247,7 @@ func success(res string) bool {
 }
 
 func ClientNotExist(id string) bool {
-	clientId := utils.ShortID(id)
-	socketPath := filepath.Join(defs.MicaStateDir, clientId+".socket")
+	socketPath := filepath.Join(defs.MicaStateDir, id+".socket")
 	valid := validSocketPath(socketPath)
 	log.Debugf("check socket path: %s is present=%t", socketPath, valid)
 	return !valid

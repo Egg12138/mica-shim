@@ -9,7 +9,6 @@ import (
 	er "mica-shim/errors"
 	log "mica-shim/logger"
 	"mica-shim/pkg/pedestal"
-	utils "mica-shim/pkg/utils"
 	"path/filepath"
 	"strings"
 )
@@ -36,8 +35,8 @@ const (
 
 	// TODO:
 	// Mica message field length constants
-	MaxNameLen         = 32
-	MaxFirmwarePathLen = 128
+	MaxNameLen         = 66
+	MaxFirmwarePathLen = 256
 	MaxCPUStringLen    = 128
 	MaxNetworkLen      = 512
 )
@@ -64,6 +63,16 @@ const (
 	serviceRPC   MicaService = "rpc"
 	serviceUMT   MicaService = "umt"
 	serviceDebug MicaService = "debug"
+)
+
+const (
+	createMsgDebugFieldSize    = 1
+	createMsgIntFieldSize      = 4
+	createMsgIntFieldCount     = 4
+	createMsgPrefixSize        = MaxNameLen + MaxFirmwarePathLen + MaxNameLen + MaxFirmwarePathLen + createMsgDebugFieldSize + MaxCPUStringLen
+	createMsgPaddingAfterCPU   = (createMsgIntFieldSize - (createMsgPrefixSize % createMsgIntFieldSize)) % createMsgIntFieldSize
+	createMsgPackedIntsSize    = createMsgIntFieldCount * createMsgIntFieldSize
+	createMsgSerializedBufSize = createMsgPrefixSize + createMsgPaddingAfterCPU + createMsgPackedIntsSize + MaxNetworkLen
 )
 
 type MicaExecutor struct {
@@ -142,8 +151,8 @@ type MicaClientConfCreateOptions struct {
 
 // This is the conf struct mica daemon will see
 // Layout mirrors mica daemon's struct create_msg definition:
-// #define MAX_NAME_LEN         32
-// #define MAX_FIRMWARE_PATH_LEN 128
+// #define MAX_NAME_LEN         66
+// #define MAX_FIRMWARE_PATH_LEN 256
 // #define MAX_CPUSTR_LEN       128
 // #define MAX_NETWORK_LEN      512
 //
@@ -196,8 +205,10 @@ func dummyCPUArr() []int {
 // InitWithOpts initializes MicaClientConf with the new options struct
 func (m *MicaClientConf) InitWithOpts(opts MicaClientConfCreateOptions) {
 	*m = MicaClientConf{}
-	name := utils.ShortID(opts.Name)
-	copy(m.name[:], name)
+	if len(opts.Name) > MaxNameLen {
+		log.Warnf("container name %q exceeds mica limit (%d); truncating for client registration", opts.Name, MaxNameLen)
+	}
+	copy(m.name[:], opts.Name)
 
 	copy(m.path[:], opts.Path)
 
@@ -226,12 +237,9 @@ func (m *MicaClientConf) InitWithOpts(opts MicaClientConfCreateOptions) {
 }
 
 func (m *MicaClientConf) pack() []byte {
-	const paddingAfterCPUString = 3
-
-	// Calculate total buffer size:
-	// name[32] + path[128] + ped[32] + pedcfg[128] + debug(1) + cpuStr[128] +
-	// padding(3) + vcpuNum(4) + cpuWeight(4) + cpuCapacity(4) + memory(4) + network[512]
-	buf := make([]byte, MaxNameLen+MaxFirmwarePathLen+MaxNameLen+MaxFirmwarePathLen+1+MaxCPUStringLen+paddingAfterCPUString+4+4+4+4+MaxNetworkLen)
+	// Serialized layout mirrors `struct create_msg` defined in micad.
+	// See `mcs/mica/micad/socket_listener.c`.
+	buf := make([]byte, createMsgSerializedBufSize)
 
 	offset := 0
 	copy(buf[offset:offset+MaxNameLen], m.name[:])
@@ -253,17 +261,17 @@ func (m *MicaClientConf) pack() []byte {
 	copy(buf[offset:offset+MaxCPUStringLen], m.cpuStr[:])
 	offset += MaxCPUStringLen
 
-	// The C struct naturally inserts 3 padding bytes after cpu_str to align int fields.
-	offset += paddingAfterCPUString
+	// Align the next integer field with the C struct layout.
+	offset += createMsgPaddingAfterCPU
 
 	binary.LittleEndian.PutUint32(buf[offset:], uint32(m.vcpuNum))
-	offset += 4
+	offset += createMsgIntFieldSize
 	binary.LittleEndian.PutUint32(buf[offset:], uint32(m.cpuWeight))
-	offset += 4
+	offset += createMsgIntFieldSize
 	binary.LittleEndian.PutUint32(buf[offset:], uint32(m.cpuCapacity))
-	offset += 4
+	offset += createMsgIntFieldSize
 	binary.LittleEndian.PutUint32(buf[offset:], uint32(m.memoryMB))
-	offset += 4
+	offset += createMsgIntFieldSize
 	copy(buf[offset:offset+MaxNetworkLen], m.network[:])
 
 	return buf
@@ -305,6 +313,15 @@ func micaCtl(cmd MicaCommand, rawId string, opts ...string) error {
 	if !validSocketPath(defs.MicaCreatSocketPath) {
 		return er.MicadNotRunning
 	}
+
+	if rawId == "" {
+		return fmt.Errorf("empty client id is not allowed")
+	}
+
+	if len(rawId) > MaxNameLen {
+		return fmt.Errorf("client id %q exceeds mica limit (%d characters)", rawId, MaxNameLen)
+	}
+
 	// workaround: pause => stop
 	switch cmd {
 	case MPause:
@@ -312,8 +329,7 @@ func micaCtl(cmd MicaCommand, rawId string, opts ...string) error {
 	case MResume:
 		cmd = MStart
 	}
-	shortId := utils.ShortID(rawId)
-	clientSocketPath := filepath.Join(defs.MicaStateDir, shortId+".socket")
+	clientSocketPath := filepath.Join(defs.MicaStateDir, rawId+".socket")
 	s := newMicaSocket(clientSocketPath)
 	msg := string(cmd)
 	return s.handleMsg([]byte(msg))
@@ -342,7 +358,7 @@ func Stop(id string) error {
 // TODO: might passthrough mica, directly to ped?
 func Pause(id string) error {
 	if pedestal.GetHostPed() == pedestal.Xen {
-		return pedestal.Pause(utils.ShortID(id))
+		return pedestal.Pause(id)
 	} else {
 		if err := micaCtl(MPause, id); err != nil {
 			return fmt.Errorf("failed to pause mica client %s %w", id, err)
@@ -354,7 +370,7 @@ func Pause(id string) error {
 // TODO: mica may not support, we handle this via ped directly
 func Resume(id string) error {
 	if pedestal.GetHostPed() == pedestal.Xen {
-		return pedestal.Resume(utils.ShortID(id))
+		return pedestal.Resume(id)
 	} else {
 		if err := micaCtl(MResume, id); err != nil {
 			return fmt.Errorf("failed to pause mica client %s %w", id, err)

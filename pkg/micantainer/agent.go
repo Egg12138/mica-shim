@@ -5,7 +5,6 @@ import (
 	er "mica-shim/errors"
 	log "mica-shim/logger"
 	"mica-shim/pkg/libmica"
-	"mica-shim/pkg/utils"
 	"os"
 	"path/filepath"
 	"time"
@@ -92,9 +91,8 @@ func (n *SandboxAgent) createContainer(sandbox *Sandbox, c *Container) (*RTOSTas
 	// 	return nil, err
 	// }
 	// TODO: libmica
-	shortId := utils.ShortID(c.ID())
 	task := &RTOSTask{
-		TaskID:       shortId,
+		TaskID:       c.ID(),
 		CreateTime:   time.Now(),
 		ReservedAddr: 0x1000,
 	}
@@ -124,14 +122,13 @@ func (n *SandboxAgent) closeContainerStdin(c *Container) error {
 		return nil
 	}
 
-	shortID := utils.ShortID(c.id)
-	if shortID == "" {
+	if c.id == "" {
 		return er.EmptyContainerID
 	}
 
-	// mica create symlink /dev/ttyRPMSG_<shortID> -> /dev/pts/N;
+	// mica creates a symlink /dev/ttyRPMSG_<clientID> -> /dev/pts/N.
 	// it's better to resolve the link and write Ctrl-D to the pty slave.
-	symlink := filepath.Clean("/dev/ttyRPMSG_" + shortID)
+	symlink := filepath.Clean("/dev/ttyRPMSG_" + c.id)
 	target, err := filepath.EvalSymlinks(symlink)
 	if err != nil {
 		// Best-effort: in mock mode or legacy systems we may not have the symlink.

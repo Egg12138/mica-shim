@@ -57,7 +57,7 @@ func micadDetect() (int, error) {
 
 // setupMicad attempts to start micad if it's not already running
 func setupMicad() error {
-	if pid, err := micadDetect(); err != nil {
+	if pid, err := micadDetect(); pid != 0 && err == nil {
 		log.Debugf("micad detecting pid= %d, err : %v", pid, err)
 		return nil
 	}

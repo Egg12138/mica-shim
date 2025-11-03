@@ -49,7 +49,6 @@ func startClient(ctx context.Context, sandbox SandboxTraits, c *Container) error
 func createMicaClientConf(container *Container) (libmica.MicaClientConf, error) {
 	config := container.config
 	pedType := HostPedType
-	name := utils.ShortID(container.id)
 	cpus, err := container.GetClientCPU()
 	conf := libmica.MicaClientConf{}
 	if err != nil {
@@ -80,7 +79,7 @@ func createMicaClientConf(container *Container) (libmica.MicaClientConf, error) 
 		VCPUs:       vcpus,
 		MemoryMB:    memMB,
 		MaxMemMB:    maxMB,
-		Name:        name,
+		Name:        container.id,
 		Path:        config.ElfAbsPath,
 		Ped:         pedType.String(),
 		PedCfg:      config.PedestalConf,

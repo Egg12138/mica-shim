@@ -28,31 +28,31 @@ type ContainerConfig struct {
 		Linux struct {
 			Resources struct {
 				CPU struct {
-					Quota  *int64 `json:"quota"`
-					Period *int64 `json:"period"`
+					Quota  *int64  `json:"quota"`
+					Period *int64  `json:"period"`
 					Shares *uint64 `json:"shares"`
-					Cpus   string `json:"cpus"`
+					Cpus   string  `json:"cpus"`
 				} `json:"cpu"`
 				Memory struct {
-					Limit      *int64 `json:"limit"`
+					Limit       *int64 `json:"limit"`
 					Reservation *int64 `json:"reservation"`
-					Swap       *int64 `json:"swap"`
+					Swap        *int64 `json:"swap"`
 				} `json:"memory"`
 			} `json:"resources"`
 		} `json:"linux"`
 	} `json:"spec"`
 
 	// Bundle information.
-	Bundle string            `json:"bundle"`
-	Type   ContainerType     `json:"type"`
-	Detach bool              `json:"detach"`
+	Bundle      string            `json:"bundle"`
+	Type        ContainerType     `json:"type"`
+	Detach      bool              `json:"detach"`
 	ExtraLabels map[string]string `json:"extra_labels"`
 
 	// MICA-specific configurations (simplified).
-	OS           string `json:"os"`
-	Ncpu         int    `json:"ncpu"`
-	CpuLimit     int    `json:"cpu_limit"`
-	MemoryLimit  int64  `json:"memory_limit"`
+	OS          string `json:"os"`
+	Ncpu        int    `json:"ncpu"`
+	CpuLimit    int    `json:"cpu_limit"`
+	MemoryLimit int64  `json:"memory_limit"`
 }
 
 // ContainerType represents the type of container.
@@ -72,41 +72,38 @@ type Container struct {
 	ExitCode uint32    `json:"exit_code"`
 
 	// Static fields.
-	Bundle   string        `json:"bundle"`
-	ID       string        `json:"id"`
-	ShortID  string        `json:"short_id"`
-	Status   task.Status   `json:"status"`
-	CType    ContainerType `json:"c_type"`
-	Config   *ContainerConfig `json:"config"`
+	Bundle string           `json:"bundle"`
+	ID     string           `json:"id"`
+	Status task.Status      `json:"status"`
+	CType  ContainerType    `json:"c_type"`
+	Config *ContainerConfig `json:"config"`
 }
 
 // State represents the static state of a container for saving/loading.
 type State struct {
-	Bundle   string        `json:"bundle"`
-	ID       string        `json:"id"`
-	ShortID  string        `json:"short_id"`
-	Status   task.Status   `json:"status"`
-	CType    ContainerType `json:"c_type"`
-	Config   *ContainerConfig `json:"config"`
+	Bundle string           `json:"bundle"`
+	ID     string           `json:"id"`
+	Status task.Status      `json:"status"`
+	CType  ContainerType    `json:"c_type"`
+	Config *ContainerConfig `json:"config"`
 }
 
 func generateRandomContainer() *Container {
 	rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	id := fmt.Sprintf("container-%d-%d", rand.Intn(10000), rand.Intn(10000))
-	shortID := id[:12]
 
 	bundle := fmt.Sprintf("/tmp/bundle-%d", rand.Intn(10000))
 
 	config := &ContainerConfig{
-		Bundle: bundle,
-		Type:   UnknownCtype, // Random type
-		Detach: rand.Intn(2) == 1,
+		Bundle:      bundle,
+		Type:        UnknownCtype, // Random type
+		Detach:      rand.Intn(2) == 1,
 		ExtraLabels: make(map[string]string),
-		OS:     []string{"zephyr","uniproton"}[rand.Intn(2)],
-		Ncpu:   rand.Intn(8) + 1,
+		OS:          []string{"zephyr", "uniproton"}[rand.Intn(2)],
+		Ncpu:        rand.Intn(8) + 1,
 		// ignore the constraint "Ncpu <= CpuLimit"
-		CpuLimit: rand.Intn(16),
+		CpuLimit:    rand.Intn(16),
 		MemoryLimit: int64(rand.Intn(4096) * 1024 * 1024), // Random MB in bytes
 	}
 
@@ -120,11 +117,11 @@ func generateRandomContainer() *Container {
 	config.Spec.Process.User.UID = uint32(rand.Intn(65536))
 	config.Spec.Process.User.GID = uint32(rand.Intn(65536))
 	config.Spec.Process.Cwd = "/tmp"
-	
+
 	for i := 0; i < rand.Intn(5)+1; i++ {
 		config.Spec.Process.Args = append(config.Spec.Process.Args, fmt.Sprintf("arg-%d", i))
 	}
-	
+
 	for i := 0; i < rand.Intn(8)+2; i++ {
 		config.Spec.Process.Env = append(config.Spec.Process.Env, fmt.Sprintf("ENV_%d=value%d", i, rand.Intn(100)))
 	}
@@ -152,7 +149,6 @@ func generateRandomContainer() *Container {
 		ExitCode: uint32(rand.Intn(256)),
 		Bundle:   bundle,
 		ID:       id,
-		ShortID:  shortID,
 		Status:   task.Status(rand.Intn(8)), // Random status
 		CType:    Regular,
 		Config:   config,
@@ -162,12 +158,11 @@ func generateRandomContainer() *Container {
 // Get the static state of the container.
 func (c *Container) State() *State {
 	return &State{
-		Bundle:   c.Bundle,
-		ID:       c.ID,
-		ShortID:  c.ShortID,
-		Status:   c.Status,
-		CType:    c.CType,
-		Config:   c.Config,
+		Bundle: c.Bundle,
+		ID:     c.ID,
+		Status: c.Status,
+		CType:  c.CType,
+		Config: c.Config,
 	}
 }
 
@@ -203,10 +198,9 @@ func LoadContainerFromState(filePath string) (*Container, error) {
 
 	return &Container{
 		ExitTime: time.Time{}, // Dynamic field not saved
-		ExitCode: 0,          // Dynamic field not saved
+		ExitCode: 0,           // Dynamic field not saved
 		Bundle:   state.Bundle,
 		ID:       state.ID,
-		ShortID:  state.ShortID,
 		Status:   state.Status,
 		CType:    state.CType,
 		Config:   state.Config,
@@ -221,10 +215,6 @@ func compareContainers(original, restored *Container) bool {
 	}
 	if original.ID != restored.ID {
 		fmt.Printf("ID mismatch: %s != %s\n", original.ID, restored.ID)
-		return false
-	}
-	if original.ShortID != restored.ShortID {
-		fmt.Printf("ShortID mismatch: %s != %s\n", original.ShortID, restored.ShortID)
 		return false
 	}
 	if original.Status != restored.Status {
@@ -361,7 +351,7 @@ func main() {
 
 		fmt.Println("Comparing original and restored containers...")
 		match := compareContainers(original, restored)
-		
+
 		if match {
 			fmt.Println("✓ PASS: Static fields match perfectly!")
 		} else {
@@ -374,7 +364,6 @@ func main() {
 		fmt.Printf("Original exit code: %d\n", original.ExitCode)
 		fmt.Printf("Restored exit code: %d\n", restored.ExitCode)
 		fmt.Println("(Note: Dynamic fields should be different as they are not saved)")
-
 
 		// os.Remove(stateFile)
 	}
