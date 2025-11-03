@@ -46,11 +46,6 @@ func detectXen() bool {
 		return false
 	}
 
-	if err := checkXLCommand(); err != nil {
-		log.Debug("xl command not found or not working correctly")
-		return false
-	}
-
 	if err := checkXenKos(); err != nil {
 		log.Debug("xen kernel modules requirements may not met")
 	}

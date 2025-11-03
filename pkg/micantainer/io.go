@@ -12,7 +12,6 @@ import (
 	log "mica-shim/logger"
 	"mica-shim/pkg/libmica"
 	ped "mica-shim/pkg/pedestal"
-	utils "mica-shim/pkg/utils"
 )
 
 type iostream struct {
@@ -69,26 +68,26 @@ func (s *iostream) ensureDevice() error {
 		}
 	}
 
-	shortID := ""
+	clientID := ""
 	if s.container != nil {
-		shortID = utils.ShortID(s.container.id)
+		clientID = s.container.id
 	}
 
-	if shortID == "" {
+	if clientID == "" {
 		return er.EmptyContainerID
 	}
 
 	if defs.WorkaroundPty {
 		f, err := openConsolePTYFallback(s.container.id)
 		if err != nil {
-			return fmt.Errorf("console PTY fallback failed for %s: %w", shortID, err)
+			return fmt.Errorf("console PTY fallback failed for %s: %w", clientID, err)
 		}
 		s.pty = f
 		return nil
 	}
 
 	// Prefer client-name based symlink provided by micad (ttyRPMSG_<name> -> /dev/pts/N).
-	symlink := fmt.Sprintf(libmica.PTYDevPattern, shortID)
+	symlink := fmt.Sprintf(libmica.PTYDevPattern, clientID)
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		target, err := filepath.EvalSymlinks(symlink)
@@ -98,7 +97,7 @@ func (s *iostream) ensureDevice() error {
 				return nil
 			}
 		} else if !os.IsNotExist(err) {
-			log.Debugf("waiting for PTY device %s", target)
+			log.Debugf("waiting for PTY device %s", symlink)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}

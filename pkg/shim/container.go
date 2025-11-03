@@ -47,8 +47,8 @@ type container struct {
 }
 
 type execProcess struct {
-	id         string
-	pid        uint32
+	id  string
+	pid uint32
 	// we use contaienrd shim task status to represent process status
 	status     task.Status
 	exitStatus uint32
