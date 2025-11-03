@@ -216,27 +216,25 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 		}
 	}
 
-	isInfraCandidate := false
-	if ocispec.Linux != nil {
-		for _, ns := range ocispec.Linux.Namespaces {
-			if ns.Type == specs.NetworkNamespace {
-				isInfraCandidate = ns.Path == ""
-				break
+	hasCRIInfraAnnotation := false
+	if ocispec.Annotations != nil {
+		for _, key := range CRIContainerTypeKeyList {
+			if v, ok := ocispec.Annotations[key]; ok {
+				if v == ctrAnnotations.ContainerTypeSandbox || v == podmanAnnotations.ContainerTypeSandbox {
+					hasCRIInfraAnnotation = true
+					break
+				}
 			}
 		}
 	}
 
 	isCRIInfra := Type == cntr.PodSandbox
-	log.Debugf("isCRIInfra=%v, isInfraCandidate=%v, hasMicranAnnotation=%v, hasPedestalConfAnnotation=%v, annotationFirmware=%s", isCRIInfra, isInfraCandidate, hasMicranAnnotation, hasPedestalConfAnnotation, annotationFirmware)
-	infraEligible := annotationFirmware == "" && !hasMicranAnnotation && !hasPedestalConfAnnotation
+	log.Debugf("isCRIInfra=%v, hasCRIInfraAnnotation=%v, hasMicranAnnotation=%v, hasPedestalConfAnnotation=%v, annotationFirmware=%s",
+		isCRIInfra, hasCRIInfraAnnotation, hasMicranAnnotation, hasPedestalConfAnnotation, annotationFirmware)
 
-	isInfra := false
-	switch {
-	case isCRIInfra && infraEligible:
-		isInfra = true
-	case infraEligible && isInfraCandidate:
-		// fallback: allow empty-netns inference for ctr/nerdctl flows.
-		isInfra = true
+	isInfra := hasCRIInfraAnnotation
+	if isCRIInfra && !hasCRIInfraAnnotation {
+		log.Debugf("container %s missing infra annotation; treating it as micran workload", id)
 	}
 
 	// Resolve firmware path priority: annotation > runtime default > discovery

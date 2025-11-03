@@ -2,6 +2,7 @@ package libmica
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -46,6 +47,10 @@ type MicaIO struct {
 	started bool
 
 	mu sync.RWMutex
+
+	// stdin FIFO reader that is actively forwarding data to the PTY.
+	// Stored so we can close it during shutdown to unblock the read loop.
+	stdinReader *stdinFIFOReader
 
 	// Direct FIFO path for stdin forwarding
 	stdinFIFOPath string
@@ -154,6 +159,34 @@ func (r *stdinFIFOReader) Close() error {
 		return r.file.Close()
 	}
 	return nil
+}
+
+func (mio *MicaIO) setActiveStdinReader(reader *stdinFIFOReader) {
+	mio.mu.Lock()
+	mio.stdinReader = reader
+	mio.mu.Unlock()
+}
+
+func (mio *MicaIO) clearActiveStdinReader(reader *stdinFIFOReader) {
+	mio.mu.Lock()
+	if mio.stdinReader == reader {
+		mio.stdinReader = nil
+	}
+	mio.mu.Unlock()
+}
+
+func (mio *MicaIO) closeActiveStdinReader() {
+	var reader *stdinFIFOReader
+	mio.mu.Lock()
+	reader = mio.stdinReader
+	mio.stdinReader = nil
+	mio.mu.Unlock()
+
+	if reader != nil {
+		if err := reader.Close(); err != nil {
+			log.Debugf("closing active stdin reader for task %s: %v", mio.taskID, err)
+		}
+	}
 }
 
 // MicaIO methods
@@ -306,7 +339,7 @@ func (mio *MicaIO) Start() error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := mio.stdout.Copy(mio.ctx); err != nil {
+			if err := mio.stdout.Copy(mio.ctx); err != nil && !errors.Is(err, context.Canceled) {
 				log.Errorf("stdout pipe copy error for task %s: %v", mio.taskID, err)
 			}
 		}()
@@ -316,7 +349,7 @@ func (mio *MicaIO) Start() error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := mio.stderr.Copy(mio.ctx); err != nil {
+			if err := mio.stderr.Copy(mio.ctx); err != nil && !errors.Is(err, context.Canceled) {
 				log.Errorf("stderr pipe copy error for task %s: %v", mio.taskID, err)
 			}
 		}()
@@ -342,31 +375,41 @@ func (mio *MicaIO) forwardPTYToStdout() error {
 
 	log.Debugf("starting PTY->stdout forwarding for task %s", mio.taskID)
 
-	buf := make([]byte, 4096)
+	buf := make([]byte, 32*1024)
 	writer := mio.stdout.Writer()
 
 	for {
-		select {
-		case <-mio.ctx.Done():
-			log.Debugf("PTY->stdout forwarding stopped for task %s: context done", mio.taskID)
-			return mio.ctx.Err()
-		default:
-			mio.ptyFile.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
-
-			n, err := mio.ptyFile.Read(buf)
-			if err != nil {
-				if os.IsTimeout(err) {
-					continue
+		n, err := mio.ptyFile.Read(buf)
+		if n > 0 {
+			if _, writeErr := writer.Write(buf[:n]); writeErr != nil {
+				if isWriterClosedError(writeErr) {
+					log.Debugf("stdout writer closed for task %s, stopping PTY forward", mio.taskID)
+					return nil
 				}
-				log.Debugf("PTY read error for task %s: %v", mio.taskID, err)
-				return fmt.Errorf("reading from PTY: %w", err)
+				return fmt.Errorf("writing to stdout: %w", writeErr)
 			}
+		}
 
-			if n > 0 {
-				log.Debugf("forwarding %d bytes from PTY to stdout for task %s", n, mio.taskID)
-				if _, err := writer.Write(buf[:n]); err != nil {
-					return fmt.Errorf("writing to stdout: %w", err)
+		if err != nil {
+			if shouldRetryOnInterrupt(err) {
+				continue
+			}
+			if isTemporaryUnavailable(err) {
+				if mio.waitWithContext(15 * time.Millisecond) {
+					return nil
 				}
+				continue
+			}
+			if isStreamClosed(err) {
+				log.Debugf("PTY stream closed for task %s", mio.taskID)
+				return nil
+			}
+			return fmt.Errorf("reading from PTY: %w", err)
+		}
+
+		if n == 0 {
+			if mio.waitWithContext(10 * time.Millisecond) {
+				return nil
 			}
 		}
 	}
@@ -388,6 +431,9 @@ func (mio *MicaIO) forwardStdinToPTY() error {
 	if mio.ptyFile == nil {
 		return nil
 	}
+	if mio.stdinFIFOPath == "" {
+		return nil
+	}
 
 	log.Debugf("starting stdin->PTY forwarding for task %s", mio.taskID)
 
@@ -395,51 +441,54 @@ func (mio *MicaIO) forwardStdinToPTY() error {
 	if err != nil {
 		return fmt.Errorf("creating stdin FIFO reader: %w", err)
 	}
-	defer stdinReader.Close()
+	mio.setActiveStdinReader(stdinReader)
+	defer func() {
+		mio.clearActiveStdinReader(stdinReader)
+		stdinReader.Close()
+	}()
 
-	buf := make([]byte, 4096)
+	buf := make([]byte, 32*1024)
 	for {
 		select {
 		case <-mio.ctx.Done():
 			log.Debugf("stdin->PTY forwarding stopped for task %s: context done", mio.taskID)
-			return mio.ctx.Err()
+			return nil
 		default:
-			stdinReader.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+		}
 
-			n, err := stdinReader.Read(buf)
-			if err != nil {
-				if os.IsTimeout(err) {
-					continue
-				}
-				if err == io.EOF {
-					log.Debugf("stdin EOF reached for task %s", mio.taskID)
+		n, readErr := stdinReader.Read(buf)
+		if n > 0 {
+			if writeErr := mio.writeBytesToPTY(buf[:n]); writeErr != nil {
+				if isStreamClosed(writeErr) || errors.Is(writeErr, context.Canceled) {
+					log.Debugf("stdin writer closed for task %s", mio.taskID)
 					return nil
 				}
-				log.Debugf("stdin read error for task %s: %v", mio.taskID, err)
-				return fmt.Errorf("reading from stdin: %w", err)
-			}
-
-			if n > 0 {
-				log.Debugf("forwarding %d bytes from stdin to PTY for task %s", n, mio.taskID)
-
-				// Write to PTY with retry mechanism
-				written := 0
-				for written < n {
-					mio.ptyFile.SetWriteDeadline(time.Now().Add(1 * time.Second))
-
-					bytesWritten, err := mio.ptyFile.Write(buf[written:n])
-					if err != nil {
-						if os.IsTimeout(err) {
-							log.Debugf("PTY write timeout for task %s, retrying", mio.taskID)
-							continue
-						}
-						return fmt.Errorf("writing to PTY: %w", err)
+				if isTemporaryUnavailable(writeErr) || shouldRetryOnInterrupt(writeErr) {
+					if mio.waitWithContext(15 * time.Millisecond) {
+						return nil
 					}
-					written += bytesWritten
+					continue
 				}
-
-				log.Debugf("successfully wrote %d bytes to PTY for task %s", written, mio.taskID)
+				return fmt.Errorf("writing to PTY: %w", writeErr)
 			}
+			log.Debugf("successfully wrote %d bytes to PTY for task %s", n, mio.taskID)
+		}
+
+		if readErr != nil {
+			if readErr == io.EOF || isStreamClosed(readErr) {
+				log.Debugf("stdin EOF reached for task %s", mio.taskID)
+				return nil
+			}
+			if shouldRetryOnInterrupt(readErr) {
+				continue
+			}
+			if isTemporaryUnavailable(readErr) {
+				if mio.waitWithContext(15 * time.Millisecond) {
+					return nil
+				}
+				continue
+			}
+			return fmt.Errorf("reading from stdin: %w", readErr)
 		}
 	}
 }
@@ -454,6 +503,7 @@ func (mio *MicaIO) Close() error {
 	log.Debugf("closing MicaIO for task %s", mio.taskID)
 
 	mio.cancel()
+	mio.closeActiveStdinReader()
 
 	var errs []error
 
@@ -507,4 +557,115 @@ func (mio *MicaIO) IsStarted() bool {
 	mio.mu.RLock()
 	defer mio.mu.RUnlock()
 	return mio.started
+}
+
+func (mio *MicaIO) writeBytesToPTY(data []byte) error {
+	total := 0
+	for total < len(data) {
+		n, err := mio.ptyFile.Write(data[total:])
+		if n > 0 {
+			total += n
+		}
+		if err != nil {
+			if shouldRetryOnInterrupt(err) {
+				continue
+			}
+			if isTemporaryUnavailable(err) {
+				if mio.waitWithContext(10 * time.Millisecond) {
+					return mio.ctx.Err()
+				}
+				continue
+			}
+			if isStreamClosed(err) {
+				return err
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+func (mio *MicaIO) waitWithContext(delay time.Duration) bool {
+	if delay <= 0 {
+		delay = 10 * time.Millisecond
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-mio.ctx.Done():
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
+func shouldRetryOnInterrupt(err error) bool {
+	if err == nil {
+		return false
+	}
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		if errno == syscall.EINTR {
+			return true
+		}
+	}
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		return shouldRetryOnInterrupt(pathErr.Err)
+	}
+	return false
+}
+
+func isTemporaryUnavailable(err error) bool {
+	if err == nil {
+		return false
+	}
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		if errno == syscall.EAGAIN || errno == syscall.EWOULDBLOCK {
+			return true
+		}
+	}
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		return isTemporaryUnavailable(pathErr.Err)
+	}
+	return false
+}
+
+func isStreamClosed(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.EOF) ||
+		errors.Is(err, os.ErrClosed) ||
+		errors.Is(err, context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		switch errno {
+		case syscall.EPIPE, syscall.EIO, syscall.EBADF, syscall.ENODEV:
+			return true
+		}
+	}
+
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		return isStreamClosed(pathErr.Err)
+	}
+	return false
+}
+
+func isWriterClosedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.ErrClosedPipe) || errors.Is(err, os.ErrClosed) {
+		return true
+	}
+	return isStreamClosed(err)
 }

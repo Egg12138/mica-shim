@@ -22,7 +22,6 @@ import (
 
 	"github.com/containerd/errdefs"
 	"github.com/hashicorp/go-multierror"
-	vc "github.com/kata-containers/kata-containers/src/runtime/virtcontainers"
 	"github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/cpuset"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
@@ -224,22 +223,6 @@ func (ct ContainerType) IsCriSandbox() bool {
 	return ct == PodSandbox
 }
 
-// From converts a virtcontainers.ContainerType to a micantainer.ContainerType.
-func From(ct vc.ContainerType) ContainerType {
-	var into ContainerType = UnknownContainerType
-	switch ct {
-	case vc.PodContainer:
-		into = PodContainer
-	case vc.PodSandbox:
-		into = PodSandbox
-	case vc.SingleContainer:
-		into = SingleContainer
-	default:
-		into = UnknownContainerType
-	}
-	return into
-}
-
 // loadSandbox restores a sandbox from disk by its ID.
 func loadSandbox(ctx context.Context, id string) (sandbox *Sandbox, err error) {
 	if id == "" {
@@ -400,6 +383,7 @@ func (c *Container) start(ctx context.Context) error {
 // create prepares the container to be started.
 func (c *Container) create(ctx context.Context) error {
 	if c.config != nil && c.config.IsInfra {
+		log.Debugf("************* Is An Infra Container **************")
 		c.taskInfo = RTOSTask{
 			CreateTime: time.Now(),
 			TaskID:     c.id,

@@ -95,6 +95,10 @@ func (pio *PipeIO) Copy(ctx context.Context) error {
 
 				written, writeErr := fw.Write(data)
 				if writeErr != nil {
+					if isPipeClosed(writeErr) {
+						log.Debugf("PipeIO: destination %s closed, stopping copy after %d bytes", pio.dst, totalBytes)
+						return nil
+					}
 					log.Errorf("PipeIO: write error for %s after %d bytes: %v", pio.dst, totalBytes, writeErr)
 					return fmt.Errorf("copying pipe data to destination: %w", writeErr)
 				}
@@ -105,6 +109,10 @@ func (pio *PipeIO) Copy(ctx context.Context) error {
 			if readErr != nil {
 				if readErr == io.EOF {
 					log.Debugf("PipeIO: copy completed for %s after %d bytes", pio.dst, totalBytes)
+					return nil
+				}
+				if isPipeClosed(readErr) {
+					log.Debugf("PipeIO: pipe closed for %s after %d bytes", pio.dst, totalBytes)
 					return nil
 				}
 				log.Errorf("PipeIO: read error for %s after %d bytes: %v", pio.dst, totalBytes, readErr)
@@ -183,4 +191,26 @@ func (p *pipe) Close() error {
 		log.Debugf("PipeIO: closed anonymous pipe")
 	}
 	return err
+}
+
+func isPipeClosed(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrClosedPipe) ||
+		errors.Is(err, os.ErrClosed) {
+		return true
+	}
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		if errno == syscall.EPIPE || errno == syscall.EIO || errno == syscall.EBADF {
+			return true
+		}
+	}
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		return isPipeClosed(pathErr.Err)
+	}
+	return false
 }

@@ -5,7 +5,7 @@ SHIM_NAME := io.containerd.mica.v2
 # Runtime name: io.containerd.runc.v2 → Binary: containerd-shim-runc-v2
 # Runtime name: org.openeuler.micashim.v2 → Binary: containerd-shim-micashim-v2
 # isulad shimv2 Runtime name: io.containerd.{runtime}.{version} -> Binary: containerd-shim-{runtime}-{version}
-# 规则: 
+# 规则:
 # 1. 移除域名前缀部分 (io.containerd. 或 org.openeuler. 等)
 # 2. 取最后两个部分作为 {runtime}.{version}
 # 3. 转换为 containerd-shim-{runtime}-{version}
@@ -64,6 +64,7 @@ build-prod-arm64:
 run: build
 	@echo "🐛 Running in debug mode..."
 	./${BIN}
+
 
 test-debug:
 	@echo "🐛 Testing in debug mode..."
@@ -150,9 +151,9 @@ remote: build-arm64
 	fi
 	@echo "Deploying to ${TARGET_HOST}:${TARGET_PATH}/"
 	@if [ -n "${TARGET_PASS}" ]; then \
-		sshpass -p '${TARGET_PASS}' scp ${BIN_ARM64} ${TARGET_HOST}:${TARGET_PATH}/; \
+		sshpass -p '${TARGET_PASS}' scp ${BIN_ARM64} ${TARGET_HOST}:${TARGET_PATH}/${BINNAME}; \
 	else \
-		scp ${BIN_ARM64} ${TARGET_HOST}:${TARGET_PATH}/; \
+		scp ${BIN_ARM64} ${TARGET_HOST}:${TARGET_PATH}/${BINNAME}; \
 	fi
 	@echo "Deployment complete."
 
