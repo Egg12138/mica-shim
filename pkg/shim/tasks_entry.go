@@ -375,6 +375,7 @@ func (s *shimService) KillBySignal(ctx context.Context, r *taskAPI.KillRequest) 
 	return emptyResponse, s.sandbox.SignalTask(ctx, c.id, signum)
 }
 
+// TODO: Pass command line string to pty
 func (s *shimService) Exec(ctx context.Context, r *taskAPI.ExecProcessRequest) (*ptypes.Empty, error) {
 	if r.ExecID == "" {
 		return nil, errdefs.ToGRPCf(errdefs.ErrInvalidArgument, "missing exec id for container %s", r.ID)

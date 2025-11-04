@@ -35,11 +35,13 @@ func InitResource() *EssentialResource {
 	period := uint64(defaultPeriod)
 	quota := int64(defaultQuota)
 	vcpu := uint32(defaultVcpus)
-	capacity := uint32(0) // all
+	capacity := uint32(0)
+	memLimit := uint32(32)
 	res.CpuPeriod = &period
 	res.CpuQuota = &quota
 	res.Vcpu = &vcpu
 	res.CpuCpacity = &capacity
+	res.MemoryLimitMB = &memLimit
 	res.MemoryMinMB = 32 // Default minimum memory for DomU
 	return &res
 }

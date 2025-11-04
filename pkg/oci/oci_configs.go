@@ -323,6 +323,17 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 		}
 	}
 
+	// Legacy PTY mode via annotation (default: true)
+	config.LegacyPty = true // default to legacy PTY mode
+	if v, ok := ocispec.Annotations[defs.LegacyPty]; ok && v != "" {
+		if legacyPty, err := strconv.ParseBool(v); err == nil {
+			config.LegacyPty = legacyPty
+			log.Debugf("found legacy PTY annotation: %s = %t", defs.LegacyPty, legacyPty)
+		} else {
+			log.Debugf("invalid %s: %s, using default (true)", defs.LegacyPty, v)
+		}
+	}
+
 	// Validate resource limits against system constraints
 	if err := cntr.ValidateResourceLimits(config); err != nil {
 		log.Warnf("resource validation warning: %v", err)

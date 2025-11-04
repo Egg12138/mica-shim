@@ -145,6 +145,9 @@ type ContainerConfig struct {
 	MemorySwappinessMB  *uint32 `json:"memory_swappiness"`
 	OomKillDisable      bool    `json:"oom_kill_disable"`
 
+	// LegacyPty specifies whether to use legacy PTY mode (true) or micad's rpmsg PTY (false)
+	LegacyPty           bool    `json:"legacy_pty"`
+
 	// Cmdline is the boot command line for the guest.
 	Cmdline string `json:"cmdline"`
 }

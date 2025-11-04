@@ -175,13 +175,17 @@ type VCPUEntry struct {
 type xlSubCmd string
 
 const (
-	info     xlSubCmd = "info"
-	vcpulist xlSubCmd = "vcpu-list"
-	vcpupin  xlSubCmd = "vcpu-pin"
-	vmlist   xlSubCmd = "vm-list"
-	pause    xlSubCmd = "pause"
-	resume   xlSubCmd = "unpause"
-	domid    xlSubCmd = "domid"
+	info        xlSubCmd = "info"
+	vcpulist    xlSubCmd = "vcpu-list"
+	vcpupin     xlSubCmd = "vcpu-pin"
+	vcpuset     xlSubCmd = "vcpu-set"
+	vmlist      xlSubCmd = "vm-list"
+	pause       xlSubCmd = "pause"
+	resume      xlSubCmd = "unpause"
+	domid       xlSubCmd = "domid"
+	memset      xlSubCmd = "mem-set"
+	memmax      xlSubCmd = "mem-max"
+	schedcredit xlSubCmd = "sched-credit2"
 )
 
 func newxl(subcmd xlSubCmd, args ...string) *exec.Cmd {
@@ -506,6 +510,80 @@ func MaxCPUNum() uint32 {
 	return maxCPUNum
 }
 
+// XlMemSet sets memory for a domain using xl mem-set
+func XlMemSet(domainName string, memMB int) error {
+	if defs.IsMock {
+		return nil
+	}
+	cmd := newxl(memset, domainName, strconv.Itoa(memMB))
+	log.Debugf("run %s to set memory to %d MB for domain %s", cmd.String(), memMB, domainName)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("xl mem-set failed for domain %s: %v", domainName, err)
+	}
+	log.Debugf("mem-set %d MB for domain %s successfully", memMB, domainName)
+	return nil
+}
+
+// XlMemMax sets maximum memory for a domain using xl mem-max
+func XlMemMax(domainName string, memMB int) error {
+	if defs.IsMock {
+		return nil
+	}
+	cmd := newxl(memmax, domainName, strconv.Itoa(memMB))
+	log.Debugf("run %s to set max memory to %d MB for domain %s", cmd.String(), memMB, domainName)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("xl mem-max failed for domain %s: %v", domainName, err)
+	}
+	log.Debugf("mem-max %d MB for domain %s successfully", memMB, domainName)
+	return nil
+}
+
+// XlVcpuSet sets VCPU count for a domain using xl vcpu-set
+func XlVcpuSet(domainName string, vcpuCount int) error {
+	if defs.IsMock {
+		return nil
+	}
+	cmd := newxl(vcpuset, domainName, strconv.Itoa(vcpuCount))
+	log.Debugf("run %s to set VCPU count to %d for domain %s", cmd.String(), vcpuCount, domainName)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("xl vcpu-set failed for domain %s: %v", domainName, err)
+	}
+	log.Debugf("vcpu-set %d for domain %s successfully", vcpuCount, domainName)
+	return nil
+}
+
+// XlSchedCredit2 sets CPU weight and capacity for a domain using xl sched-credit2
+func XlSchedCredit2(domainName string, weight, cap int) error {
+	if defs.IsMock {
+		return nil
+	}
+	// Validate weight (must be >= 1)
+	if weight < 1 {
+		return fmt.Errorf("CPU weight must be >= 1, got %d", weight)
+	}
+
+	var args []string
+	args = append(args, "-d", domainName)
+
+	// Only set weight if provided
+	if weight > 0 {
+		args = append(args, "-w", strconv.Itoa(weight))
+	}
+
+	// Only set cap if provided (and > 0)
+	if cap > 0 {
+		args = append(args, "-c", strconv.Itoa(cap))
+	}
+
+	cmd := newxl(schedcredit, args...)
+	log.Debugf("run %s to set scheduler parameters for domain %s", cmd.String(), domainName)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("xl sched-credit2 failed for domain %s: %v", domainName, err)
+	}
+	log.Debugf("sched-credit2 set weight=%d, cap=%d for domain %s successfully", weight, cap, domainName)
+	return nil
+}
+
 // For cases, id is truncated id
 func Resume(id string) error {
 	if defs.IsMock {
@@ -690,7 +768,7 @@ func parseAffinity(affinity string) (cpuset.CPUSet, error) {
 	return set, nil
 }
 
-func domainID(clientID string) (int, error) {
+func DomainID(clientID string) (int, error) {
 	if domid, err := xldomid(clientID); err == nil {
 		return domid, nil
 	} else {

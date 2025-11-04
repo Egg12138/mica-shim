@@ -49,7 +49,7 @@ func newIOStream(s *Sandbox, c *Container, proc string) *iostream {
 }
 
 // BUG: mica create ttydevice not by container id
-func (s *iostream) ensureDevice() error {
+func (s *iostream) ensureDevice(legacyPty bool) error {
 	if s.container != nil && s.container.config != nil && s.container.config.IsInfra {
 		return nil
 	}
@@ -77,7 +77,7 @@ func (s *iostream) ensureDevice() error {
 		return er.EmptyContainerID
 	}
 
-	if defs.WorkaroundPty {
+	if legacyPty {
 		f, err := openConsolePTYFallback(s.container.id)
 		if err != nil {
 			return fmt.Errorf("console PTY fallback failed for %s: %w", clientID, err)
@@ -129,7 +129,11 @@ func (s *stdinStream) Write(data []byte) (n int, err error) {
 	if defs.IsMock {
 		return len(data), nil
 	}
-	if err := s.ensureDevice(); err != nil {
+	legacyPty := true // default
+	if s.container != nil && s.container.config != nil {
+		legacyPty = s.container.config.LegacyPty
+	}
+	if err := s.ensureDevice(legacyPty); err != nil {
 		return 0, err
 	}
 	return s.pty.Write(data)
@@ -159,7 +163,11 @@ func (s *stdoutStream) Read(data []byte) (n int, err error) {
 	if defs.IsMock {
 		return 0, io.EOF
 	}
-	if err := s.ensureDevice(); err != nil {
+	legacyPty := true // default
+	if s.container != nil && s.container.config != nil {
+		legacyPty = s.container.config.LegacyPty
+	}
+	if err := s.ensureDevice(legacyPty); err != nil {
 		return 0, err
 	}
 	return s.pty.Read(data)

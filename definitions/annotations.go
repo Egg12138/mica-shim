@@ -38,19 +38,17 @@ const (
 	FirmwarePath = ContainerPrefix + "firmware_path"
 	// FirmwareHash is the sha-256 hash of the firmware.
 	FirmwareHash = ContainerPrefix + "firmware_hash"
+	// Some rtos may not support in-client shutdown well, so micran add timeout autodisconnect
+	PtyAutoClose = ContainerPrefix + "pty_auto_disconnect"
+	// Default to be 30 seconds, future: read this default timeout from config file
+	PtyAutoCloseTimeout = ContainerPrefix + "pty_auto_disconnect_timeout"
 	// Pedtype specifies the pedestal type.
 	Pedtype = PedPrefix + "pedestal"
 	// PedCompat specifies compatibility options: format "^versionX" (deprecated, use CompatPrefix directly)
 	PedCompat = PedPrefix + "compatibility" // DEPRECATED: Use CompatPrefix instead
 	// NetPlaceholder is a placeholder for network configuration.
 	NetPlaceholder = PedPrefix + "net_placeholder"
-	// DefaultMaxCPU specifies the maximum number of CPUs visible in the client.
-	// For Xen, ACRN: maxcpus;
-	// For openAMP: useless, no vcpu.
-	DefaultMaxCPU = PedPrefix + "defautl_max_cpu"
-	// DefaulaMemory specifies the maximum byte size of memory assigned for the client.
-	DefaulaMemory = PedPrefix + "default_memory"
-	PedestalConf  = PedPrefix + "conf"
+	PedestalConf   = PedPrefix + "conf"
 )
 
 // Container-specific runtime settings.
@@ -58,6 +56,8 @@ const (
 	// ContainerMinMemMB specifies the initial memory (MiB) assigned to the client at boot.
 	// This differs from the max memory limit (Memory/MaxMemMB) that may come from OCI.
 	ContainerMinMemMB = ContainerPrefix + "min_memory_mb"
+	// legacy PTY mode: true(default) => external console, false => use micad's rpmsg pty
+	LegacyPty = ContainerPrefix + "legacy_pty"
 )
 
 const (
