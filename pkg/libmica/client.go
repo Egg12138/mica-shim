@@ -309,17 +309,17 @@ func CreateMicaClient(conf MicaClientConf) error {
 }
 
 // TODO: consider better way to parse variable parameters
-func micaCtl(cmd MicaCommand, rawId string, opts ...string) error {
+func micaCtl(cmd MicaCommand, id string, opts ...string) error {
 	if !validSocketPath(defs.MicaCreatSocketPath) {
 		return er.MicadNotRunning
 	}
 
-	if rawId == "" {
+	if id == "" {
 		return fmt.Errorf("empty client id is not allowed")
 	}
 
-	if len(rawId) > MaxNameLen {
-		return fmt.Errorf("client id %q exceeds mica limit (%d characters)", rawId, MaxNameLen)
+	if len(id) > MaxNameLen {
+		return fmt.Errorf("client id %q exceeds mica limit (%d characters)", id, MaxNameLen)
 	}
 
 	// workaround: pause => stop
@@ -329,7 +329,18 @@ func micaCtl(cmd MicaCommand, rawId string, opts ...string) error {
 	case MResume:
 		cmd = MStart
 	}
-	clientSocketPath := filepath.Join(defs.MicaStateDir, rawId+".socket")
+
+	// Debug branch for MUpdate: use xl commands instead of micad set command
+	if cmd == MUpdate {
+		if err := handleMicaUpdateWithXl(id, opts...); err != nil {
+			// Fallback to normal path if xl commands fail
+			log.Debugf("xl workaround failed, falling back to micad: %v", err)
+		} else {
+			return nil
+		}
+	}
+
+	clientSocketPath := filepath.Join(defs.MicaStateDir, id+".socket")
 	s := newMicaSocket(clientSocketPath)
 	msg := string(cmd)
 	return s.handleMsg([]byte(msg))

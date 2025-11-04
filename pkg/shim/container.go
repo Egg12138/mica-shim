@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	defs "mica-shim/definitions"
 	log "mica-shim/logger"
 	cntr "mica-shim/pkg/micantainer"
 	"net/url"
 	"os"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -117,6 +119,7 @@ func newContainer(s *shimService, r *taskAPI.CreateTaskRequest, cType cntr.Conta
 }
 
 func (c *container) signalExit() {
+	log.Debugf("received exit signal")
 	if c == nil {
 		return
 	}
@@ -349,19 +352,6 @@ func (p *pipe) Close() error {
 func ioCopy(exitch, stdinCloser chan struct{}, tty *ttyIO, stdinPipe io.WriteCloser, stdoutPipe io.Reader) {
 	var wg sync.WaitGroup
 
-	if tty.io.Stdin() != nil {
-		wg.Add(1)
-		go func() {
-			log.Debug("Starting stdin copy from containerd to PTY.")
-			// TALK: Maybe CopyBuffer with a buffer pool is a better choice?
-			io.Copy(stdinPipe, tty.io.Stdin())
-			log.Debug("Stdin copy completed.")
-			close(stdinCloser)
-			wg.Done()
-			log.Info("Stdin io stream copy exited.")
-		}()
-	}
-
 	// Since the RTOS doesn't distinguish stderr, we copy from the PTY stdout
 	// to both stdout and stderr to ensure containerd receives the same output on both streams.
 	if tty.io.Stdout() != nil {
@@ -378,28 +368,90 @@ func ioCopy(exitch, stdinCloser chan struct{}, tty *ttyIO, stdinPipe io.WriteClo
 		}()
 	}
 
+	if tty.io.Stdin() != nil {
+		wg.Add(1)
+		go func() {
+			log.Debug("Starting stdin copy from containerd to PTY.")
+			// TALK: Maybe CopyBuffer with a buffer pool is a better choice?
+			io.Copy(stdinPipe, tty.io.Stdin())
+			log.Debug("Stdin copy completed.")
+			close(stdinCloser)
+			wg.Done()
+			log.Info("Stdin io stream copy exited.")
+		}()
+	}
+
 	wg.Wait()
 	close(exitch)
 	log.Debug("All IO copies completed.")
+}
+
+// getBoolAnnotation parses a boolean annotation from the container spec with a default value.
+// Returns (value, isExplicitlySet) where isExplicitlySet indicates if the annotation was provided.
+func getBoolAnnotation(spec *specs.Spec, key string, defaultValue bool) (bool, bool) {
+	if spec == nil || spec.Annotations == nil {
+		return defaultValue, false
+	}
+
+	if value, ok := spec.Annotations[key]; ok {
+		if parsed, err := strconv.ParseBool(value); err == nil {
+			return parsed, true
+		}
+		log.Warnf("Failed to parse boolean annotation, using default: %v", defaultValue)
+	}
+	return defaultValue, false
+}
+
+// getDurationAnnotation parses a duration annotation (in seconds) from the container spec with a default value.
+// Returns (value, isExplicitlySet) where isExplicitlySet indicates if the annotation was provided.
+func getDurationAnnotation(spec *specs.Spec, key string, defaultValue time.Duration) (time.Duration, bool) {
+	if spec == nil || spec.Annotations == nil {
+		return defaultValue, false
+	}
+
+	if value, ok := spec.Annotations[key]; ok {
+		if seconds, err := strconv.ParseInt(value, 10, 64); err == nil {
+			duration := time.Duration(seconds) * time.Second
+			if duration > 0 {
+				return duration, true
+			}
+			log.WithField("annotation", key).Warnf("Invalid duration value (must be positive seconds): %s, using default: %v", value, defaultValue)
+		} else {
+			log.WithField("annotation", key).WithError(err).Warnf("Failed to parse duration annotation, using default: %v", defaultValue)
+		}
+	}
+	return defaultValue, false
 }
 
 // waitContainerExit waits for the container to exit and updates its status.
 func waitContainerExit(ctx context.Context, s *shimService, c *container) (int32, error) {
 	// Wait for IO streams to close, or mock an exit after a timeout since micad
 	// cannot yet detect client OS exit.
-	const mockExitTimeout = 5 * time.Second
-	if c.cType.IsCriSandbox() {
+	defaultTimeout := 30 * time.Second
+	ptyAutoClose, ptyAutoCloseSet := getBoolAnnotation(c.spec, defs.PtyAutoClose, true) // Default to true for backward compatibility
+	mockExitTimeout, timeoutSet := getDurationAnnotation(c.spec, defs.PtyAutoCloseTimeout, defaultTimeout)
+
+	// If pty_auto_disconnect is explicitly set to false, disable auto disconnect even if timeout is provided
+	// If timeout is explicitly set but pty_auto_disconnect is not set, enable auto disconnect
+	if ptyAutoCloseSet {
+		// pty_auto_disconnect is explicitly set, use its value
+	} else if timeoutSet {
+		// timeout is set but pty_auto_disconnect is not explicitly set, enable auto disconnect
+		ptyAutoClose = true
+	}
+
+	if c.cType.IsCriSandbox() || !ptyAutoClose {
 		// Pod infra containers must remain alive until the runtime explicitly
 		// tears them down (e.g. via Kill/Delete). Block here until we receive
 		// that signal.
 		<-c.exitIOch
-		log.WithField("container", c.id).Debug("Received explicit exit signal for infra container.")
-	} else {
+		log.Debugf("received explicit exit signal for infra container %s.", c.id)
+	} else if ptyAutoClose {
 		select {
 		case <-c.exitIOch:
-			log.WithField("container", c.id).Debug("The container IO streams closed.")
+			log.Debugf("The container %s IO streams closed.", c.id)
 		case <-time.After(mockExitTimeout):
-			log.WithField("container", c.id).Infof("No IO activity; mock exit after %s.", mockExitTimeout)
+			log.Debugf("Auto-disconnect %s terminal after %v timeout.", c.id, mockExitTimeout)
 		}
 	}
 
