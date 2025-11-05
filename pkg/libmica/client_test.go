@@ -453,6 +453,41 @@ func TestMicaExecutor_ReadResource(t *testing.T) {
 	}
 }
 
+func TestMicaExecutor_MemoryTracking(t *testing.T) {
+	exec := &MicaExecutor{Id: "mem-test"}
+
+	exec.RecordMemoryState(64, 64)
+	if got := exec.CurrentMemoryMB(); got != 64 {
+		t.Fatalf("CurrentMemoryMB() = %d, want 64", got)
+	}
+	if got := exec.MemoryThresholdMB(); got != 64 {
+		t.Fatalf("MemoryThresholdMB() = %d, want 64", got)
+	}
+
+	exec.RecordMemoryState(32, 128)
+	if got := exec.CurrentMemoryMB(); got != 32 {
+		t.Fatalf("CurrentMemoryMB() after update = %d, want 32", got)
+	}
+	if got := exec.MemoryThresholdMB(); got != 128 {
+		t.Fatalf("MemoryThresholdMB() after update = %d, want 128", got)
+	}
+
+	exec.RecordMemoryState(32, 0)
+	if got := exec.MemoryThresholdMB(); got != 128 {
+		t.Fatalf("MemoryThresholdMB() after zero threshold = %d, want 128", got)
+	}
+
+	if exec.NeedUpdateMemLimit(32) {
+		t.Fatalf("NeedUpdateMemLimit should be false when limits match")
+	}
+	if !exec.NeedUpdateMemLimit(64) {
+		t.Fatalf("NeedUpdateMemLimit should be true when growing memory")
+	}
+	if !exec.NeedUpdateMemLimit(16) {
+		t.Fatalf("NeedUpdateMemLimit should be true when shrinking memory")
+	}
+}
+
 func TestBoundaryConditions(t *testing.T) {
 	// Test CPU string boundary conditions
 	t.Run("CPU string boundary conditions", func(t *testing.T) {

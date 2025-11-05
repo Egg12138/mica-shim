@@ -76,8 +76,9 @@ const (
 )
 
 type MicaExecutor struct {
-	records MicaClientConf
-	Id      string
+	records           MicaClientConf
+	Id                string
+	memoryThresholdMB uint32
 }
 
 // Structs and Methods
@@ -331,10 +332,9 @@ func micaCtl(cmd MicaCommand, id string, opts ...string) error {
 	}
 
 	// Debug branch for MUpdate: use xl commands instead of micad set command
-	if cmd == MUpdate {
+	if cmd == MUpdate && defs.WorkaroundUpdate {
 		if err := handleMicaUpdateWithXl(id, opts...); err != nil {
-			// Fallback to normal path if xl commands fail
-			log.Debugf("xl workaround failed, falling back to micad: %v", err)
+			log.Warnf("xl workaround failed: %v", err)
 		} else {
 			return nil
 		}

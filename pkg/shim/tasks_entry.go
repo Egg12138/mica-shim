@@ -3,11 +3,11 @@ package shim
 import (
 	"context"
 	"fmt"
-	defs "mica-shim/definitions"
 	er "mica-shim/errors"
 	log "mica-shim/logger"
 	utils "mica-shim/pkg/utils"
 	"os"
+	"sync"
 	"syscall"
 
 	"github.com/containerd/containerd/api/events"
@@ -28,6 +28,26 @@ const (
 )
 
 var emptyResponse = &ptypes.Empty{}
+
+// Exec bridging state for IO. We keep specs from Exec() and state created in Start().
+type execIOSpec struct {
+	stdin    string
+	stdout   string
+	stderr   string
+	terminal bool
+}
+
+type execIOState struct {
+	tty         *ttyIO
+	stdinCloser chan struct{}
+}
+
+var (
+	execSpecsMu  sync.Mutex
+	execSpecs    = make(map[string]execIOSpec)
+	execStatesMu sync.Mutex
+	execStates   = make(map[string]execIOState)
+)
 
 // Create creates a new containerd task and sets up the RTOS client.
 // The init process satisfies containerd's requirements and acts as an agent for future needs.
@@ -115,6 +135,32 @@ func (s *shimService) Start(ctx context.Context, r *taskAPI.StartRequest) (*task
 		if c.status != task.Status_RUNNING {
 			return nil, errdefs.ToGRPCf(errdefs.ErrFailedPrecondition, "container %s must be running to start exec %s", r.ID, r.ExecID)
 		}
+
+		// Bridge exec stdio to the container PTY
+		key := r.ID + "|" + r.ExecID
+		execSpecsMu.Lock()
+		spec, ok := execSpecs[key]
+		execSpecsMu.Unlock()
+		if ok {
+			stdin, stdout, _, err := s.sandbox.IOStream(c.id, c.id)
+			if err != nil {
+				log.Debugf("exec io: IOStream failed for %s/%s: %v", r.ID, r.ExecID, err)
+			} else {
+				tty, err := newTtyIO(ctx, c.id, spec.stdin, spec.stdout, spec.stderr, spec.terminal)
+				if err != nil {
+					log.Debugf("exec io: newTtyIO failed for %s/%s: %v", r.ID, r.ExecID, err)
+				} else {
+					stdinCloser := make(chan struct{})
+					go ioCopy(c.exitIOch, stdinCloser, tty, stdin, stdout)
+					execStatesMu.Lock()
+					execStates[key] = execIOState{tty: tty, stdinCloser: stdinCloser}
+					execStatesMu.Unlock()
+				}
+			}
+		} else {
+			log.Debugf("exec io: no iospec recorded for %s/%s", r.ID, r.ExecID)
+		}
+
 		execProc.markStarted(shimPid)
 		s.send(&events.TaskExecStarted{
 			ContainerID: c.id,
@@ -122,7 +168,7 @@ func (s *shimService) Start(ctx context.Context, r *taskAPI.StartRequest) (*task
 			Pid:         shimPid,
 		})
 	} else {
-		log.Info("starting container ")
+		log.Infof("starting container %s", c.id)
 		err := startContainer(ctx, s, c)
 		if err != nil {
 			return nil, errdefs.ToGRPC(err)
@@ -157,7 +203,6 @@ func (s *shimService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*ta
 			ExitedAt:   timestamppb.Now(),
 			Pid:        shimPid,
 		}, nil
-		// return nil, errdefs.ToGRPCf(errdefs.ErrNotFound, "container %s not found", r.ID)
 	}
 
 	if r.ExecID != "" {
@@ -220,6 +265,8 @@ func (s *shimService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*ta
 }
 
 func (s *shimService) Pids(ctx context.Context, r *taskAPI.PidsRequest) (*taskAPI.PidsResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	log.Debugf("pids() start")
 	info := task.ProcessInfo{
 		Pid: shimPid,
@@ -382,17 +429,27 @@ func (s *shimService) Exec(ctx context.Context, r *taskAPI.ExecProcessRequest) (
 	}
 
 	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	c, found := s.containers[r.ID]
 	if c == nil || !found {
-		s.mu.Unlock()
 		return nil, er.ContainerNotFound
 	}
 	if _, exists := c.execs[r.ExecID]; exists {
-		s.mu.Unlock()
 		return nil, errdefs.ToGRPCf(errdefs.ErrAlreadyExists, "exec %s already exists in container %s", r.ExecID, r.ID)
 	}
 	c.execs[r.ExecID] = newExecProcess(r.ExecID)
-	s.mu.Unlock()
+
+	// Record exec stdio spec so Start() can bridge to the container PTY.
+	key := r.ID + "|" + r.ExecID
+	execSpecsMu.Lock()
+	execSpecs[key] = execIOSpec{
+		stdin:    r.Stdin,
+		stdout:   r.Stdout,
+		stderr:   r.Stderr,
+		terminal: r.Terminal,
+	}
+	execSpecsMu.Unlock()
 
 	log.Debugf("registered exec %s for container %s", r.ExecID, r.ID)
 	s.send(&events.TaskExecAdded{
@@ -404,6 +461,8 @@ func (s *shimService) Exec(ctx context.Context, r *taskAPI.ExecProcessRequest) (
 
 // NOTICE: Always consider resizepty request is to container, whatever r.ExecID is.
 func (s *shimService) ResizePty(ctx context.Context, r *taskAPI.ResizePtyRequest) (*ptypes.Empty, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	log.Debugf("resizing PTY for container %s to %dx%d", r.ID, r.Width, r.Height)
 	c, found := s.containers[r.ID]
 	if !found || c == nil {
@@ -428,6 +487,25 @@ func (s *shimService) CloseIO(ctx context.Context, r *taskAPI.CloseIORequest) (*
 
 	// Exec IO shares the container PTY; mark exec completion when IO is closed.
 	if r.ExecID != "" {
+		// Optionally close exec's stdin bridge and wait for drain
+		if r.Stdin {
+			key := r.ID + "|" + r.ExecID
+			execStatesMu.Lock()
+			state, ok := execStates[key]
+			execStatesMu.Unlock()
+			if ok && state.tty != nil && state.tty.io != nil && state.tty.io.Stdin() != nil {
+				if err := state.tty.io.Stdin().Close(); err != nil {
+					log.Debugf("exec io: closing stdin for %s/%s failed: %v", r.ID, r.ExecID, err)
+				}
+			}
+			if ok && state.stdinCloser != nil {
+				select {
+				case <-state.stdinCloser:
+				case <-ctx.Done():
+				}
+			}
+		}
+
 		if execProc, exists := c.execs[r.ExecID]; exists {
 			changed := execProc.markExited(okExitCode)
 			pid := execProc.pid
@@ -445,6 +523,14 @@ func (s *shimService) CloseIO(ctx context.Context, r *taskAPI.CloseIORequest) (*
 					ExitedAt:    timestamppb.New(exitTime),
 				})
 			}
+			// cleanup exec io state/spec
+			key := r.ID + "|" + r.ExecID
+			execStatesMu.Lock()
+			delete(execStates, key)
+			execStatesMu.Unlock()
+			execSpecsMu.Lock()
+			delete(execSpecs, key)
+			execSpecsMu.Unlock()
 		}
 		return emptyResponse, nil
 	}
@@ -480,27 +566,35 @@ func (s *shimService) Checkpoint(ctx context.Context, r *taskAPI.CheckpointTaskR
 func (s *shimService) Update(ctx context.Context, r *taskAPI.UpdateTaskRequest) (*ptypes.Empty, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	c, found := s.containers[r.ID]
 	if c == nil || !found {
-		return nil, er.ContainerNotFound
+		// Best-effort: container may already be gone; treat as success to avoid disrupting higher layers
+		log.Debugf("Update ignored: container %s not found", r.ID)
+		return emptyResponse, nil
 	}
 
-	var res *specs.LinuxResources
-	raw, err := typeurl.UnmarshalAny(r.Resources)
-	if err != nil {
-		return nil, err
+	// Decode resources if present; tolerate errors and proceed as no-op
+	var res specs.LinuxResources
+	if r.Resources != nil {
+		if raw, err := typeurl.UnmarshalAny(r.Resources); err == nil {
+			if lr, ok := raw.(*specs.LinuxResources); ok && lr != nil {
+				res = *lr
+			} else {
+				log.Debugf("Update ignored: invalid resources type for %s", s.id)
+			}
+		} else {
+			log.Debugf("Update ignored: unable to unmarshal resources for %s: %v", s.id, err)
+		}
 	}
 
-	res, found = raw.(*specs.LinuxResources)
-	if !found {
-		return nil, errdefs.ToGRPCf(errdefs.ErrInvalidArgument, "Invalid resources type for %s", s.id)
+	log.Debugf("Update task annotations: %v", r.Annotations)
+	log.Debugf("Update task resource: %+v", res)
+
+	if err := s.sandbox.UpdateContainer(ctx, r.ID, res); err != nil {
+		log.Debugf("UpdateContainer best-effort ignore error for %s: %v", r.ID, err)
 	}
-	log.Debugf("update task annotations: %v", r.Annotations)
-	log.Debugf("update task resource: %v", res)
-	err = s.sandbox.UpdateContainer(ctx, r.ID, *res)
-	if err != nil {
-		return nil, errdefs.ToGRPC(err)
-	}
+
 	return emptyResponse, nil
 }
 
@@ -625,15 +719,7 @@ func (s *shimService) Stats(ctx context.Context, r *taskAPI.StatsRequest) (*task
 	stats, err := marshalMetrics(ctx, s, r.ID)
 	if err != nil {
 		log.Debugf("failed to marshal stats: %v", err)
-	}
-
-	if defs.IsMock && err != nil {
-		dummyStats, err := s.DummyStats()
-		if err != nil {
-			return &taskAPI.StatsResponse{Stats: nil}, nil
-		}
-		log.Debugf("returning dummy stats for container %s", r.ID)
-		stats = dummyStats
+		return nil, err
 	}
 
 	return &taskAPI.StatsResponse{

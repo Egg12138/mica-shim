@@ -176,6 +176,13 @@ func RemoveStateDir(id string) error {
 	return os.RemoveAll(filepath.Join(defs.MicranContainerStateDir, id))
 }
 
+func RemoveContainerCacheDir(id string) error {
+	if strings.TrimSpace(id) == "" {
+		return fmt.Errorf("container id cannot be empty")
+	}
+	return os.RemoveAll(filepath.Join(defs.DefaultMicaContainersRoot, id))
+}
+
 func IsELFForHost(path string) (bool, error) {
 	f, err := elf.Open(path)
 	if err != nil {

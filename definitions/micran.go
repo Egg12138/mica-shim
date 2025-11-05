@@ -11,7 +11,8 @@ const (
 	MicaSocketBufSize   = 512
 	MicaSocketTimout    = 5 * time.Second
 
-	SHM_NAME               = "/dev/shm/mica_free_cores"
-	IsMock                 = false
-	HostContainerSupports  = false
+	SHM_NAME              = "/dev/shm/mica_free_cores"
+	IsMock                = false
+	HostContainerSupports = false
+	WorkaroundUpdate      = true
 )

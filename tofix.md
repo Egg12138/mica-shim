@@ -23,8 +23,9 @@
 - [x] ttyRPMSGid issue
 - [ ] ==我们需要MICA monitor!!==
 - [x] kill如果正常执行，可以保证**幂等**，然而如果kill的是UNKNOWN状态的容器，会 `ontainer not found, mark status to UNKNOWN`
-- [ ] pod container corner cases
-- [ ] kubectl pods status inconsistency
+- [x] pod container endless stats 
+- [ ]
+- [x] kubectl pods status inconsistency
 - [x] drop-in configs 解析顺序不当，override的优先级用最新的  docs/arch.md的设计来做
 - [x] cpu request, (oci spec cpu.share)
 - [ ] memory 监控

@@ -162,6 +162,8 @@ func newCommand(ctx context.Context, opts shimv2.StartOpts, cwd string) (*exec.C
 
 // Cleanup handles container cleanup operations for different container types.
 func (s *shimService) Cleanup(ctx context.Context) (*taskAPI.DeleteResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	cwd, err := os.Getwd()
 	if err != nil {

@@ -17,7 +17,7 @@ func deleteContainer(ctx context.Context, s *shimService, c *container) error {
 	if c == nil {
 		return nil
 	}
-
+	// reduntantly signalExit()?
 	c.signalExit()
 
 	// Forcibly delete pod containers.
