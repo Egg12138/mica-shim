@@ -350,7 +350,7 @@ func (s *Sandbox) Delete(ctx context.Context) error {
 
 	for _, c := range s.containers {
 		if err := c.delete(ctx); err != nil {
-			log.Errorf("failed to cleanup container %s", c.id)
+			log.Errorf("failed to delete container %s", c.id)
 		}
 	}
 
@@ -404,9 +404,11 @@ func (s *Sandbox) CreateContainer(ctx context.Context, config ContainerConfig) (
 
 	}
 	defer func() {
-		if err != nil {
-			log.Errorf("failed to create container %s: %v", id, err)
+		if err == nil {
+			return
 		}
+
+		log.Errorf("failed to create container %s: %v", id, err)
 
 		if errStop := c.stop(ctx, true); errStop != nil {
 			log.Errorf("failed to stop container %s after creation failure: %v", id, errStop)
@@ -723,10 +725,11 @@ func (s *Sandbox) ResumeContainer(ctx context.Context, id string) error {
 }
 
 func (s *Sandbox) UpdateContainer(ctx context.Context, id string, resources specs.LinuxResources) error {
-	log.Debugf("Updated container %v resources", resources)
+	log.Debugf("UpdateContainer: container=%s, resources=%+v", id, resources)
 
 	if s.config.StaticResourceMgmt {
-		return fmt.Errorf("container resources cannot be updated in static resource management mode")
+		log.Debugf("UpdateContainer ignored in static resource management mode")
+		return nil
 	}
 
 	c, ok := s.containers[id]
@@ -735,18 +738,15 @@ func (s *Sandbox) UpdateContainer(ctx context.Context, id string, resources spec
 	}
 
 	if err := c.update(ctx, resources); err != nil {
-		log.Errorf("failed to update container resources: %v", resources)
-		return err
+		log.Debugf("UpdateContainer best-effort ignore c.update error for %s: %v", id, err)
 	}
 
 	if err := s.checkVCPUsPinning(ctx); err != nil {
-		log.Errorf("failed to check vcpus pinning: %v", err)
-		return err
+		log.Debugf("UpdateContainer best-effort ignore checkVCPUsPinning error: %v", err)
 	}
 
 	if err := s.StoreSandbox(ctx); err != nil {
-		log.Error("failed to store sandbox after update container resource")
-		return err
+		log.Debugf("UpdateContainer best-effort ignore StoreSandbox error: %v", err)
 	}
 
 	return nil
@@ -765,7 +765,6 @@ func (s *Sandbox) setSandboxState(state StateString) error {
 // store sandbox information to disk
 func (s *Sandbox) StoreSandbox(ctx context.Context) error {
 	target, err := s.newSandboxStoragePath()
-	log.Debugf("store sandbx ==> %s", target)
 	if err != nil {
 		return err
 	}
@@ -941,6 +940,7 @@ func createSandboxFromConfig(ctx context.Context, config *SandboxConfig) (_ *San
 	}()
 
 	if err = s.createNetwork(ctx); err != nil {
+		log.Debugf("failed to create network: %v", err)
 		return nil, err
 	}
 
@@ -953,6 +953,7 @@ func createSandboxFromConfig(ctx context.Context, config *SandboxConfig) (_ *San
 	s.postNetworkCreated()
 
 	if err = s.initContainers(ctx); err != nil {
+		log.Debugf("failed to init containers: %v", err)
 		return nil, err
 	}
 

@@ -206,6 +206,7 @@ func getDebugInfoPrefix(depth int) string {
 	var prefix = ""
 
 	noColor := os.Getenv("LOG_COLOR") != ""
+	showParent := os.Getenv("LOG_SHOW_PARENT") != ""
 
 	timestamp := time.Now().Format("15:04:05")
 	if noColor {
@@ -215,7 +216,7 @@ func getDebugInfoPrefix(depth int) string {
 	}
 
 	pc_parent, _, _, ok := runtime.Caller(depth + 1)
-	if ok {
+	if ok && showParent {
 		fullFuncName := runtime.FuncForPC(pc_parent).Name()
 		funcName := fullFuncName
 		if lastDot := strings.LastIndex(fullFuncName, "."); lastDot >= 0 {

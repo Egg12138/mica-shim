@@ -8,6 +8,7 @@ import (
 	"mica-shim/pkg/pedestal"
 	"mica-shim/pkg/utils"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -71,6 +72,10 @@ func createMicaClientConf(container *Container) (libmica.MicaClientConf, error) 
 	if maxMB > 0 && memMB > maxMB {
 		memMB = maxMB
 	}
+	if err := ensureFirmwarePath(config.ElfAbsPath); err != nil {
+		return libmica.MicaClientConf{}, fmt.Errorf("firmware validation failed: %w", err)
+	}
+
 	// MemoryLimitMB is already in MiB
 	conf.InitWithOpts(libmica.MicaClientConfCreateOptions{
 		CPU:         cpus,
@@ -238,69 +243,127 @@ func CpusetRangeValid(sortedCpuList []int) (bool, []int) {
 // Update resource for changed resource
 func updateContainerResource(c *Container, updated *pedestal.EssentialResource) error {
 	old := c.me.ReadResource()
-	if needUpdateCpuCap(*old.CpuCpacity, *updated.CpuCpacity) {
-		err := c.me.UpdateCPUCapacity(*updated.CpuCpacity)
-		if err != nil {
-			return fmt.Errorf("failed to update cpu capacity of %s: %v", c.id, err)
-		}
-		if *updated.CpuCpacity == 0 {
-			log.Infof("container %s's cpu capacity is unlimited", c.id)
+
+	log.Debugf("Resource update for container %s: old=%s, new=%s",
+		c.id, formatResourceForLog(old), formatResourceForLog(updated))
+
+	// Nil-safety checks for all pointer fields
+	if updated.CpuCpacity != nil {
+		if c.me.NeedUpdateCpuCap(*updated.CpuCpacity) {
+			err := c.me.UpdateCPUCapacity(*updated.CpuCpacity)
+			if err != nil {
+				return fmt.Errorf("failed to update cpu capacity of %s: %v", c.id, err)
+			}
+			if *updated.CpuCpacity == 0 {
+				log.Infof("container %s's cpu capacity is unlimited", c.id)
+			}
 		}
 	}
 
-	if needUpdateMemLimit(*old.MemoryLimitMB, *updated.MemoryLimitMB) {
-		err := c.me.UpdateMemory(*updated.MemoryLimitMB)
-		if err != nil {
-			return fmt.Errorf("failed to update max memory of %s: %v", c.id, err)
+	if updated.MemoryLimitMB != nil {
+		if c.me.NeedUpdateMemLimit(*updated.MemoryLimitMB) {
+			err := c.me.EnsureMemoryLimit(*updated.MemoryLimitMB)
+			if err != nil {
+				return fmt.Errorf("failed to update max memory of %s: %v", c.id, err)
+			}
 		}
 	}
 
-	if needUpdateCpuSet(old.ClientCpuSet, updated.ClientCpuSet) {
+	if c.me.NeedUpdateCpuSet(old.ClientCpuSet, updated.ClientCpuSet) {
 		err := c.me.UpdatePCPUConstrains(updated.ClientCpuSet)
 		if err != nil {
 			return fmt.Errorf("failed to update cpuset of vcpu: %v", err)
 		}
 	}
 
-	if needUpdateCpuShare(*old.CPUWeight, *updated.CPUWeight) {
-		err := c.me.UpdateCPUWeight(*updated.CPUWeight)
-		if err != nil {
-			return fmt.Errorf("failed to set a different cpu weight for %s: %v", c.id, err)
+	if updated.CPUWeight != nil {
+		if c.me.NeedUpdateCpuShare(*updated.CPUWeight) {
+			err := c.me.UpdateCPUWeight(*updated.CPUWeight)
+			if err != nil {
+				return fmt.Errorf("failed to set a different cpu weight for %s: %v", c.id, err)
+			}
 		}
 	}
 
-	if needUpdateVCpus(*old.Vcpu, *updated.Vcpu) {
-		old, newer, err := c.me.UpdateVCPUNum(*updated.Vcpu)
-		if err != nil {
-			log.Warnf("failed to update vcpu number: %v", err)
+	if old.Vcpu != nil && updated.Vcpu != nil {
+		if c.me.NeedUpdateVCpus(*updated.Vcpu) {
+			old, newer, err := c.me.UpdateVCPUNum(*updated.Vcpu)
+			if err != nil {
+				log.Warnf("failed to update vcpu number: %v", err)
+			}
+			log.Infof("update vcpu number from %d to %d", old, newer)
 		}
-		log.Infof("update vcpu number from %d to %d", old, newer)
 	}
 
 	return nil
 }
 
-func needUpdateCpuCap(old, updated uint32) bool {
-	if old == updated && updated >= num2CapRatio*pedestal.MaxCPUNum() {
-		return false
+// formatResourceForLog formats EssentialResource for readable logging
+func formatResourceForLog(res *pedestal.EssentialResource) string {
+	if res == nil {
+		return "<nil>"
 	}
-	return true
+
+	var parts []string
+
+	if res.CpuCpacity != nil {
+		parts = append(parts, fmt.Sprintf("CpuCapacity=%d", *res.CpuCpacity))
+	}
+
+	if res.CPUWeight != nil {
+		parts = append(parts, fmt.Sprintf("CPUWeight=%d", *res.CPUWeight))
+	}
+
+	if res.ClientCpuSet != "" {
+		parts = append(parts, fmt.Sprintf("ClientCpuSet=%s", res.ClientCpuSet))
+	}
+
+	if res.Vcpu != nil {
+		parts = append(parts, fmt.Sprintf("Vcpu=%d", *res.Vcpu))
+	}
+
+	if res.MemoryLimitMB != nil {
+		parts = append(parts, fmt.Sprintf("MemoryLimitMB=%d", *res.MemoryLimitMB))
+	}
+
+	if res.MemoryMinMB > 0 {
+		parts = append(parts, fmt.Sprintf("MemoryMinMB=%d", res.MemoryMinMB))
+	}
+
+	if len(parts) == 0 {
+		return "<empty>"
+	}
+
+	return "{" + strings.Join(parts, ", ") + "}"
 }
 
-func needUpdateMemLimit(old, updated uint32) bool {
-	return updated > old
-}
+func ensureFirmwarePath(firmwarePath string) error {
+	if firmwarePath == "" {
+		return fmt.Errorf("firmware path is empty")
+	}
 
-// vcpu:pcpu => default to be 1:1,
-func needUpdateVCpus(old, updated uint32) bool {
-	return updated <= pedestal.MaxCPUNum()
-}
+	if _, err := os.Stat(firmwarePath); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("firmware file does not exist: %s", firmwarePath)
+		}
+		return fmt.Errorf("failed to access firmware file %s: %v", firmwarePath, err)
+	}
 
-func needUpdateCpuSet(old, updated string) bool {
-	return true
-}
+	info, err := os.Stat(firmwarePath)
+	if err != nil {
+		return fmt.Errorf("failed to stat firmware file %s: %v", firmwarePath, err)
+	}
 
-func needUpdateCpuShare(old, updated uint32) bool {
+	if info.IsDir() {
+		return fmt.Errorf("firmware path is a directory, not a file: %s", firmwarePath)
+	}
 
-	return true
+	absPath, err := filepath.Abs(firmwarePath)
+	if err != nil {
+		log.Debugf("could not get absolute path for %s: %v", firmwarePath, err)
+		absPath = firmwarePath
+	}
+
+	log.Debugf("firmware path validated: %s", absPath)
+	return nil
 }

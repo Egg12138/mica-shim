@@ -154,6 +154,11 @@ func marshalMetrics(ctx context.Context, s *shimService, cid string) (*ptypes.An
 		metrics = statsToMetricsV2(&stats)
 	}
 
+	// Ensure metrics is not nil before marshaling
+	if metrics == nil {
+		return nil, fmt.Errorf("metrics is nil for container %s", cid)
+	}
+
 	data, err := types.MarshalAny(metrics)
 	if err != nil {
 		return nil, err
@@ -167,26 +172,24 @@ func marshalMetrics(ctx context.Context, s *shimService, cid string) (*ptypes.An
 
 // statsToMetricsV1 converts micantainer stats to cgroups v1 metrics format.
 func statsToMetricsV1(stats *cntr.ContainerStats) *cgroupsv1.Metrics {
-	if stats == nil {
-		return nil
-	}
 	m := &cgroupsv1.Metrics{}
 	return m
 }
 
 // statsToMetricsV2 converts micantainer stats to cgroups v2 metrics format.
 func statsToMetricsV2(stats *cntr.ContainerStats) *cgroupsv2.Metrics {
-	var m *cgroupsv2.Metrics
-	if stats.ResourceStats != nil {
-		m = &cgroupsv2.Metrics{
-			Pids: &cgroupsv2.PidsStat{
-				Current: uint64(shimPid),
-				Limit:   uint64(shimPid),
-			},
-			CPU:    setMetricsCPUStats(&stats.ResourceStats.CPUStats),
-			Memory: setMetricsMemStats(&stats.ResourceStats.MemoryStats),
-		}
+	m := &cgroupsv2.Metrics{
+		Pids: &cgroupsv2.PidsStat{
+			Current: uint64(shimPid),
+			Limit:   uint64(shimPid),
+		},
 	}
+
+	if stats != nil && stats.ResourceStats != nil {
+		m.CPU = setMetricsCPUStats(&stats.ResourceStats.CPUStats)
+		m.Memory = setMetricsMemStats(&stats.ResourceStats.MemoryStats)
+	}
+
 	return m
 }
 

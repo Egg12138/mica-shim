@@ -146,7 +146,7 @@ type ContainerConfig struct {
 	OomKillDisable      bool    `json:"oom_kill_disable"`
 
 	// LegacyPty specifies whether to use legacy PTY mode (true) or micad's rpmsg PTY (false)
-	LegacyPty           bool    `json:"legacy_pty"`
+	LegacyPty bool `json:"legacy_pty"`
 
 	// Cmdline is the boot command line for the guest.
 	Cmdline string `json:"cmdline"`
@@ -232,7 +232,6 @@ func loadSandbox(ctx context.Context, id string) (sandbox *Sandbox, err error) {
 		return nil, er.EmptySandboxID
 	}
 
-	log.Debugf("Trying to restore sandbox from disk.")
 	ss, err := RestoreSandbox(ctx, id)
 	if err != nil {
 		log.Debugf("Failed to restore sandbox from disk: %v.", err)
@@ -455,6 +454,9 @@ func (c *Container) stop(ctx context.Context, force bool) error {
 // Due to the 1:1:1 relationship of Container:ClientOS:Task in mica, kill() is essentially stop().
 func (c *Container) kill() error {
 
+	if c.sandbox == nil {
+		return fmt.Errorf("container sandbox reference is nil")
+	}
 	if c.sandbox.state.State != StateReady && c.sandbox.state.State != StateRunning {
 		return fmt.Errorf("sandbox is not running or ready, can not signal container")
 	}
@@ -481,6 +483,9 @@ func (c *Container) kill() error {
 // delete removes the container.
 // This differs from mica, where `rm` forces a client stop. For a container engine, that is bad practice.
 func (c *Container) delete(ctx context.Context) error {
+	if c.sandbox == nil {
+		return fmt.Errorf("container sandbox reference is nil")
+	}
 	currentState, err := c.ensureClientPresence()
 	if err != nil {
 		return err
@@ -500,7 +505,13 @@ func (c *Container) delete(ctx context.Context) error {
 	if err := c.sandbox.removeContainer(c.id); err != nil {
 		return err
 	}
-	return c.sandbox.StoreSandbox(ctx)
+	if err := c.sandbox.StoreSandbox(ctx); err != nil {
+		return fmt.Errorf("failed to store sandbox")
+	}
+	if err := utils.RemoveContainerCacheDir(c.id); err != nil {
+		log.Warnf("failed to remove cache directory for container %s: %v", c.id, err)
+	}
+	return nil
 }
 
 // pause pauses the container's execution.
@@ -523,6 +534,9 @@ func (c *Container) pause(ctx context.Context) error {
 
 // resume resumes a paused container.
 func (c *Container) resume(ctx context.Context) error {
+	if c.sandbox == nil {
+		return fmt.Errorf("container sandbox reference is nil")
+	}
 	currentState, err := c.ensureClientPresence()
 	if err != nil {
 		return err
@@ -541,65 +555,135 @@ func (c *Container) resume(ctx context.Context) error {
 }
 
 // update modifies the container's resources.
-// TODO: Implement container resource update.
 func (c *Container) update(ctx context.Context, resources specs.LinuxResources) error {
 	if c.config != nil && c.config.IsInfra {
 		return nil
 	}
+	if c.sandbox == nil {
+		return fmt.Errorf("container sandbox reference is nil")
+	}
 	if c.sandbox.state.State != StateRunning {
 		return fmt.Errorf("sandbox is not running, cannot stats container")
 	}
-
 	if c.notOperational() {
 		return fmt.Errorf("container not ready or running, impossible to update the container")
 	}
 
-	res := c.config.Resources
-	pedRes := ped.InitResource()
-	if res.CPU == nil {
-		c.config.Resources.CPU = resources.CPU
+	// Ensure resource structs are initialized to avoid nil-pointer dereferences
+	if c.config == nil {
+		return fmt.Errorf("container config is nil")
 	}
+	if c.config.Resources == nil {
+		c.config.Resources = &specs.LinuxResources{}
+	}
+	res := c.config.Resources
+
+	pedRes := ped.InitResource()
+	// Default to nil so we only update fields explicitly requested.
+	pedRes.MemoryLimitMB = nil
+	pedRes.CPUWeight = nil
+
+	if res.CPU == nil {
+		res.CPU = &specs.LinuxCPU{}
+	}
+	if res.Memory == nil {
+		res.Memory = &specs.LinuxMemory{}
+	}
+
+	// IMPORTANT: Prepare updated values WITHOUT modifying container config yet.
+	// We must apply changes to RTOS first, then update config only if successful.
+	// This prevents sandbox resource accounting from counting resources that weren't
+	// actually allocated (which would happen if RTOS update fails but config was already changed).
+	var updatedCPUPeriod *uint64
+	var updatedCPUQuota *int64
+	var updatedCPUs string
+	var updatedMems string
+	var updatedMemLimit *int64
+	var providedCpuShares uint64
+	var cpuSharesProvided bool
 
 	if cpu := resources.CPU; cpu != nil {
 		period := cpu.Period
 		quota := cpu.Quota
-		Cpus := cpu.Cpus
-		Mems := cpu.Mems
+		cpus := cpu.Cpus
+		mems := cpu.Mems
+		shares := cpu.Shares
 
 		if period != nil && *period != 0 {
-			res.CPU.Period = period
+			updatedCPUPeriod = period
 			*pedRes.CpuPeriod = *period
 		}
 
 		if quota != nil && *quota != 0 {
-			res.CPU.Quota = quota
+			updatedCPUQuota = quota
 			*pedRes.CpuQuota = *quota
 		}
 
-		if Cpus != "" {
-			res.CPU.Cpus = Cpus
-			pedRes.ClientCpuSet = Cpus
+		if cpus != "" {
+			updatedCPUs = cpus
+			pedRes.ClientCpuSet = cpus
 		}
 
-		if Mems != "" {
-			res.CPU.Mems = Mems
+		if mems != "" {
+			updatedMems = mems
 		}
-	}
 
-	if res.Memory == nil {
-		c.config.Resources.Memory = resources.Memory
+		if shares != nil {
+			cpuSharesProvided = true
+			providedCpuShares = *shares
+			weight := ped.ShareToWeight(providedCpuShares)
+			weightCopy := weight
+			pedRes.CPUWeight = &weightCopy
+		}
 	}
 
 	if mem := resources.Memory; mem != nil && mem.Limit != nil {
-		c.config.Resources.Memory.Limit = mem.Limit
-		*pedRes.MemoryLimitMB = uint32(*mem.Limit >> 20)
+		limitBytes := *mem.Limit
+		updatedMemLimit = &limitBytes
+		limitMiB := uint32(limitBytes >> 20)
+		pedLimit := limitMiB
+		pedRes.MemoryLimitMB = &pedLimit
 	}
 
-	if err := c.sandbox.updateResources(ctx); err != nil {
+	// CRITICAL ORDER: Apply changes to RTOS FIRST before updating container config.
+	// If this fails, we return error immediately without updating config.
+	// This ensures sandbox resource accounting (which uses config) stays in sync with reality.
+	if err := updateContainerResource(c, pedRes); err != nil {
 		return err
 	}
 
-	return updateContainerResource(c, pedRes)
+	// Only update container config AFTER successful RTOS update.
+	// Now it's safe to modify config because RTOS has accepted the changes.
+	if updatedCPUPeriod != nil {
+		res.CPU.Period = updatedCPUPeriod
+	}
+	if updatedCPUQuota != nil {
+		res.CPU.Quota = updatedCPUQuota
+	}
+	if updatedCPUs != "" {
+		res.CPU.Cpus = updatedCPUs
+	}
+	if updatedMems != "" {
+		res.CPU.Mems = updatedMems
+	}
+	if updatedMemLimit != nil {
+		res.Memory.Limit = updatedMemLimit
+		c.config.MemoryLimitMB = uint32(*updatedMemLimit >> 20)
+	}
+	if cpuSharesProvided {
+		shareCopy := providedCpuShares
+		res.CPU.Shares = &shareCopy
+		c.config.CpuShares = providedCpuShares
+	}
+
+	// Now update sandbox resource accounting with the new config values.
+	// This uses calculateSandboxMemory() which sums all container configs,
+	// so it will now correctly include the newly applied resource limits.
+	if err := c.sandbox.updateResources(ctx); err != nil {
+		log.Debugf("Update best-effort: ignore sandbox.updateResources error for %s: %v", c.id, err)
+	}
+
+	return nil
 }
 
 func (c *Container) ID() string {
@@ -638,6 +722,9 @@ func (c *Container) State() *ContainerState {
 // Signal sends a signal to the container.
 // TODO: Implement a POSIX signals hub.
 func (c *Container) Signal(ctx context.Context, signal syscall.Signal) error {
+	if c.sandbox == nil {
+		return fmt.Errorf("container sandbox reference is nil")
+	}
 	if c.sandbox.notOperational() {
 		return fmt.Errorf("sandbox is not running or ready, can not signal container")
 	}
@@ -723,7 +810,10 @@ func (c *Container) setContainerState(ctx context.Context, state StateString) er
 		return fmt.Errorf("state cannot be empty")
 	}
 
-	log.Debugf("Set container state from %s to %s.", c.state.State, state)
+	if c.sandbox == nil {
+		return fmt.Errorf("container sandbox reference is nil")
+	}
+
 	c.state.State = state
 	c.updateExitNotifier(state)
 	if err := c.SaveState(); err != nil {
@@ -793,6 +883,20 @@ func (c *Container) registerClientWithMicad() error {
 	if err := libmica.Create(conf); err != nil {
 		return err
 	}
+
+	initialMem := c.config.MemoryMinMB
+	if initialMem == 0 {
+		initialMem = ped.InitResource().MemoryMinMB
+	}
+	limit := c.config.MemoryLimitMB
+	if limit > 0 && initialMem > limit {
+		initialMem = limit
+	}
+	threshold := limit
+	if threshold == 0 {
+		threshold = initialMem
+	}
+	c.me.RecordMemoryState(initialMem, threshold)
 
 	return c.setContainerState(c.ctx, StateReady)
 }
@@ -945,6 +1049,9 @@ func (c *Container) RestoreState() error {
 // stats returns the container statistics.
 // TODO: Extend the range of stats collected.
 func (c *Container) stats() (*ContainerStats, error) {
+	if c.sandbox == nil {
+		return nil, fmt.Errorf("container sandbox reference is nil")
+	}
 	if c.sandbox.state.State != StateRunning {
 		return nil, fmt.Errorf("sandbox is not running, cannot stats container")
 	}

@@ -17,7 +17,6 @@ type EssentialResource struct {
 	MemoryLimitMB *uint32
 
 	// the initial memory for DomU client, default to be 32MiB.
-	// Xen needs Ballon Driver kernel module(xen-ballon.ko) to support memory ballooning.
 	MemoryMinMB uint32
 	// Virtual network interface
 	VIF []string
@@ -37,10 +36,12 @@ func InitResource() *EssentialResource {
 	vcpu := uint32(defaultVcpus)
 	capacity := uint32(0)
 	memLimit := uint32(32)
+	cpuWeight := uint32(0)
 	res.CpuPeriod = &period
 	res.CpuQuota = &quota
 	res.Vcpu = &vcpu
 	res.CpuCpacity = &capacity
+	res.CPUWeight = &cpuWeight
 	res.MemoryLimitMB = &memLimit
 	res.MemoryMinMB = 32 // Default minimum memory for DomU
 	return &res

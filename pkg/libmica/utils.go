@@ -3,7 +3,6 @@ package libmica
 import (
 	"fmt"
 	defs "mica-shim/definitions"
-	log "mica-shim/logger"
 	ped "mica-shim/pkg/pedestal"
 	"path/filepath"
 	"runtime"
@@ -249,6 +248,5 @@ func success(res string) bool {
 func ClientNotExist(id string) bool {
 	socketPath := filepath.Join(defs.MicaStateDir, id+".socket")
 	valid := validSocketPath(socketPath)
-	log.Debugf("check socket path: %s is present=%t", socketPath, valid)
 	return !valid
 }
