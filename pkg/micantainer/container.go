@@ -35,8 +35,8 @@ type ContainerStats struct {
 
 // ResourceStats holds CPU and memory statistics.
 type ResourceStats struct {
-	CPUStats    CPUStats    `json:"cpu_stats,omitempty"`
-	MemoryStats MemoryStats `json:"memory_stats,omitempty"`
+	CPUStats    CPUStats    `json:"cpu_stats"`
+	MemoryStats MemoryStats `json:"memory_stats"`
 }
 
 // CPUStats holds CPU usage statistics.
@@ -655,25 +655,43 @@ func (c *Container) update(ctx context.Context, resources specs.LinuxResources) 
 	// Only update container config AFTER successful RTOS update.
 	// Now it's safe to modify config because RTOS has accepted the changes.
 	if updatedCPUPeriod != nil {
-		res.CPU.Period = updatedCPUPeriod
+		if res.CPU.Period == nil || *res.CPU.Period != *updatedCPUPeriod {
+			res.CPU.Period = updatedCPUPeriod
+		}
 	}
 	if updatedCPUQuota != nil {
-		res.CPU.Quota = updatedCPUQuota
+		if res.CPU.Quota == nil || *res.CPU.Quota != *updatedCPUQuota {
+			res.CPU.Quota = updatedCPUQuota
+		}
 	}
 	if updatedCPUs != "" {
-		res.CPU.Cpus = updatedCPUs
+		if res.CPU.Cpus != updatedCPUs {
+			res.CPU.Cpus = updatedCPUs
+		}
 	}
 	if updatedMems != "" {
-		res.CPU.Mems = updatedMems
+		if res.CPU.Mems != updatedMems {
+			res.CPU.Mems = updatedMems
+		}
 	}
 	if updatedMemLimit != nil {
-		res.Memory.Limit = updatedMemLimit
-		c.config.MemoryLimitMB = uint32(*updatedMemLimit >> 20)
+		if res.Memory.Limit == nil || *res.Memory.Limit != *updatedMemLimit {
+			res.Memory.Limit = updatedMemLimit
+			newLimitMB := uint32(*updatedMemLimit >> 20)
+			if c.config.MemoryLimitMB != newLimitMB {
+				c.config.MemoryLimitMB = newLimitMB
+			}
+		}
 	}
 	if cpuSharesProvided {
-		shareCopy := providedCpuShares
-		res.CPU.Shares = &shareCopy
-		c.config.CpuShares = providedCpuShares
+		// Only write when changed
+		if res.CPU.Shares == nil || *res.CPU.Shares != providedCpuShares {
+			shareCopy := providedCpuShares
+			res.CPU.Shares = &shareCopy
+		}
+		if c.config.CpuShares != providedCpuShares {
+			c.config.CpuShares = providedCpuShares
+		}
 	}
 
 	// Now update sandbox resource accounting with the new config values.
@@ -828,7 +846,7 @@ func (c *Container) setContainerState(ctx context.Context, state StateString) er
 }
 
 func (c *Container) checkState() StateString {
-	if c == nil && c.id == "" {
+	if c == nil || c.id == "" {
 		return StateDown
 	}
 
@@ -892,13 +910,40 @@ func (c *Container) registerClientWithMicad() error {
 	if limit > 0 && initialMem > limit {
 		initialMem = limit
 	}
-	threshold := limit
-	if threshold == 0 {
-		threshold = initialMem
-	}
-	c.me.RecordMemoryState(initialMem, threshold)
+	c.me.RecordMemoryState(initialMem, initialMem)
 
 	return c.setContainerState(c.ctx, StateReady)
+}
+
+func (c *Container) applyXenMemoryLimit() error {
+	if c == nil || c.config == nil || c.config.IsInfra {
+		return nil
+	}
+
+	if ped.GetHostPed() != ped.Xen {
+		return nil
+	}
+
+	limit := c.config.MemoryLimitMB
+	if limit == 0 {
+		return nil
+	}
+
+	if c.me.CurrentMemoryMB() == limit && c.me.MemoryThresholdMB() >= limit {
+		return nil
+	}
+
+	target := int(limit)
+	log.Debugf("setting mem max to %d MB", target)
+	if err := ped.XlMemMax(c.id, target); err != nil {
+		return fmt.Errorf("failed to set mem-max to %d MB for %s: %w", limit, c.id, err)
+	}
+	if err := ped.XlMemSet(c.id, target); err != nil {
+		return fmt.Errorf("failed to set memory to %d MB for %s: %w", limit, c.id, err)
+	}
+
+	c.me.RecordMemoryState(limit, limit)
+	return nil
 }
 
 const num2CapRatio = 100
@@ -1047,7 +1092,7 @@ func (c *Container) RestoreState() error {
 }
 
 // stats returns the container statistics.
-// TODO: Extend the range of stats collected.
+// For Xen-based guests, we derive CPU usage from xl vcpu-list time(s) and memory from libmica.
 func (c *Container) stats() (*ContainerStats, error) {
 	if c.sandbox == nil {
 		return nil, fmt.Errorf("container sandbox reference is nil")
@@ -1055,7 +1100,49 @@ func (c *Container) stats() (*ContainerStats, error) {
 	if c.sandbox.state.State != StateRunning {
 		return nil, fmt.Errorf("sandbox is not running, cannot stats container")
 	}
-	st := &ContainerStats{}
+
+	// CPU: sum per-vCPU consumed time(s) -> microseconds
+	var totalUsec uint64
+	if vcpuInfo, err := ped.XlVcpuList(); err == nil && vcpuInfo != nil {
+		var entries []ped.VCPUEntry
+
+		if v, ok := vcpuInfo.DomainVCPUMap[c.id]; ok {
+			entries = v
+		}
+		for _, e := range entries {
+			if e.TimeSeconds > 0 {
+				totalUsec += uint64(e.TimeSeconds * 1_000_000.0)
+			}
+		}
+	}
+
+	curMB := c.me.CurrentMemoryMB()
+	thrMB := c.me.MemoryThresholdMB()
+	if thrMB == 0 {
+		thrMB = uint32(c.config.MemoryLimitMB)
+	}
+	usageBytes := uint64(curMB) << 20
+	limitBytes := uint64(thrMB) << 20
+
+	st := &ContainerStats{
+		ResourceStats: &ResourceStats{
+			CPUStats: CPUStats{
+				TotalUsage: totalUsec,
+				NrPeriods:  0, // no cgroup-like period semantics in Xen; leave zero.
+			},
+			MemoryStats: MemoryStats{
+				Cache: 0,
+				Usage: MemoryEntry{
+					Failcnt: 0,
+					Limit:   limitBytes,
+					MaxEver: limitBytes, // Conservative default until HWM tracking exists.
+					Usage:   usageBytes,
+				},
+				Stats: map[string]uint64{}, // Reserved for future detailed stats.
+			},
+		},
+		NetworkStats: nil,
+	}
 	return st, nil
 }
 

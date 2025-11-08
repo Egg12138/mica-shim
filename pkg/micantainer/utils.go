@@ -39,6 +39,9 @@ func startClient(ctx context.Context, sandbox SandboxTraits, c *Container) error
 		log.Errorf("startClient: Start failed: %v", err)
 		return err
 	}
+	if err := c.applyXenMemoryLimit(); err != nil {
+		return fmt.Errorf("apply memory limit for %s: %w", c.ID(), err)
+	}
 	log.Infof("startClient: Start OK in %s", time.Since(start))
 
 	return nil
@@ -160,6 +163,7 @@ func calculateSandboxVCPUs(s *Sandbox) (uint32, error) {
 }
 
 func calculateSandboxMemory(s *Sandbox) uint64 {
+	// Return value is in MiB
 	memorySandbox := uint64(0)
 	for _, cc := range s.config.ContainerConfigs {
 		if cc.IsInfra {
@@ -178,17 +182,19 @@ func calculateSandboxMemory(s *Sandbox) uint64 {
 		}
 
 		if m := cc.Resources.Memory; m != nil {
-			currentLimit := int64(0)
+			// OCI memory limit is in bytes; convert to MiB for sandbox accounting
 			if m.Limit != nil && *m.Limit > 0 {
-				currentLimit = *m.Limit
-				memorySandbox += uint64(currentLimit)
-				log.Debugf("sandbox memory limit + %d MiB", currentLimit)
+				limitMiB := uint64(*m.Limit >> 20)
+				memorySandbox += limitMiB
+				log.Debugf("sandbox memory limit + %d MiB", limitMiB)
 			}
 
+			// Hugepage limits are also in bytes; convert to MiB
 			if s.config.HugePageSupport {
 				for _, lim := range cc.Resources.HugepageLimits {
-					log.Debugf("sandbox hugepage limit + %d %s", lim.Limit, lim.Pagesize)
-					memorySandbox += lim.Limit
+					hpMiB := lim.Limit >> 20
+					log.Debugf("sandbox hugepage limit + %d MiB (%s)", hpMiB, lim.Pagesize)
+					memorySandbox += hpMiB
 				}
 			}
 		}
@@ -291,7 +297,9 @@ func updateContainerResource(c *Container, updated *pedestal.EssentialResource) 
 			if err != nil {
 				log.Warnf("failed to update vcpu number: %v", err)
 			}
-			log.Infof("update vcpu number from %d to %d", old, newer)
+			if old != newer {
+				log.Infof("update vcpu number from %d to %d", old, newer)
+			}
 		}
 	}
 

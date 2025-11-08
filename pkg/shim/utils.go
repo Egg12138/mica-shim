@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	defs "mica-shim/definitions"
+	er "mica-shim/errors"
 	log "mica-shim/logger"
 	"mica-shim/pkg/libmica"
 	cntr "mica-shim/pkg/micantainer"
@@ -172,15 +173,23 @@ func watchSandbox(ctx context.Context, s *shimService) {
 	}
 
 	err := <-s.monitor
-	log.Errorf("sandbox %s received an error or stop monitor", s.sandbox.SandboxID())
-	if err == nil {
-		return
-	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	log.Debugf("trying to clean up containers resource inside sandbox %s", s.sandbox.SandboxID())
+	// Check if sandbox still exists (may have been deleted already)
+	if s.sandbox == nil {
+		log.Debugf("sandbox already deleted, skipping cleanup")
+		return
+	}
+
+	sandboxID := s.sandbox.SandboxID()
+	log.Errorf("sandbox %s received an error or stop monitor", sandboxID)
+	if err == nil {
+		return
+	}
+
+	log.Debugf("trying to clean up containers resource inside sandbox %s", sandboxID)
 	err = s.sandbox.Stop(ctx, true)
 	if err != nil {
 		log.Warnf("stop sandbox failed: %v", err)
@@ -203,6 +212,10 @@ func watchSandbox(ctx context.Context, s *shimService) {
 }
 
 func (s *shimService) getContainerStatus(id string) (task.Status, error) {
+	if s.sandbox == nil {
+		log.Debugf("Sandbox is nil, cannot get status for container %s", id)
+		return task.Status_UNKNOWN, er.SandboxNotFound
+	}
 	cs, err := s.sandbox.StatusContainer(id)
 	if err != nil {
 		return task.Status_UNKNOWN, err

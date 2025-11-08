@@ -32,13 +32,25 @@ func (r *ContainerConfig) ParseOCICPUResources(spec *specs.Spec) error {
 
 	essentialRes := pedestal.LinuxResource2Essential(spec)
 	r.CpuLimit = *essentialRes.CpuCpacity
-	r.CpuPeriod = *essentialRes.CpuPeriod
-	r.CpuQuota = *essentialRes.CpuQuota
-	if cpu := spec.Linux.Resources.CPU; cpu != nil && cpu.Shares != nil {
-		r.CpuShares = *cpu.Shares
+	// Only copy CPU period/quota/shares when explicitly specified and non-zero
+	if cpu := spec.Linux.Resources.CPU; cpu != nil {
+		if cpu.Period != nil && *cpu.Period > 0 {
+			r.CpuPeriod = *cpu.Period
+		}
+		if cpu.Quota != nil && *cpu.Quota > 0 {
+			r.CpuQuota = *cpu.Quota
+		}
+		if cpu.Shares != nil && *cpu.Shares > 0 {
+			r.CpuShares = *cpu.Shares
+		}
 	}
-	r.VCPUNum = *essentialRes.Vcpu
-	r.CpusetCpus = essentialRes.ClientCpuSet
+	// Copy vCPU and cpuset only when meaningful
+	if essentialRes.Vcpu != nil && *essentialRes.Vcpu > 0 {
+		r.VCPUNum = *essentialRes.Vcpu
+	}
+	if essentialRes.ClientCpuSet != "" {
+		r.CpusetCpus = essentialRes.ClientCpuSet
+	}
 
 	// Validate cpuset ranges against host max CPUs; adjust if needed.
 	if r.CpusetCpus != "" {
@@ -67,7 +79,7 @@ func (r *ContainerConfig) ParseOCICPUResources(spec *specs.Spec) error {
 			}
 		}
 	}
-	r.MemoryLimitMB = *essentialRes.MemoryLimitMB
+	// Memory limit is parsed in ParseOCIMemoryResources; ignore defaults/unspecified here
 	log.Debugf(`
 		EssentialResource:
 		CpuLimit = %d
@@ -95,19 +107,19 @@ func (r *ContainerConfig) ParseOCIMemoryResources(spec *specs.Spec) error {
 
 	memory := spec.Linux.Resources.Memory
 
-	if memory.Limit != nil {
+	if memory.Limit != nil && *memory.Limit > 0 {
 		r.MemoryLimitMB = uint32(*memory.Limit / 1024 / 1024)
 	}
 
-	if memory.Reservation != nil {
+	if memory.Reservation != nil && *memory.Reservation > 0 {
 		r.MemoryReservationMB = uint32(*memory.Reservation / 1024 / 1024)
 	}
 
-	if memory.Swap != nil {
+	if memory.Swap != nil && *memory.Swap > 0 {
 		r.MemorySwapMB = uint32(*memory.Swap / 1024 / 1024)
 	}
 
-	if memory.Swappiness != nil {
+	if memory.Swappiness != nil && *memory.Swappiness > 0 {
 		swappiness := uint32(*memory.Swappiness)
 		r.MemorySwappinessMB = &swappiness
 	}

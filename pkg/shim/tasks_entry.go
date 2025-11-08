@@ -142,19 +142,23 @@ func (s *shimService) Start(ctx context.Context, r *taskAPI.StartRequest) (*task
 		spec, ok := execSpecs[key]
 		execSpecsMu.Unlock()
 		if ok {
-			stdin, stdout, _, err := s.sandbox.IOStream(c.id, c.id)
-			if err != nil {
-				log.Debugf("exec io: IOStream failed for %s/%s: %v", r.ID, r.ExecID, err)
+			if s.sandbox == nil {
+				log.Debugf("Sandbox is nil, cannot get IOStream for exec %s/%s", r.ID, r.ExecID)
 			} else {
-				tty, err := newTtyIO(ctx, c.id, spec.stdin, spec.stdout, spec.stderr, spec.terminal)
+				stdin, stdout, _, err := s.sandbox.IOStream(c.id, c.id)
 				if err != nil {
-					log.Debugf("exec io: newTtyIO failed for %s/%s: %v", r.ID, r.ExecID, err)
+					log.Debugf("exec io: IOStream failed for %s/%s: %v", r.ID, r.ExecID, err)
 				} else {
-					stdinCloser := make(chan struct{})
-					go ioCopy(c.exitIOch, stdinCloser, tty, stdin, stdout)
-					execStatesMu.Lock()
-					execStates[key] = execIOState{tty: tty, stdinCloser: stdinCloser}
-					execStatesMu.Unlock()
+					tty, err := newTtyIO(ctx, c.id, spec.stdin, spec.stdout, spec.stderr, spec.terminal)
+					if err != nil {
+						log.Debugf("exec io: newTtyIO failed for %s/%s: %v", r.ID, r.ExecID, err)
+					} else {
+						stdinCloser := make(chan struct{})
+						go ioCopy(c.signalExit, stdinCloser, tty, stdin, stdout)
+						execStatesMu.Lock()
+						execStates[key] = execIOState{tty: tty, stdinCloser: stdinCloser}
+						execStatesMu.Unlock()
+					}
 				}
 			}
 		} else {
@@ -197,7 +201,14 @@ func (s *shimService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*ta
 
 	c, found := s.containers[r.ID]
 	if c == nil || !found {
-		log.Debugf("container %s not found in shim service storage", r.ID)
+		log.Debugf("container %s not found in shim service storage (idempotent delete)", r.ID)
+		s.send(&events.TaskDelete{
+			ContainerID: r.ID,
+			ExitedAt:    timestamppb.Now(),
+			Pid:         shimPid,
+			ExitStatus:  okExitCode,
+		})
+		delete(s.containers, r.ID)
 		return &taskAPI.DeleteResponse{
 			ExitStatus: okExitCode,
 			ExitedAt:   timestamppb.Now(),
@@ -241,6 +252,37 @@ func (s *shimService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*ta
 		}, nil
 	}
 
+	if c.cType.CanBeSandbox() {
+		// Check if sandbox exists before proceeding
+		if s.sandbox == nil {
+			log.Debugf("Sandbox already deleted in Delete method for container %s", c.id)
+		} else {
+			sandboxID := s.sandbox.SandboxID()
+
+			// Signal monitor goroutine to stop cleanly (non-blocking to avoid deadlock)
+			if s.monitor != nil {
+				log.Debugf("Signaling monitor to stop for sandbox %s", sandboxID)
+				select {
+				case s.monitor <- nil:
+					log.Debugf("Successfully signaled monitor")
+				default:
+					log.Debugf("Monitor channel full or closed, skipping signal")
+				}
+				s.monitor = nil
+			}
+
+			// Stop and delete the entire sandbox
+			if err := s.sandbox.Stop(ctx, true); err != nil {
+				log.Debugf("Stop sandbox %s returned: %v", sandboxID, err)
+			}
+			if err := s.sandbox.Delete(ctx); err != nil {
+				log.Debugf("Delete sandbox %s returned: %v", sandboxID, err)
+			}
+			s.sandbox = nil
+		}
+	}
+
+	// Delete the container (handles pod containers, unmount, registry cleanup)
 	if err := deleteContainer(ctx, s, c); err != nil {
 		return nil, err
 	}
@@ -254,11 +296,11 @@ func (s *shimService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*ta
 		ContainerID: r.ID,
 		ExitedAt:    timestamppb.New(c.exitTime),
 		Pid:         pid,
-		ExitStatus:  okExitCode,
+		ExitStatus:  c.exit,
 	})
 
 	return &taskAPI.DeleteResponse{
-		ExitStatus: okExitCode,
+		ExitStatus: c.exit,
 		ExitedAt:   timestamppb.New(c.exitTime),
 		Pid:        pid,
 	}, nil
@@ -286,6 +328,10 @@ func (s *shimService) Pause(ctx context.Context, r *taskAPI.PauseRequest) (*ptyp
 		return nil, er.ContainerNotFound
 	}
 	c.status = task.Status_PAUSING
+	if s.sandbox == nil {
+		log.Debugf("Sandbox is nil, cannot pause container %s", r.ID)
+		return nil, er.SandboxNotFound
+	}
 	err := s.sandbox.PauseContainer(ctx, r.ID)
 	if err == nil {
 		c.status = task.Status_PAUSED
@@ -319,6 +365,10 @@ func (s *shimService) Resume(ctx context.Context, r *taskAPI.ResumeRequest) (*pt
 		return nil, er.ContainerNotFound
 	}
 
+	if s.sandbox == nil {
+		log.Debugf("Sandbox is nil, cannot resume container %s", c.id)
+		return nil, er.SandboxNotFound
+	}
 	err := s.sandbox.ResumeContainer(ctx, c.id)
 	if err == nil {
 		c.status = task.Status_RUNNING
@@ -359,11 +409,33 @@ func (s *shimService) Kill(ctx context.Context, r *taskAPI.KillRequest) (*ptypes
 
 	switch signum {
 	case syscall.SIGKILL, syscall.SIGTERM:
+		log.Debugf(" +++++++++sigterm received for container %s", c.id)
 		if c.status == task.Status_STOPPED {
 			log.Debugf("container %s already stopped", c.id)
 			return emptyResponse, nil
 		}
-		log.Debugf("in sandbox <%s>, tring to kill container %s", s.id, c.id)
+		if c.cType.CanBeSandbox() {
+			log.Debugf(" *************stop sandbox for container %s", c.id)
+			if s.sandbox != nil {
+				if err := s.sandbox.Stop(ctx, true); err != nil {
+					log.Debugf("sandbox Stop returned: %v", err)
+				}
+				if err := s.sandbox.Delete(ctx); err != nil {
+					log.Debugf("sandbox Delete returned: %v", err)
+				}
+				s.sandbox = nil
+			} else {
+				log.Debugf("Sandbox already deleted in Kill for container %s", c.id)
+			}
+			c.status = task.Status_STOPPED
+			c.signalExit()
+			return emptyResponse, nil
+		}
+		log.Debugf("in sandbox <%s>, trying to kill container %s", s.id, c.id)
+		if s.sandbox == nil {
+			log.Debugf("Sandbox is nil, cannot kill container %s", c.id)
+			return nil, er.SandboxNotFound
+		}
 		killed, err := s.sandbox.KillContainer(ctx, c.id)
 		if err != nil {
 			st, err1 := s.getContainerStatus(c.id)
@@ -385,6 +457,10 @@ func (s *shimService) Kill(ctx context.Context, r *taskAPI.KillRequest) (*ptypes
 			log.Debugf("container %s pausing or stopped, can not task action", c.id)
 			return emptyResponse, nil
 		}
+		if s.sandbox == nil {
+			log.Debugf("Sandbox is nil, cannot pause container %s", c.id)
+			return nil, er.SandboxNotFound
+		}
 		if err := s.sandbox.PauseContainer(ctx, c.id); err != nil {
 			log.Debugf("sandbox pause container %s failed %v", c.id, err)
 			st, err1 := s.getContainerStatus(c.id)
@@ -399,27 +475,6 @@ func (s *shimService) Kill(ctx context.Context, r *taskAPI.KillRequest) (*ptypes
 		return emptyResponse, nil
 	}
 	return emptyResponse, nil
-}
-
-// KillBySignal passes signals directly to the sandbox.
-func (s *shimService) KillBySignal(ctx context.Context, r *taskAPI.KillRequest) (*ptypes.Empty, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// TODO: after mica supports passing POSIX signals to client os, we use sandbox.SignalTask to kill task
-	signum := syscall.Signal(r.Signal)
-
-	c, found := s.containers[r.ID]
-	if c == nil || !found {
-		return nil, er.ContainerNotFound
-	}
-
-	// Only supported
-	if (signum == syscall.SIGKILL || signum == syscall.SIGTERM) && c.status == task.Status_STOPPED {
-		log.Debugf("container %s already stopped", c.id)
-		return emptyResponse, nil
-	}
-	return emptyResponse, s.sandbox.SignalTask(ctx, c.id, signum)
 }
 
 // TODO: Pass command line string to pty
@@ -469,6 +524,10 @@ func (s *shimService) ResizePty(ctx context.Context, r *taskAPI.ResizePtyRequest
 		return nil, er.ContainerNotFound
 	}
 
+	if s.sandbox == nil {
+		log.Debugf("Sandbox is nil, cannot resize PTY for %s", r.ID)
+		return nil, er.SandboxNotFound
+	}
 	err := s.sandbox.WinResize(ctx, r.ID, r.Height, r.Width)
 	if err != nil {
 		return nil, err
@@ -591,6 +650,10 @@ func (s *shimService) Update(ctx context.Context, r *taskAPI.UpdateTaskRequest) 
 	log.Debugf("Update task annotations: %v", r.Annotations)
 	log.Debugf("Update task resource: %+v", res)
 
+	if s.sandbox == nil {
+		log.Debugf("Sandbox is nil, cannot update container %s", r.ID)
+		return nil, er.SandboxNotFound
+	}
 	if err := s.sandbox.UpdateContainer(ctx, r.ID, res); err != nil {
 		log.Debugf("UpdateContainer best-effort ignore error for %s: %v", r.ID, err)
 	}
@@ -713,17 +776,20 @@ func (s *shimService) Stats(ctx context.Context, r *taskAPI.StatsRequest) (*task
 
 	c, found := s.containers[r.ID]
 	if c == nil || !found {
-		return nil, er.ContainerNotFound
+		return &taskAPI.StatsResponse{
+			Stats: EmptyMetricsV1(),
+		}, nil
 	}
 
-	stats, err := marshalMetrics(ctx, s, r.ID)
+	data, err := marshalMetrics(ctx, s, r.ID)
 	if err != nil {
-		log.Debugf("failed to marshal stats: %v", err)
-		return nil, err
+		return &taskAPI.StatsResponse{
+			Stats: EmptyMetricsV1(),
+		}, nil
 	}
 
 	return &taskAPI.StatsResponse{
-		Stats: stats,
+		Stats: data,
 	}, nil
 }
 

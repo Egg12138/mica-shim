@@ -333,6 +333,7 @@ func micaCtl(cmd MicaCommand, id string, opts ...string) error {
 
 	// Debug branch for MUpdate: use xl commands instead of micad set command
 	if cmd == MUpdate && defs.WorkaroundUpdate {
+		log.Debug("calling xl to update resource for debug")
 		if err := handleMicaUpdateWithXl(id, opts...); err != nil {
 			log.Warnf("xl workaround failed: %v", err)
 		} else {

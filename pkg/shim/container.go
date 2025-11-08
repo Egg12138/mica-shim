@@ -58,13 +58,27 @@ type execProcess struct {
 	exitTime   time.Time
 	waitCh     chan struct{}
 	waitOnce   sync.Once
+
+	// stdio from ExecProcessRequest; used to bridge to container PTY
+	stdin    string
+	stdout   string
+	stderr   string
+	terminal bool
+
+	// IO bridging for exec session
+	ttyio       *ttyIO
+	stdinPipe   io.WriteCloser
+	stdinCloser chan struct{}
+	exitIOch    chan struct{}
 }
 
 func newExecProcess(id string) *execProcess {
 	return &execProcess{
-		id:     id,
-		status: task.Status_CREATED,
-		waitCh: make(chan struct{}),
+		id:          id,
+		status:      task.Status_CREATED,
+		waitCh:      make(chan struct{}),
+		stdinCloser: make(chan struct{}),
+		exitIOch:    make(chan struct{}),
 	}
 }
 

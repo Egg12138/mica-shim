@@ -204,6 +204,13 @@ func (s *shimService) Cleanup(ctx context.Context) (*taskAPI.DeleteResponse, err
 		log.Debugf("unknown container type to be cleaned up: %s", ctype)
 	}
 
+	s.send(&events.TaskDelete{
+		ContainerID: s.id,
+		Pid:         shimPid,
+		ExitStatus:  128 + uint32(unix.SIGKILL),
+		ExitedAt:    timestamppb.New(time.Now()),
+	})
+
 	return &taskAPI.DeleteResponse{
 		ExitedAt:   timestamppb.New(time.Now()),
 		ExitStatus: 128 + uint32(unix.SIGKILL),

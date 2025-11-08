@@ -6,7 +6,6 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	defs "mica-shim/definitions"
 	er "mica-shim/errors"
 	log "mica-shim/logger"
 	"os/exec"
@@ -206,7 +205,11 @@ func xlvcpu() (*XlVcpuInfo, error) {
 	return parseXlVcpuInfo(out.String())
 }
 
-func xldomid(clientID string) (int, error) {
+func XlVcpuList() (*XlVcpuInfo, error) {
+	return xlvcpu()
+}
+
+func XlDomID(clientID string) (int, error) {
 	var stdout, stderr bytes.Buffer
 	cmd := newxl(domid, clientID)
 	cmd.Stdout = &stdout
@@ -474,9 +477,6 @@ func MemoryMB() (free, total uint32) {
 	v, _ := mem.VirtualMemory()
 	free = uint32(v.Free >> 20)   // Convert bytes to MB
 	total = uint32(v.Total >> 20) // Convert bytes to MB
-	if defs.IsMock {
-		return free, total
-	}
 
 	i, err := xinfo()
 	if err != nil {
@@ -512,9 +512,6 @@ func MaxCPUNum() uint32 {
 
 // XlMemSet sets memory for a domain using xl mem-set
 func XlMemSet(domainName string, memMB int) error {
-	if defs.IsMock {
-		return nil
-	}
 	cmd := newxl(memset, domainName, strconv.Itoa(memMB))
 	log.Debugf("run %s to set memory to %d MB for domain %s", cmd.String(), memMB, domainName)
 	if err := cmd.Run(); err != nil {
@@ -526,9 +523,6 @@ func XlMemSet(domainName string, memMB int) error {
 
 // XlMemMax sets maximum memory for a domain using xl mem-max
 func XlMemMax(domainName string, memMB int) error {
-	if defs.IsMock {
-		return nil
-	}
 	cmd := newxl(memmax, domainName, strconv.Itoa(memMB))
 	log.Debugf("run %s to set max memory to %d MB for domain %s", cmd.String(), memMB, domainName)
 	if err := cmd.Run(); err != nil {
@@ -540,9 +534,6 @@ func XlMemMax(domainName string, memMB int) error {
 
 // XlVcpuSet sets VCPU count for a domain using xl vcpu-set
 func XlVcpuSet(domainName string, vcpuCount int) error {
-	if defs.IsMock {
-		return nil
-	}
 	cmd := newxl(vcpuset, domainName, strconv.Itoa(vcpuCount))
 	log.Debugf("run %s to set VCPU count to %d for domain %s", cmd.String(), vcpuCount, domainName)
 	if err := cmd.Run(); err != nil {
@@ -554,11 +545,8 @@ func XlVcpuSet(domainName string, vcpuCount int) error {
 
 // XlSchedCredit2 sets CPU weight and capacity for a domain using xl sched-credit2
 func XlSchedCredit2(domainName string, weight, cap int) error {
-	if defs.IsMock {
-		return nil
-	}
-	// Validate weight (must be >= 1)
-	if weight < 1 {
+	// Validate weight if a value is provided
+	if weight != 0 && weight < 1 {
 		return fmt.Errorf("CPU weight must be >= 1, got %d", weight)
 	}
 
@@ -586,9 +574,6 @@ func XlSchedCredit2(domainName string, weight, cap int) error {
 
 // For cases, id is truncated id
 func Resume(id string) error {
-	if defs.IsMock {
-		return nil
-	}
 	cmd := newxl(resume, id)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("xl failed to resume %s: %v", id, err)
@@ -598,9 +583,6 @@ func Resume(id string) error {
 }
 
 func Pause(id string) error {
-	if defs.IsMock {
-		return nil
-	}
 	cmd := newxl(pause, id)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("xl failed to pause %s: %v", id, err)
@@ -618,7 +600,7 @@ func LinuxResource2Essential(spec *specs.Spec) *EssentialResource {
 	r := InitResource()
 	// cpu
 	cpu := spec.Linux.Resources.CPU
-	if cpu.Quota != nil && cpu.Period != nil && *cpu.Period > 0 {
+	if cpu.Quota != nil && *cpu.Quota > 0 && cpu.Period != nil && *cpu.Period > 0 {
 		r.CpuPeriod = cpu.Period
 		r.CpuQuota = cpu.Quota
 		cpuCapacity := *cpu.Quota / int64(*cpu.Period)
@@ -630,7 +612,7 @@ func LinuxResource2Essential(spec *specs.Spec) *EssentialResource {
 	}
 
 	var weight uint32
-	if cpu.Shares != nil {
+	if cpu.Shares != nil && *cpu.Shares > 0 {
 		weight = ShareToWeight(*cpu.Shares)
 	} else {
 		log.Debugf("cpu shares is nil, use default weight %d", DefaultXenWeight)
@@ -640,15 +622,19 @@ func LinuxResource2Essential(spec *specs.Spec) *EssentialResource {
 
 	cpus, set, vcpuNum := validateCPUSet(cpu.Cpus)
 
-	r.ClientCpuSet = cpus
+	if cpus != "" && vcpuNum > 0 {
+		r.ClientCpuSet = cpus
+	}
 
 	log.Debugf("pinning cpu set = %v, parse to %v", cpus, set)
 	// vcpuNum = calculateVCPU(&set, int(r.CpuCpacity))
-	*r.Vcpu = uint32(vcpuNum)
+	if vcpuNum > 0 {
+		*r.Vcpu = uint32(vcpuNum)
+	}
 
 	// mem
 	mem := spec.Linux.Resources.Memory
-	if mem != nil && mem.Limit != nil {
+	if mem != nil && mem.Limit != nil && *mem.Limit > 0 {
 		*r.MemoryLimitMB = uint32(*mem.Limit >> 20)
 	}
 
@@ -660,9 +646,6 @@ func LinuxResource2Essential(spec *specs.Spec) *EssentialResource {
 // assume cpu set is valid
 // do hard affinity only
 func PinVCPU(clientID, cpus string) error {
-	if defs.IsMock {
-		return nil
-	}
 	cmd := newxl(vcpupin, clientID, "all", cpus)
 	log.Debugf("run %s to pinning vcpu %s to %s", cmd.String(), cpus, clientID)
 	if err := cmd.Run(); err != nil {
@@ -694,9 +677,6 @@ func calculateVCPU(cpuSet *cpuset.CPUSet, vcpuAssigned int) int {
 }
 
 func MemLowThreshold() uint32 {
-	if defs.IsMock {
-		return 32
-	}
 	return 2
 }
 
@@ -714,9 +694,6 @@ func MemHighThreshold() uint32 {
 }
 
 func ControlOSCpuset() cpuset.CPUSet {
-	if defs.IsMock {
-		return cpuset.NewCPUSet(0, 1)
-	}
 
 	vcpuInfo, err := xlvcpu()
 	if err != nil {
@@ -769,7 +746,7 @@ func parseAffinity(affinity string) (cpuset.CPUSet, error) {
 }
 
 func DomainID(clientID string) (int, error) {
-	if domid, err := xldomid(clientID); err == nil {
+	if domid, err := XlDomID(clientID); err == nil {
 		return domid, nil
 	} else {
 		log.Debugf("xl domid fallback failed for %s: %v", clientID, err)
@@ -825,7 +802,7 @@ func parseXLListForDomain(clientID string) (int, error) {
 const xenstorePathFmt = "/local/domain/%d/%s"
 
 func xenStoreRead(name, item string) (string, error) {
-	domId, err := xldomid(name)
+	domId, err := XlDomID(name)
 	if err != nil {
 		return "", err
 	}
@@ -856,4 +833,45 @@ func xenStoreReadRaw(key string) (string, error) {
 		return "", fmt.Errorf("xenstore-read %s returned empty output", key)
 	}
 	return out, nil
+}
+
+// XenStoreReadDomainState reads the domain state from xenstore
+// Returns "running" if domain is active and ready, otherwise returns the actual state
+func XenStoreReadDomainState(name string) (string, error) {
+	// Try to read domain state from xenstore
+	// Xen stores domain state as a number, but we can also check via xl list
+	domId, err := XlDomID(name)
+	if err != nil {
+		return "", err
+	}
+
+	// Check if domain exists and is running via xl list
+	var stdout bytes.Buffer
+	cmd := exec.Command("xl", "list", fmt.Sprintf("%d", domId))
+	cmd.Stdout = &stdout
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to check domain %s state: %w", name, err)
+	}
+
+	output := stdout.String()
+	lines := strings.Split(output, "\n")
+
+	// Parse xl list output - format: Name ID Mem VCPUs State Time(s)
+	// State format: r----- (running), ---s-- (shutdown), etc.
+	for _, line := range lines {
+		if strings.Contains(line, fmt.Sprintf("%d", domId)) {
+			fields := strings.Fields(line)
+			if len(fields) >= 5 {
+				state := fields[4]
+				// If first character is 'r', domain is running
+				if len(state) > 0 && state[0] == 'r' {
+					return "running", nil
+				}
+				return state, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("domain %s not found in xl list", name)
 }

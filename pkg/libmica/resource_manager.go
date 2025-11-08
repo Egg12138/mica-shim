@@ -83,6 +83,7 @@ func (me *MicaExecutor) UpdatePCPUConstrains(cpus string) error {
 		log.Warnf("failed to bind physical cpuset \"%s\" to container: %v", cpus, err)
 	} else {
 		me.records.cpuStr = [MaxCPUStringLen]byte{}
+		copy(me.records.cpuStr[:], []byte(cpus))
 		log.Debugf("updated to new cpuset: %s", cpus)
 	}
 	return err
@@ -103,7 +104,7 @@ func (me *MicaExecutor) UpdateCPUCapacity(cap uint32) error {
 }
 
 func (me *MicaExecutor) UpdateCPUWeight(weight uint32) error {
-	log.Debugf("UpdateCPUWeight: old=%d, new=%d", me.Id, me.records.cpuWeight, weight)
+	log.Debugf("UpdateCPUWeight: container=%s, old=%d, new=%d", me.Id, me.records.cpuWeight, weight)
 	cmdArgs := []string{"CPUWeight", strconv.Itoa(int(weight))}
 	s := strings.Join(cmdArgs, " ")
 	err := micaCtl(MUpdate, me.Id, s)
@@ -217,8 +218,24 @@ func (me *MicaExecutor) NeedUpdateVCpus(target uint32) bool {
 	return current != target
 }
 
-func (me *MicaExecutor) NeedUpdateCpuSet(_, _ string) bool {
-	return true
+func (me *MicaExecutor) NeedUpdateCpuSet(old, new string) bool {
+	old = strings.TrimSpace(old)
+	new = strings.TrimSpace(new)
+
+	// Fast-path: if caller provided old/new and they are identical, no update needed
+	if old == new {
+		return false
+	}
+
+	// Prefer comparing against our current recorded cpuset when available
+	current := strings.TrimRight(string(me.records.cpuStr[:]), "\x00")
+	current = strings.TrimSpace(current)
+	if current != "" {
+		return current != new
+	}
+
+	// If we don't know current state, conservatively update when new is non-empty or differs
+	return old != new
 }
 
 func (me *MicaExecutor) NeedUpdateCpuShare(target uint32) bool {

@@ -32,7 +32,10 @@ type SandboxAgent struct {
 
 // nolint:golint
 func NewAgent() *SandboxAgent {
-	return &SandboxAgent{}
+	return &SandboxAgent{
+		ContainerVcpus:   make(map[string][]int),
+		ContainerCpuSets: make(map[string]cpuset.CPUSet),
+	}
 }
 
 // init initializes the Noop agent, i.e. it does nothing.
@@ -139,8 +142,13 @@ func (n *SandboxAgent) resizeVCPUs(newNum uint32) (uint32, uint32) {
 }
 
 func (n *SandboxAgent) resizeMemory(newMemMB uint64) (uint64, uint64) {
-	newMem := newMemMB << 8
+	// Convert MiB to bytes
+	newMem := newMemMB << 20
 	old := n.MemoryPoolBytes
+	if old == newMem {
+		// No change; avoid unnecessary churn
+		return old, old
+	}
 	n.MemoryPoolBytes = newMem
 	return old, newMem
 }

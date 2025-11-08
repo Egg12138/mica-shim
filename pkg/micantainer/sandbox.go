@@ -491,7 +491,23 @@ func (s *Sandbox) DeleteContainer(ctx context.Context, id string) (ContainerTrai
 		return nil, err
 	}
 
-	delete(s.config.ContainerConfigs, id)
+	// Guard nil config; delete from container configs if present
+	if s.config != nil {
+		delete(s.config.ContainerConfigs, id)
+	}
+
+	// Clean resManager per-container mirrors if present
+	if s.resManager.ContainerCpuSets != nil {
+		delete(s.resManager.ContainerCpuSets, id)
+	}
+	if s.resManager.ContainerVcpus != nil {
+		delete(s.resManager.ContainerVcpus, id)
+	}
+
+	// Explicitly refresh aggregated resources; debounce/logging inside updateResources
+	if err := s.updateResources(ctx); err != nil {
+		log.Debugf("ignore updateResources error after delete %s: %v", id, err)
+	}
 
 	if err := s.checkVCPUsPinning(ctx); err != nil {
 		return nil, err
@@ -1209,10 +1225,14 @@ func (s *Sandbox) updateResources(ctx context.Context) error {
 	newSandboxMemoryMB := calculateSandboxMemory(s)
 
 	oldVCPUs, newVCPUs := s.resManager.resizeVCPUs(sandboxVCPUs)
-	log.Infof("sandbox total vcpu number from %d to %d", oldVCPUs, newVCPUs)
+	if oldVCPUs != newVCPUs {
+		log.Infof("sandbox total vcpu number from %d to %d", oldVCPUs, newVCPUs)
+	}
 
 	oldMemBytes, newMemBytes := s.resManager.resizeMemory(newSandboxMemoryMB)
-	log.Infof("sandbox total memory usage from %d to %d", oldMemBytes, newMemBytes)
+	if oldMemBytes != newMemBytes {
+		log.Infof("sandbox total memory usage from %d MiB to %d MiB", oldMemBytes>>20, newMemBytes>>20)
+	}
 
 	return nil
 }
