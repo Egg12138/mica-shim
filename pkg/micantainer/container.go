@@ -5,17 +5,21 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	defs "mica-shim/definitions"
 	er "mica-shim/errors"
 	log "mica-shim/logger"
 	"mica-shim/pkg/libmica"
+	"mica-shim/pkg/netns"
 	ped "mica-shim/pkg/pedestal"
 	utils "mica-shim/pkg/utils"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -23,9 +27,7 @@ import (
 	"github.com/containerd/errdefs"
 	"github.com/hashicorp/go-multierror"
 	"mica-shim/pkg/cpuset"
-	"mica-shim/pkg/types"
 	"github.com/opencontainers/runtime-spec/specs-go"
-	"github.com/pkg/errors"
 )
 
 // ContainerStats holds statistics for a container.
@@ -177,6 +179,11 @@ type RootFs struct {
 	Mounted bool
 }
 
+type helperExit struct {
+	code int
+	err  error
+}
+
 // ContainerType is a string representing the type of a container.
 type ContainerType string
 
@@ -211,6 +218,8 @@ type Container struct {
 	taskInfo      RTOSTask
 	exitNotifier  chan struct{}
 	exitOnce      sync.Once
+	helperCmd     *exec.Cmd
+	helperExitCh  chan helperExit
 }
 
 func (ct ContainerType) IsRegularContainer() bool {

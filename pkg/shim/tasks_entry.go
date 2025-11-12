@@ -154,7 +154,7 @@ func (s *shimService) Start(ctx context.Context, r *taskAPI.StartRequest) (*task
 						log.Debugf("exec io: newTtyIO failed for %s/%s: %v", r.ID, r.ExecID, err)
 					} else {
 						stdinCloser := make(chan struct{})
-						go ioCopy(c.signalExit, stdinCloser, tty, stdin, stdout)
+						go ioCopy(c.exitIOch, stdinCloser, tty, stdin, stdout)
 						execStatesMu.Lock()
 						execStates[key] = execIOState{tty: tty, stdinCloser: stdinCloser}
 						execStatesMu.Unlock()
