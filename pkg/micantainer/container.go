@@ -22,7 +22,8 @@ import (
 
 	"github.com/containerd/errdefs"
 	"github.com/hashicorp/go-multierror"
-	"github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/cpuset"
+	"mica-shim/pkg/cpuset"
+	"mica-shim/pkg/types"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 )
@@ -382,6 +383,224 @@ func (c *Container) start(ctx context.Context) error {
 	return c.setContainerState(ctx, StateRunning)
 }
 
+func (c *Container) startInfraProcess(ctx context.Context) error {
+	if c.helperCmd != nil {
+		return nil
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get cwd: %v", err)
+	}
+
+	bundle, err := utils.ValidBundle(c.id, cwd)
+	if err != nil {
+		return err
+	}
+
+	spec, err := loadSpecFromBundle(bundle)
+	if err != nil {
+		return fmt.Errorf("failed to load sandbox spec: %w", err)
+	}
+
+	nsenterPath, err := exec.LookPath("nsenter")
+	if err != nil {
+		return fmt.Errorf("nsenter not found: %w", err)
+	}
+
+	rootfs := filepath.Join(bundle, "rootfs")
+	if c.config.Rootfs.Target != "" {
+		rootfs = c.config.Rootfs.Target
+	}
+
+	netPath := ""
+	if c.sandbox != nil && c.sandbox.config != nil {
+		netPath = c.sandbox.config.NetworkConfig.NetworkID
+	}
+
+	args, err := buildNsenterArgs(spec, rootfs, netPath)
+	if err != nil {
+		return err
+	}
+
+	cmd := exec.CommandContext(ctx, nsenterPath, args...)
+
+	env := assembleHelperEnv(spec)
+	cmd.Env = env
+
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setsid:    true,
+		Pdeathsig: syscall.SIGKILL,
+	}
+
+	devNull, err := os.OpenFile("/dev/null", os.O_RDWR, 0)
+	if err != nil {
+		return fmt.Errorf("failed to open /dev/null: %w", err)
+	}
+	defer devNull.Close()
+
+	cmd.Stdin = devNull
+	cmd.Stdout = devNull
+	cmd.Stderr = devNull
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start sandbox pause helper: %w", err)
+	}
+
+	c.helperCmd = cmd
+	c.helperExitCh = make(chan helperExit, 1)
+
+	go c.monitorHelperExit(cmd)
+
+	c.config.Pid = cmd.Process.Pid
+	if c.sandbox != nil && c.sandbox.config != nil {
+		prev := c.sandbox.config.NetworkConfig.HolderPid
+		c.sandbox.config.NetworkConfig.HolderPid = cmd.Process.Pid
+		if c.sandbox.config.NetworkConfig.NetworkCreated && prev > 0 && prev != cmd.Process.Pid {
+			if err := netns.Cleanup(c.sandbox.id, prev); err != nil && !errors.Is(err, os.ErrProcessDone) {
+				log.Warnf("failed to cleanup previous netns holder %d: %v", prev, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func (c *Container) monitorHelperExit(cmd *exec.Cmd) {
+	err := cmd.Wait()
+	exitCode := extractExitCode(err)
+	if c.helperExitCh != nil {
+		c.helperExitCh <- helperExit{code: exitCode, err: nil}
+		close(c.helperExitCh)
+	}
+	c.helperCmd = nil
+	c.helperExitCh = nil
+	if c.config != nil {
+		c.config.Pid = 0
+	}
+	if c.sandbox != nil && c.sandbox.config != nil {
+		c.sandbox.config.NetworkConfig.HolderPid = 0
+	}
+}
+
+func extractExitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode()
+	}
+	return 255
+}
+
+func buildNsenterArgs(spec specs.Spec, rootfs, fallbackNetPath string) ([]string, error) {
+	if spec.Process == nil || len(spec.Process.Args) == 0 {
+		return nil, fmt.Errorf("invalid sandbox process definition")
+	}
+
+	args := make([]string, 0)
+	nsSeen := make(map[specs.LinuxNamespaceType]struct{})
+	if spec.Linux != nil {
+		for _, ns := range spec.Linux.Namespaces {
+			if ns.Path == "" {
+				continue
+			}
+			switch ns.Type {
+			case specs.NetworkNamespace:
+				args = append(args, "--net="+ns.Path)
+				nsSeen[specs.NetworkNamespace] = struct{}{}
+			case specs.IPCNamespace:
+				args = append(args, "--ipc="+ns.Path)
+			case specs.UTSNamespace:
+				args = append(args, "--uts="+ns.Path)
+			case specs.PIDNamespace:
+				args = append(args, "--pid="+ns.Path)
+			case specs.UserNamespace:
+				args = append(args, "--user="+ns.Path)
+			case specs.MountNamespace:
+				args = append(args, "--mount="+ns.Path)
+			}
+		}
+	}
+
+	if fallbackNetPath != "" {
+		if _, ok := nsSeen[specs.NetworkNamespace]; !ok {
+			args = append(args, "--net="+fallbackNetPath)
+		}
+	}
+
+	if rootfs != "" {
+		args = append(args, "--root="+rootfs)
+	}
+	if spec.Process.Cwd != "" {
+		args = append(args, "--wd="+spec.Process.Cwd)
+	}
+
+	args = append(args, "--")
+	args = append(args, spec.Process.Args...)
+	return args, nil
+}
+
+func assembleHelperEnv(spec specs.Spec) []string {
+	env := append([]string{}, os.Environ()...)
+
+	if spec.Process != nil && len(spec.Process.Env) > 0 {
+		env = mergeEnv(env, spec.Process.Env)
+	}
+
+	if !envHasKey(env, "PATH") {
+		env = append(env, "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+	}
+	return env
+}
+
+func envHasKey(env []string, key string) bool {
+	prefix := key + "="
+	for _, e := range env {
+		if strings.HasPrefix(e, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func mergeEnv(base, override []string) []string {
+	result := append([]string{}, base...)
+	index := make(map[string]int, len(result))
+	for i, kv := range result {
+		if pos := strings.Index(kv, "="); pos >= 0 {
+			index[kv[:pos]] = i
+		}
+	}
+
+	for _, kv := range override {
+		if pos := strings.Index(kv, "="); pos >= 0 {
+			key := kv[:pos]
+			if idx, ok := index[key]; ok {
+				result[idx] = kv
+			} else {
+				index[key] = len(result)
+				result = append(result, kv)
+			}
+		}
+	}
+	return result
+}
+
+func loadSpecFromBundle(bundle string) (specs.Spec, error) {
+	configPath := filepath.Join(bundle, "config.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return specs.Spec{}, fmt.Errorf("failed to read %s: %w", configPath, err)
+	}
+	var spec specs.Spec
+	if err := json.Unmarshal(data, &spec); err != nil {
+		return specs.Spec{}, fmt.Errorf("failed to unmarshal %s: %w", configPath, err)
+	}
+	return spec, nil
+}
+
 // create prepares the container to be started.
 func (c *Container) create(ctx context.Context) error {
 	if c.config != nil && c.config.IsInfra {
@@ -413,10 +632,17 @@ func (c *Container) create(ctx context.Context) error {
 // doStop performs the actual stop operation on the client.
 func (c *Container) doStop(force bool) error {
 	if c.config != nil && c.config.IsInfra {
+		if c.helperCmd == nil || c.helperCmd.Process == nil {
+			return nil
+		}
+		if err := c.helperCmd.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) && !errors.Is(err, syscall.ESRCH) {
+			return err
+		}
 		return nil
 	}
 	currentState := c.checkState()
 	if currentState == StateStopped {
+		log.Debugf("Container %s is already stopped.", c.id)
 		return nil
 	}
 
@@ -455,7 +681,7 @@ func (c *Container) stop(ctx context.Context, force bool) error {
 func (c *Container) kill() error {
 
 	if c.sandbox == nil {
-		return fmt.Errorf("container sandbox reference is nil")
+		return fmt.Errorf("container sandbox is nil")
 	}
 	if c.sandbox.state.State != StateReady && c.sandbox.state.State != StateRunning {
 		return fmt.Errorf("sandbox is not running or ready, can not signal container")
@@ -1197,7 +1423,7 @@ func (c *Container) winresize(height, width uint32) error {
 	if c.notOperational() {
 		return fmt.Errorf("container not ready or running, impossible to resize the container pty")
 	}
-	log.Debugf("resizing PTY for container %s to %dx%d", c.id, width, height)
+	log.Debugf("resizing PTY for container %s to [%dx%d]", c.id, width, height)
 	return nil
 }
 
