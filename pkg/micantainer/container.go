@@ -26,8 +26,8 @@ import (
 
 	"github.com/containerd/errdefs"
 	"github.com/hashicorp/go-multierror"
-	vc "github.com/kata-containers/kata-containers/src/runtime/virtcontainers"
-	"github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/cpuset"
+	"mica-shim/pkg/cpuset"
+	"mica-shim/pkg/types"
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
@@ -234,15 +234,15 @@ func (ct ContainerType) IsCriSandbox() bool {
 	return ct == PodSandbox
 }
 
-// From converts a virtcontainers.ContainerType to a micantainer.ContainerType.
-func From(ct vc.ContainerType) ContainerType {
+// From converts a types.ContainerType to a micantainer.ContainerType.
+func From(ct types.ContainerType) ContainerType {
 	var into ContainerType = UnknownContainerType
 	switch ct {
-	case vc.PodContainer:
+	case types.PodContainer:
 		into = PodContainer
-	case vc.PodSandbox:
+	case types.PodSandbox:
 		into = PodSandbox
-	case vc.SingleContainer:
+	case types.SingleContainer:
 		into = SingleContainer
 	default:
 		into = UnknownContainerType

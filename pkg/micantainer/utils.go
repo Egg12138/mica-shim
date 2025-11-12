@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/cpuset"
+	"mica-shim/pkg/cpuset"
 )
 
 func initContainerTaskInSandbox(sandbox SandboxTraits, config *ContainerConfig) (*RTOSTask, error) {

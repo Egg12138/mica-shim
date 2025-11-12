@@ -16,7 +16,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/cpuset"
+	"mica-shim/pkg/cpuset"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/shirou/gopsutil/v3/mem"
 )

@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/cpuset"
+	"mica-shim/pkg/cpuset"
 )
 
 const (

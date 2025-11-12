@@ -18,7 +18,7 @@ import (
 	"syscall"
 
 	"github.com/hashicorp/go-multierror"
-	"github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/cpuset"
+	"mica-shim/pkg/cpuset"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 )
