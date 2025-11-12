@@ -1,9 +1,10 @@
 package defs
 
+// TODO: Migrate annotations.go to package annotations
 // OCI and runtime annotations.
 const (
 	// MicranAnnotationPrefix is the prefix for all micran-specific annotations.
-	MicranAnnotationPrefix = "org.openeuler.micran." // For runtime-level configuration.
+	MicranAnnotationPrefix = "org.openeuler.micrun." // For runtime-level configuration.
 	// PedPrefix is the prefix for pedestal-related configurations.
 	PedPrefix = MicranAnnotationPrefix + "ped."
 	// RuntimePrefix is the prefix for runtime-related configurations.

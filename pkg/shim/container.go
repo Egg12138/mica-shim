@@ -475,20 +475,35 @@ func waitContainerExit(ctx context.Context, s *shimService, c *container) (int32
 	s.mu.Lock()
 	// Update container status and exit information.
 	if c.cType.CanBeSandbox() {
+		// Signal monitor goroutine to stop cleanly (non-blocking to avoid deadlock)
 		if s.monitor != nil {
-			s.monitor <- nil
+			select {
+			case s.monitor <- nil:
+				log.Debugf("Successfully signaled monitor from waitContainerExit")
+			default:
+				log.Debugf("Monitor channel full or closed in waitContainerExit, skipping signal")
+			}
 		}
 
-		if err := s.sandbox.Stop(ctx, true); err != nil {
-			log.Errorf("Failed to stop sandbox %s.", s.sandbox.SandboxID())
-		}
+		if s.sandbox != nil {
+			sandboxID := s.sandbox.SandboxID()
+			if err := s.sandbox.Stop(ctx, true); err != nil {
+				log.Errorf("Failed to stop sandbox %s.", sandboxID)
+			}
 
-		if err := s.sandbox.Delete(ctx); err != nil {
-			log.Errorf("Failed to delete sandbox %s.", s.sandbox.SandboxID())
+			if err := s.sandbox.Delete(ctx); err != nil {
+				log.Errorf("Failed to delete sandbox %s.", sandboxID)
+			}
+		} else {
+			log.Debugf("Sandbox already deleted, skipping stop/delete in waitContainerExit")
 		}
 	} else {
-		if _, err := s.sandbox.StopContainer(ctx, c.id, true); err != nil {
-			log.Errorf("Failed to stop pod container %s.", c.id)
+		if s.sandbox != nil {
+			if _, err := s.sandbox.StopContainer(ctx, c.id, true); err != nil {
+				log.Errorf("Failed to stop pod container %s.", c.id)
+			}
+		} else {
+			log.Debugf("Sandbox already deleted, skipping StopContainer for %s", c.id)
 		}
 	}
 	c.status = task.Status_STOPPED
