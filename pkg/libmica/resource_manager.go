@@ -62,7 +62,7 @@ func (me *MicaExecutor) EnsureMemoryLimit(target uint32) error {
 
 // number of visible vcpus
 func (me *MicaExecutor) UpdateVCPUNum(newVCPUs uint32) (oldCPUs, newCPUs uint32, retErr error) {
-	log.Debugf("UpdateVCPUNum: container=%s, old=%d, new=%d", me.Id, me.records.vcpuNum, newVCPUs)
+	log.Debugf("update vcpu num: container=%s old=%d new=%d", me.Id, me.records.vcpuNum, newVCPUs)
 	cmdArgs := []string{"VCPU", strconv.Itoa(int(newVCPUs))}
 	s := strings.Join(cmdArgs, " ")
 	err := micaCtl(MUpdate, me.Id, s)
@@ -75,7 +75,7 @@ func (me *MicaExecutor) UpdateVCPUNum(newVCPUs uint32) (oldCPUs, newCPUs uint32,
 
 // TODO: temporarily dirty-join string as command line, need to change to a better way
 func (me *MicaExecutor) UpdatePCPUConstrains(cpus string) error {
-	log.Debugf("UpdatePCPUConstrains: container=%s, cpuset=%s", me.Id, cpus)
+	log.Debugf("update pcpu constraints: container=%s cpuset=%s", me.Id, cpus)
 	cmdArgs := []string{"CPU", cpus}
 	s := strings.Join(cmdArgs, " ")
 	err := micaCtl(MUpdate, me.Id, s)
@@ -90,7 +90,7 @@ func (me *MicaExecutor) UpdatePCPUConstrains(cpus string) error {
 }
 
 func (me *MicaExecutor) UpdateCPUCapacity(cap uint32) error {
-	log.Debugf("UpdateCPUCapacity: container=%s, old=%d, new=%d", me.Id, me.records.cpuCapacity, cap)
+	log.Debugf("update cpu capacity: container=%s old=%d new=%d", me.Id, me.records.cpuCapacity, cap)
 	cmdArgs := []string{"CPUCpacity", strconv.Itoa(int(cap))}
 	s := strings.Join(cmdArgs, " ")
 	err := micaCtl(MUpdate, me.Id, s)
@@ -104,7 +104,7 @@ func (me *MicaExecutor) UpdateCPUCapacity(cap uint32) error {
 }
 
 func (me *MicaExecutor) UpdateCPUWeight(weight uint32) error {
-	log.Debugf("UpdateCPUWeight: container=%s, old=%d, new=%d", me.Id, me.records.cpuWeight, weight)
+	log.Debugf("update cpu weight: container=%s old=%d new=%d", me.Id, me.records.cpuWeight, weight)
 	cmdArgs := []string{"CPUWeight", strconv.Itoa(int(weight))}
 	s := strings.Join(cmdArgs, " ")
 	err := micaCtl(MUpdate, me.Id, s)
@@ -121,7 +121,7 @@ func (me *MicaExecutor) UpdateCPUWeight(weight uint32) error {
 // that pedestal can allocate to container.
 // Memory is just the max memory of a client
 func (me *MicaExecutor) UpdateMemoryPedMax(memMiB uint32) error {
-	log.Debugf("UpdateMemoryPedMax: container=%s, old=%d, new=%d", me.Id, me.records.memoryMB, memMiB)
+	log.Debugf("update memory threshold: container=%s old=%d new=%d", me.Id, me.records.memoryMB, memMiB)
 	cmdArgs := []string{"MaxMem", strconv.Itoa(int(memMiB))}
 	s := strings.Join(cmdArgs, " ")
 	err := micaCtl(MUpdate, me.Id, s)
@@ -135,7 +135,7 @@ func (me *MicaExecutor) UpdateMemoryPedMax(memMiB uint32) error {
 }
 
 func (me *MicaExecutor) UpdateMemory(memMiB uint32) error {
-	log.Debugf("UpdateMemory: container=%s, old=%d, new=%d", me.Id, me.records.memoryMB, memMiB)
+	log.Debugf("update memory: container=%s old=%d new=%d", me.Id, me.records.memoryMB, memMiB)
 	cmdArgs := []string{"Memory", strconv.Itoa(int(memMiB))}
 	s := strings.Join(cmdArgs, " ")
 	err := micaCtl(MUpdate, me.Id, s)

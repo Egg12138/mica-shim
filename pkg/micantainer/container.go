@@ -8,13 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	defs "mica-shim/definitions"
-	er "mica-shim/errors"
-	log "mica-shim/logger"
-	"mica-shim/pkg/libmica"
-	"mica-shim/pkg/netns"
-	ped "mica-shim/pkg/pedestal"
-	utils "mica-shim/pkg/utils"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,8 +19,16 @@ import (
 
 	"github.com/containerd/errdefs"
 	"github.com/hashicorp/go-multierror"
-	"mica-shim/pkg/cpuset"
 	"github.com/opencontainers/runtime-spec/specs-go"
+
+	defs "mica-shim/definitions"
+	er "mica-shim/errors"
+	log "mica-shim/logger"
+	"mica-shim/pkg/cpuset"
+	"mica-shim/pkg/libmica"
+	"mica-shim/pkg/netns"
+	ped "mica-shim/pkg/pedestal"
+	utils "mica-shim/pkg/utils"
 )
 
 // ContainerStats holds statistics for a container.
@@ -1193,13 +1194,8 @@ func (cfg *ContainerConfig) getContainerCPULimit() int {
 	}
 
 	if cfg != nil {
-		log.Debugf(`cpu config:
-		cpuLimit: %d%,
-		cpuPeriod: %d,
-		cpuQuota: %d,
-		cpuShares: %d,
-		cpusetCpus: %s,
-		`, cfg.CpuLimit, cfg.CpuPeriod, cfg.CpuQuota, cfg.CpuShares, cfg.CpusetCpus)
+		log.Debugf("container cpu config: limit=%d period=%d quota=%d shares=%d cpuset=%s",
+			cfg.CpuLimit, cfg.CpuPeriod, cfg.CpuQuota, cfg.CpuShares, cfg.CpusetCpus)
 	}
 	if cfg != nil && cfg.CpuLimit > 0 {
 		return min(int(cfg.CpuLimit), int(num2CapRatio*systemCPUs))

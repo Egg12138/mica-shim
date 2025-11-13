@@ -6,8 +6,6 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	er "mica-shim/errors"
-	log "mica-shim/logger"
 	"os/exec"
 	"regexp"
 	"runtime"
@@ -15,9 +13,12 @@ import (
 	"strings"
 	"sync"
 
-	"mica-shim/pkg/cpuset"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/shirou/gopsutil/v3/mem"
+
+	er "mica-shim/errors"
+	log "mica-shim/logger"
+	"mica-shim/pkg/cpuset"
 )
 
 const DefaultCgroupShare = 1024
@@ -608,7 +609,7 @@ func LinuxResource2Essential(spec *specs.Spec) *EssentialResource {
 			*r.CpuCpacity = uint32(100 * cpuCapacity)
 		}
 	} else {
-		log.Debugf("cpu quota/period pair = < %s:%s > is incomplete,Xen scheduler will allow all possible cpu to container", cpu.Quota, cpu.Period)
+		log.Debugf("cpu quota/period pair = < %v:%v > is incomplete,Xen scheduler will allow all possible cpu to container", cpu.Quota, cpu.Period)
 	}
 
 	var weight uint32
