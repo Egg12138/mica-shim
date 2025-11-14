@@ -1187,7 +1187,7 @@ const num2CapRatio = 100
 // getContainerCPULimit returns the effective CPU limit for a container.
 func (cfg *ContainerConfig) getContainerCPULimit() int {
 	// TODO: The runtime cannot detect the max number of CPUs Xen can handle.
-	systemCPUs := machineCPUNumber()
+	systemCPUs := ped.HostCPUCounts().Physical
 
 	if systemCPUs <= 1 {
 		return num2CapRatio * 1

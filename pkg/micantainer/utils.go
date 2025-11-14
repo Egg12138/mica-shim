@@ -9,7 +9,6 @@ import (
 	"mica-shim/pkg/utils"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -202,33 +201,8 @@ func calculateSandboxMemory(s *Sandbox) uint64 {
 	return memorySandbox
 }
 
-// getSystemMemoryBytes returns the total system memory in bytes
-func getSystemMemoryBytes() int64 {
-	data, err := os.ReadFile("/proc/meminfo")
-	if err != nil {
-		log.Warnf("failed to read /proc/meminfo, using default: %v", err)
-		return 2 * 1024 * 1024 * 1024 // Default to 2GB
-	}
-
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
-		if strings.HasPrefix(line, "MemTotal:") {
-			fields := strings.Fields(line)
-			if len(fields) >= 2 {
-				if memKB, err := strconv.ParseInt(fields[1], 10, 64); err == nil {
-					return memKB * 1024 // Convert KB to bytes
-				}
-			}
-			break
-		}
-	}
-
-	log.Warnf("failed to parse MemTotal from /proc/meminfo, using default")
-	return 2 * 1024 * 1024 * 1024 // Default to 2GB
-}
-
 func CpusetRangeValid(sortedCpuList []int) (bool, []int) {
-	maxCpus := machineCPUNumber()
+	maxCpus := pedestal.HostCPUCounts().Physical
 	outrange := []int{}
 
 	for _, cpu := range sortedCpuList {

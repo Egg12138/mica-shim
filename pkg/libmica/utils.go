@@ -5,7 +5,6 @@ import (
 	defs "mica-shim/definitions"
 	ped "mica-shim/pkg/pedestal"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 )
@@ -23,11 +22,7 @@ func MaxClientCPUNum() int {
 	if defs.IsMock {
 		return 1
 	}
-	return MaxCPUNum() - runtime.NumCPU()
-}
-
-func dummyCPUNum() int {
-	return runtime.NumCPU()
+	return int(ped.ClientCPUCapacity())
 }
 
 // validStatusResponse validates if the response string contains valid status information

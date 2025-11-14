@@ -146,10 +146,14 @@ func ValidateResourceLimits(config *ContainerConfig) error {
 
 	// Validate memory limits
 	if config.MemoryLimitMB > 0 {
-		systemMemory := getSystemMemoryBytes()
-		systemMemoryMB := systemMemory / 1024 / 1024
-		if config.MemoryLimitMB > uint32(systemMemoryMB) {
-			return fmt.Errorf("container memory limit %d MiB exceeds system memory %d MiB", config.MemoryLimitMB, systemMemoryMB)
+		mem := pedestal.HostMemoryMiB()
+		hostMemMB := mem.TotalMB
+		if hostMemMB == 0 {
+			log.Warn("Failed to detect host memory, using fallback value: 2 GiB")
+			hostMemMB = 2 * 1024 // Fallback to 2GiB when detection fails.
+		}
+		if config.MemoryLimitMB > hostMemMB {
+			return fmt.Errorf("container memory limit %d MiB exceeds system memory %d MiB", config.MemoryLimitMB, hostMemMB)
 		}
 	}
 

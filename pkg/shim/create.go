@@ -9,6 +9,7 @@ import (
 	cntr "mica-shim/pkg/micantainer"
 	"mica-shim/pkg/netns"
 	"mica-shim/pkg/oci"
+	"mica-shim/pkg/pedestal"
 	"mica-shim/pkg/utils"
 	"os"
 	"path/filepath"
@@ -202,6 +203,7 @@ func loadRuntimeConfig(s *shimService, r *taskAPI.CreateTaskRequest, annotations
 
 	// Apply annotations on top, as they have higher precedence.
 	cfg.ParseRuntimeConfigFromAnno(annotations)
+	pedestal.SetExclusiveDom0CPU(cfg.ExclusiveDom0CPU)
 
 	s.config = cfg
 	return s.config, nil

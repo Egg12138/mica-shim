@@ -2,6 +2,8 @@ package shim
 
 import (
 	defs "mica-shim/definitions"
+	oci "mica-shim/pkg/oci"
+	pedestal "mica-shim/pkg/pedestal"
 	"os"
 	"path/filepath"
 	"testing"
@@ -66,4 +68,51 @@ func TestDiscoverMicrunConfigFilesDefaultFallback(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, files, 1)
 	require.Equal(t, fallback, files[0].Path)
+}
+
+func TestApplyMicrunConfigFilesFullConfig(t *testing.T) {
+	defer pedestal.SetExclusiveDom0CPU(false)
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "micrun.ini")
+	content := `
+[static_resource]
+static_resource = false
+
+[debug]
+debug = true
+
+[pause_image]
+pause_image = registry.test/pause:2.0
+
+[max_container_vcpu]
+max_container_vcpu = 6
+
+[sandbox_minimum_vcpu]
+sandbox_minimum_vcpu = 3
+
+[hugepage_enable]
+hugepage_enable = true
+
+[exclusive_dom0_cpu]
+exclusive_dom0_cpu = true
+
+[firmware_path]
+firmware_path = /opt/fw/firmware.elf
+`
+	require.NoError(t, os.WriteFile(configPath, []byte(content), 0644))
+
+	cfg := oci.NewRuntimeConfig()
+	cfg.StaticResourceManagement = true // ensure change is visible
+	applyMicrunConfigFiles(cfg, []micrunConfigFile{{Path: configPath, Format: formatINI}})
+
+	require.False(t, cfg.StaticResourceManagement, "static_resource should be false")
+	require.True(t, cfg.Debug, "debug should be true")
+	require.Equal(t, "registry.test/pause:2.0", cfg.PauseImage)
+	require.Equal(t, uint32(6), cfg.MaxContainerCPUs)
+	require.Equal(t, uint32(3), cfg.MiniVCPUNum)
+	require.True(t, cfg.HugePageSupport)
+	require.True(t, cfg.ExclusiveDom0CPU)
+	require.True(t, pedestal.ExclusiveDom0CPUEnabled())
+	require.Equal(t, "/opt/fw/firmware.elf", cfg.DefaultFirmwarePath)
 }

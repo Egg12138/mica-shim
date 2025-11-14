@@ -25,6 +25,7 @@ const (
 	KeyMaxContainerVCPU = "max_container_vcpu"    // default=0, unlimited
 	KeySandboxMinVCPU   = "sandbox_minimum_vcpu"  // default=1
 	KeyHugePage         = "hugepage_enable"       // only for Xen; default=false
+	KeyExclusiveDom0CPU = "exclusive_dom0_cpu"    // default=false, reserve Dom0 CPUs
 	KeyMinMemory        = "container_minmem"      // default base memory for container
 	KeyMaxMemory        = "container_maxmem"      // default max memory for container
 	KeyDefaultFirmware  = "firmware_path"         // default firmware path when annotation not set
@@ -43,6 +44,7 @@ var (
 		KeyMaxContainerVCPU,
 		KeySandboxMinVCPU,
 		KeyHugePage,
+		KeyExclusiveDom0CPU,
 		KeyMaxMemory,
 		KeyMinMemory,
 		KeyDefaultFirmware,
@@ -71,6 +73,7 @@ type RuntimeConfig struct {
 	PauseImage          string
 	MiniVCPUNum         uint32
 	DefaultFirmwarePath string
+	ExclusiveDom0CPU    bool
 }
 
 // NewRuntimeConfig returns a default RuntimeConfig.
@@ -113,6 +116,7 @@ func (r *RuntimeConfig) convertRawConfig(raw map[string]string) {
 	r.SetMinContainerMemMB(raw[KeyMinMemory])
 	r.SetMiniVCPUNum(raw[KeySandboxMinVCPU])
 	r.SetHugePageSupport(raw[KeyHugePage])
+	r.SetExclusiveDom0CPU(raw[KeyExclusiveDom0CPU])
 	r.SetStateDir(raw[KeyStateDir])
 	r.SetDefaultFirmwarePath(raw[KeyDefaultFirmware])
 }
@@ -179,6 +183,19 @@ func (r *RuntimeConfig) SetHugePageSupport(hugePageStr string) {
 		hugePage = false
 	}
 	r.HugePageSupport = hugePage
+}
+
+func (r *RuntimeConfig) SetExclusiveDom0CPU(flag string) {
+	if strings.TrimSpace(flag) == "" {
+		return
+	}
+	enabled, err := strconv.ParseBool(flag)
+	if err != nil {
+		log.Debugf("failed to parse exclusive_dom0_cpu %q into bool", flag)
+		return
+	}
+	r.ExclusiveDom0CPU = enabled
+	pedestal.SetExclusiveDom0CPU(enabled)
 }
 
 func (r *RuntimeConfig) SetPauseImage(pauseImage string) {
@@ -259,6 +276,8 @@ func (cfg *RuntimeConfig) ParseRuntimeConfigFromAnno(annotations map[string]stri
 			log.Debugf("memory overcommit not implemented, ignoring: %s", value)
 		case defs.RuntimePrefix + "pause":
 			cfg.SetPauseImage(value)
+		case defs.RuntimeExclusiveDom0CPU:
+			cfg.SetExclusiveDom0CPU(value)
 		}
 	}
 

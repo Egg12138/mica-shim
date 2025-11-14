@@ -70,6 +70,8 @@ const (
 	PipeSize = RuntimePrefix + "pipe_size"
 	// RuntimeDebug enables debug mode for the runtime.
 	RuntimeDebug = RuntimePrefix + "debug"
+	// RuntimeExclusiveDom0CPU toggles whether Dom0 CPUs are kept exclusive (Xen).
+	RuntimeExclusiveDom0CPU = RuntimePrefix + "exclusive_dom0_cpu"
 )
 
 const (

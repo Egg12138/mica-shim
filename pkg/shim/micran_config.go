@@ -89,7 +89,7 @@ func firstNonEmptyEnv(keys ...string) string {
 }
 
 func makeConfigFile(path string) (micrunConfigFile, error) {
-	if utils.IsRegular(path) {
+	if !utils.IsRegular(path) {
 		return micrunConfigFile{}, fmt.Errorf("micrun config %s is not a regular file or failed to stat it", path)
 	}
 	format := detectConfigFormat(path)
