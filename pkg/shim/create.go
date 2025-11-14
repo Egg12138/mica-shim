@@ -172,7 +172,7 @@ func loadRuntimeConfig(s *shimService, r *taskAPI.CreateTaskRequest, annotations
 	}
 
 	if configPath == "" {
-		if v := os.Getenv(defs.MicranConfEnv); v != "" {
+		if v := firstNonEmptyEnv(defs.MicrunConfEnv); v != "" {
 			configPath = v
 			source = "env"
 		}
@@ -193,6 +193,11 @@ func loadRuntimeConfig(s *shimService, r *taskAPI.CreateTaskRequest, annotations
 		}
 	} else {
 		cfg = oci.NewRuntimeConfig()
+		files, err := discoverMicrunConfigFiles()
+		if err != nil {
+			log.Warnf("micrun config discovery failed: %v", err)
+		}
+		applyMicrunConfigFiles(cfg, files)
 	}
 
 	// Apply annotations on top, as they have higher precedence.

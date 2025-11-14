@@ -429,9 +429,9 @@ func getDurationAnnotation(spec *specs.Spec, key string, defaultValue time.Durat
 			if duration > 0 {
 				return duration, true
 			}
-			log.WithField("annotation", key).Warnf("Invalid duration value (must be positive seconds): %s, using default: %v", value, defaultValue)
+			log.Warnf("annotation %s has invalid duration %s, using default %v", key, value, defaultValue)
 		} else {
-			log.WithField("annotation", key).WithError(err).Warnf("Failed to parse duration annotation, using default: %v", defaultValue)
+			log.Warnf("annotation %s parse error: %v, defaulting to %v", key, err, defaultValue)
 		}
 	}
 	return defaultValue, false
