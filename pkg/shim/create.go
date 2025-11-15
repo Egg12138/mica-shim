@@ -6,6 +6,7 @@ import (
 	"fmt"
 	defs "mica-shim/definitions"
 	log "mica-shim/logger"
+	"mica-shim/pkg/configstack"
 	cntr "mica-shim/pkg/micantainer"
 	"mica-shim/pkg/netns"
 	"mica-shim/pkg/oci"
@@ -151,6 +152,8 @@ func loadRuntimeConfig(s *shimService, r *taskAPI.CreateTaskRequest, annotations
 		return s.config, nil
 	}
 
+	stack := oci.NewRuntimeStack()
+
 	// Config path precedence (high to low): annotations > CRI options > env.
 	var (
 		configPath string
@@ -173,36 +176,35 @@ func loadRuntimeConfig(s *shimService, r *taskAPI.CreateTaskRequest, annotations
 	}
 
 	if configPath == "" {
-		if v := firstNonEmptyEnv(defs.MicrunConfEnv); v != "" {
+		if v := configstack.FirstNonEmptyEnv(defs.MicrunConfEnv); v != "" {
 			configPath = v
 			source = "env"
 		}
 	}
 
-	var cfg *oci.RuntimeConfig
 	if configPath != "" {
 		parsed, err := loadConfigFromFile(configPath)
 		if err != nil {
 			if source == "env" {
 				log.Warnf("Failed to load runtime config from %s (env): %v; using defaults.", configPath, err)
-				cfg = oci.NewRuntimeConfig()
+				stack.Replace(nil)
 			} else {
 				return nil, fmt.Errorf("failed to load runtime config from %s (%s): %w", configPath, source, err)
 			}
 		} else {
-			cfg = parsed
+			stack.Replace(parsed)
 		}
 	} else {
-		cfg = oci.NewRuntimeConfig()
-		files, err := discoverMicrunConfigFiles()
+		files, err := configstack.DiscoverMicrunConfigFiles()
 		if err != nil {
 			log.Warnf("micrun config discovery failed: %v", err)
 		}
-		applyMicrunConfigFiles(cfg, files)
+		stack.ApplyMicrunFiles(files)
 	}
 
 	// Apply annotations on top, as they have higher precedence.
-	cfg.ParseRuntimeConfigFromAnno(annotations)
+	stack.ApplyAnnotations(annotations)
+	cfg := stack.Config()
 	pedestal.SetExclusiveDom0CPU(cfg.ExclusiveDom0CPU)
 
 	s.config = cfg

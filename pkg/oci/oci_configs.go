@@ -10,6 +10,7 @@ import (
 
 	defs "mica-shim/definitions"
 	log "mica-shim/logger"
+	"mica-shim/pkg/configstack"
 	cntr "mica-shim/pkg/micantainer"
 	"mica-shim/pkg/pedestal"
 	"mica-shim/pkg/utils"
@@ -86,6 +87,11 @@ func bundleRootfs(bundle string) string {
 func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerType, detach bool, defaultFirmwarePath string) (*cntr.ContainerConfig, error) {
 	baseRootfs := bundleRootfs(bundle)
 
+	clientLayer, clientConfErr := configstack.LoadClientLayer(baseRootfs)
+	if clientConfErr != nil {
+		log.Warnf("failed to load client.conf for %s: %v", id, clientConfErr)
+	}
+
 	getAnnotation := func(key string) (string, bool) {
 		if ocispec.Annotations == nil {
 			return "", false
@@ -107,6 +113,14 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 			log.Debugf("found pedestal type annotation: %s", pedAnnotation)
 		} else {
 			log.Warnf("unknown pedestal type '%s', using default", pedAnnotation)
+		}
+	} else if clientLayer.PedestalType != "" {
+		parsedType := pedestal.ParsePedType(clientLayer.PedestalType)
+		if parsedType != pedestal.Unsupported {
+			pedtype = parsedType
+			log.Debugf("client.conf overrides pedestal type: %s", clientLayer.PedestalType)
+		} else {
+			log.Warnf("unknown pedestal type '%s' in client.conf, using default", clientLayer.PedestalType)
 		}
 	}
 
@@ -142,11 +156,14 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 	}
 
 	var pedconf string
+	if cfg, ok := getAnnotation(defs.PedestalConf); ok {
+		pedconf = cfg
+		log.Debugf("pedestal config path from annotation: %s", pedconf)
+	} else if clientLayer.PedestalConf != "" {
+		pedconf = clientLayer.PedestalConf
+		log.Debugf("pedestal config path from client.conf: %s", pedconf)
+	}
 	if pedtype == pedestal.Xen {
-		if cfg, ok := getAnnotation(defs.PedestalConf); ok {
-			pedconf = cfg
-			log.Debugf("xen image file in-rootfs path from annotation: %s", pedconf)
-		}
 		if pedconf == "" {
 			pedconf = pedestal.XenDefaultPedConf()
 			log.Debugf("using default xen binary image path for xen <image.bin>: %s", pedconf)
@@ -173,6 +190,9 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 	if osAnnotation, ok := getAnnotation(defs.OSAnnotation); ok {
 		osName = osAnnotation
 		log.Debugf("found OS annotation: %s", osName)
+	} else if clientLayer.OS != "" {
+		osName = clientLayer.OS
+		log.Debugf("client.conf overrides OS: %s", osName)
 	}
 
 	resolveFirmwarePath := func(p string) (string, error) {
@@ -237,6 +257,12 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 		case annotationFirmware != "":
 			if resolved, err := resolveFirmwarePath(annotationFirmware); err != nil {
 				return nil, fmt.Errorf("failed to resolve firmware path from annotation: %w", err)
+			} else {
+				elfPath = resolved
+			}
+		case strings.TrimSpace(clientLayer.FirmwarePath) != "":
+			if resolved, err := resolveFirmwarePath(clientLayer.FirmwarePath); err != nil {
+				return nil, fmt.Errorf("failed to resolve firmware path from client.conf: %w", err)
 			} else {
 				elfPath = resolved
 			}

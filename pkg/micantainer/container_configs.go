@@ -30,7 +30,7 @@ func (r *ContainerConfig) ParseOCICPUResources(spec *specs.Spec) error {
 		return nil
 	}
 
-	essentialRes := pedestal.LinuxResource2Essential(spec)
+	essentialRes := pedestal.PlanEssentialResources(spec)
 	r.CpuLimit = *essentialRes.CpuCpacity
 	// Only copy CPU period/quota/shares when explicitly specified and non-zero
 	if cpu := spec.Linux.Resources.CPU; cpu != nil {
