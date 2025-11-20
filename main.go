@@ -27,27 +27,13 @@ func main() {
 		log.Log.SetOutput(io.Discard)
 	}
 
-	log.Debugf("main() called, checking if task request")
-
-	if notTaskRequest() {
+	if !isTaskRequest() {
 		os.Exit(0)
 	}
 
 	shimv2.Run(ShimName, shim.New, noReaper, noSubreaper, setupLogger)
 	// Avoid noisy info log after start handshake; keep at debug level.
 	log.Debugf("shimv2.Run() returned normally")
-}
-
-func notTaskRequest() bool {
-	if len(os.Args) == 1 {
-		return true
-	}
-	for _, arg := range os.Args[1:] {
-		if arg == "-v" || arg == "--version" || arg == "-h" || arg == "--help" {
-			return true
-		}
-	}
-	return false
 }
 
 func noReaper(c *shimv2.Config) {
@@ -65,8 +51,22 @@ func setupLogger(c *shimv2.Config) {
 func isBootstrapStart() bool {
 	for _, arg := range os.Args[1:] {
 		if arg == "start" {
-			return arg == "start"
+			return true
 		}
 	}
 	return false
+}
+
+func isTaskRequest() bool {
+	if len(os.Args) == 1 {
+		return false
+	}
+
+	for _, arg := range os.Args[1:] {
+		switch arg {
+		case "-v", "--version", "-h", "--help":
+			return false
+		}
+	}
+	return true
 }

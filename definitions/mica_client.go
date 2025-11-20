@@ -6,7 +6,7 @@ const (
 	// all these default values should be in configuration
 	DefaultXenBin       = "image.bin"
 	DefaultFirmwareName = "firmware.elf"
-	DefaultMinMemMB     = 4
+	DefaultMinMemMB     = 16
 )
 
 var (

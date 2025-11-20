@@ -1,3 +1,6 @@
+//go:build test
+// +build test
+
 package micantainer
 
 import (
@@ -28,6 +31,10 @@ type micaClientConfMirror struct {
 
 func cpuWeightFromConf(conf libmica.MicaClientConf) int {
 	return (*micaClientConfMirror)(unsafe.Pointer(&conf)).cpuWeight
+}
+
+func memoryMBFromConf(conf libmica.MicaClientConf) int {
+	return (*micaClientConfMirror)(unsafe.Pointer(&conf)).memoryMB
 }
 
 func TestCreateMicaClientConfUsesShareToWeight(t *testing.T) {
@@ -81,5 +88,57 @@ func TestCreateMicaClientConfUsesShareToWeight(t *testing.T) {
 				t.Fatalf("cpu weight mismatch: got %d, want %d", got, tt.wantWeight)
 			}
 		})
+	}
+}
+
+func TestCreateMicaClientConfUsesMemoryLimit(t *testing.T) {
+	tempDir := t.TempDir()
+	fwPath := filepath.Join(tempDir, "fw.elf")
+	if err := os.WriteFile(fwPath, []byte("elf"), 0o600); err != nil {
+		t.Fatalf("failed to create firmware fixture: %v", err)
+	}
+
+	container := &Container{
+		id: "memory-limit",
+		config: &ContainerConfig{
+			MemoryLimitMB: 128,
+			MemoryMinMB:   64,
+			ElfAbsPath:    fwPath,
+			PedestalConf:  "image.bin",
+		},
+	}
+
+	conf, err := createMicaClientConf(container)
+	if err != nil {
+		t.Fatalf("createMicaClientConf returned error: %v", err)
+	}
+	if got := memoryMBFromConf(conf); got != 128 {
+		t.Fatalf("MemoryMB = %d, want %d", got, 128)
+	}
+}
+
+func TestCreateMicaClientConfFallsBackToMinWhenLimitUnset(t *testing.T) {
+	tempDir := t.TempDir()
+	fwPath := filepath.Join(tempDir, "fw.elf")
+	if err := os.WriteFile(fwPath, []byte("elf"), 0o600); err != nil {
+		t.Fatalf("failed to create firmware fixture: %v", err)
+	}
+
+	container := &Container{
+		id: "memory-min",
+		config: &ContainerConfig{
+			MemoryLimitMB: 0,
+			MemoryMinMB:   64,
+			ElfAbsPath:    fwPath,
+			PedestalConf:  "image.bin",
+		},
+	}
+
+	conf, err := createMicaClientConf(container)
+	if err != nil {
+		t.Fatalf("createMicaClientConf returned error: %v", err)
+	}
+	if got := memoryMBFromConf(conf); got != 64 {
+		t.Fatalf("MemoryMB fallback = %d, want %d", got, 64)
 	}
 }

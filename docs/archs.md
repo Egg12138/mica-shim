@@ -131,7 +131,7 @@ flowchart TD
     F --"dispatch annotations"--> I & J
     LM["libmica"]
     J --> LM
-    EC[MICRAN_CONF_DIR] --"micran configurations"--> F
+    EC[MICRUN_CONF_DIR] --"micrun configurations"--> F
     N -- "Built-in annotations" --> E
     O["containerd config"] -- pod_annotations --> C
     S -- "io.kubernetes.cri.*" --> D
@@ -152,9 +152,18 @@ flowchart TD
 runtimeConfig := loadRuntimeConfig(ctx, id, annotations, opts)
       ├── oci.GetSandboxConfigPath(annotations)  // Pod annotation
       ├── typeurl.UnmarshalAny(opts.Options)    // Containerd options
-      ├── os.Getenv("KATA_CONF_FILE")           // Environment
-      └── LoadConfiguration(path)     // Config file
+      ├── os.Getenv("MICRUN_CONF_FILE")           // Environment override
+      └── LoadMicrunConfiguration(path|dir)      // Config files
 ```
+
+Micrun 配置文件加载顺序：
+
+1. `MICRUN_CONF_FILE` 指向的显式文件；
+2. `MICRUN_CONF_DIR` 目录下的所有 `.ini` 文件，按文件名排序；
+3. 默认的 drop-in 目录 `/etc/micrun/conf.d`；
+4. `/etc/micrun/micrun.ini`。
+
+找到的多个文件会依序应用，之后再由 Pod/Sandbox 注解覆盖。
 
 根据ctype分类处理
 

@@ -150,7 +150,6 @@ func newCommand(ctx context.Context, opts shimv2.StartOpts, cwd string) (*exec.C
 	}
 	// Pass LOG_COLOR environment variable to child process
 	if logColor := os.Getenv("LOG_COLOR"); logColor != "" {
-		log.Debug("++++++++ colored log")
 		cmd.Env = append(cmd.Env, "LOG_COLOR="+logColor)
 	}
 

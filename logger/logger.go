@@ -186,9 +186,9 @@ func CleanDebugFile() error {
 // This is used for debug points that need to be traced.
 func getDebugInfoPrefix() string {
 	var prefix = ""
-	pc_parent, _, _, ok := runtime.Caller(3)
+	pcParent, _, _, ok := runtime.Caller(3)
 	if ok {
-		fullFuncName := runtime.FuncForPC(pc_parent).Name()
+		fullFuncName := runtime.FuncForPC(pcParent).Name()
 		funcName := filepath.Base(fullFuncName)
 		prefix += fmt.Sprintf("%s-> ", funcName)
 	}

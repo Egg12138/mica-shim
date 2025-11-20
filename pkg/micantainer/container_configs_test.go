@@ -1,3 +1,6 @@
+//go:build test
+// +build test
+
 package micantainer
 
 import (
@@ -43,5 +46,32 @@ func TestContainerConfigSkipResourceParsingForInfra(t *testing.T) {
 
 	if cfg.MemoryLimitMB != 0 {
 		t.Fatalf("expected memory limit to remain zero for infra container, got %d", cfg.MemoryLimitMB)
+	}
+}
+
+func TestParseOCIMemoryReservationSetsMinimum(t *testing.T) {
+	limit := int64(256 * 1024 * 1024)
+	reservation := int64(64 * 1024 * 1024)
+	spec := specs.Spec{
+		Linux: &specs.Linux{
+			Resources: &specs.LinuxResources{
+				Memory: &specs.LinuxMemory{
+					Limit:       &limit,
+					Reservation: &reservation,
+				},
+			},
+		},
+	}
+
+	cfg := ContainerConfig{}
+	if err := cfg.ParseOCIMemoryResources(&spec); err != nil {
+		t.Fatalf("ParseOCIMemoryResources returned error: %v", err)
+	}
+
+	if cfg.MemoryReservationMB != uint32(reservation/1024/1024) {
+		t.Fatalf("MemoryReservationMB = %d, want %d", cfg.MemoryReservationMB, reservation/1024/1024)
+	}
+	if cfg.MemoryMinMB != cfg.MemoryReservationMB {
+		t.Fatalf("MemoryMinMB = %d, want %d", cfg.MemoryMinMB, cfg.MemoryReservationMB)
 	}
 }

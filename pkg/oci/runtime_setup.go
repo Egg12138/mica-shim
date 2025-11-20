@@ -25,10 +25,15 @@ const (
 	KeyMaxContainerVCPU = "max_container_vcpu"    // default=0, unlimited
 	KeySandboxMinVCPU   = "sandbox_minimum_vcpu"  // default=1
 	KeyHugePage         = "hugepage_enable"       // only for Xen; default=false
+	KeyExclusiveDom0CPU = "exclusive_dom0_cpu"    // default=false, reserve Dom0 CPUs
 	KeyMinMemory        = "container_minmem"      // default base memory for container
 	KeyMaxMemory        = "container_maxmem"      // default max memory for container
 	KeyDefaultFirmware  = "firmware_path"         // default firmware path when annotation not set
 )
+
+// final fallbacks:
+const defaultMaxContainerVCPUs = 8
+const defaultContainerInitMemMiB = 32
 
 var (
 	thredsholdMemHigh = pedestal.MemHighThreshold()
@@ -43,6 +48,7 @@ var (
 		KeyMaxContainerVCPU,
 		KeySandboxMinVCPU,
 		KeyHugePage,
+		KeyExclusiveDom0CPU,
 		KeyMaxMemory,
 		KeyMinMemory,
 		KeyDefaultFirmware,
@@ -58,7 +64,7 @@ type RuntimeConfig struct {
 	MaxClinetNum       uint32
 
 	// Global resource management settings
-	MaxContainerCPUs         uint32 // Maximum CPU cores visible for containers
+	MaxContainerVCPUs        uint32 // Maximum CPU cores visible for containers
 	MaxContainerMemMB        uint32 // Maximum memory available for containers
 	MinContainerMemMB        uint32 // Minimum memory for containers
 	HugePageSupport          bool
@@ -71,6 +77,7 @@ type RuntimeConfig struct {
 	PauseImage          string
 	MiniVCPUNum         uint32
 	DefaultFirmwarePath string
+	ExclusiveDom0CPU    bool
 }
 
 // NewRuntimeConfig returns a default RuntimeConfig.
@@ -85,6 +92,7 @@ func NewRuntimeConfig() *RuntimeConfig {
 		StaticResourceManagement: staticResource,
 		PauseImage:               defs.PauseImage,
 		MinContainerMemMB:        32,
+		MaxContainerVCPUs:        defaultMaxContainerVCPUs,
 	}
 	return &cfg
 }
@@ -108,11 +116,12 @@ func (r *RuntimeConfig) convertRawConfig(raw map[string]string) {
 	r.SetStaticResourceManagement(raw[KeyStaticResource])
 	r.SetDebug(raw[KeyDebug])
 	r.SetPauseImage(raw[KeyPauseImg])
-	r.SetMaxContainerCPUs(raw[KeyMaxContainerVCPU])
+	r.SetMaxContainerVCPUs(raw[KeyMaxContainerVCPU])
 	r.SetMaxContainerMemMB(raw[KeyMaxMemory])
 	r.SetMinContainerMemMB(raw[KeyMinMemory])
 	r.SetMiniVCPUNum(raw[KeySandboxMinVCPU])
 	r.SetHugePageSupport(raw[KeyHugePage])
+	r.SetExclusiveDom0CPU(raw[KeyExclusiveDom0CPU])
 	r.SetStateDir(raw[KeyStateDir])
 	r.SetDefaultFirmwarePath(raw[KeyDefaultFirmware])
 }
@@ -142,12 +151,19 @@ func (r *RuntimeConfig) SetSandboxMemMB(memString string) {
 	r.SandboxMemMB = uint32(mem)
 }
 
-func (r *RuntimeConfig) SetMaxContainerCPUs(cpuString string) {
-	cpu, err := strconv.ParseUint(cpuString, 10, 32)
+func (r *RuntimeConfig) SetMaxContainerVCPUs(cpuString string) {
+	vcpu, err := strconv.ParseUint(cpuString, 10, 32)
 	if err != nil {
 		log.Debugf("failed to parse max container cpus %v into uint32", cpuString, err)
+		r.MaxContainerVCPUs = defaultMaxContainerVCPUs
+		return
 	}
-	r.MaxContainerCPUs = uint32(cpu)
+	if vcpu == 0 {
+		log.Debugf("max container cpus parsed as 0, defaulting to %d", defaultMaxContainerVCPUs)
+		r.MaxContainerVCPUs = defaultMaxContainerVCPUs
+		return
+	}
+	r.MaxContainerVCPUs = uint32(vcpu)
 }
 
 func (r *RuntimeConfig) SetMaxContainerMemMB(memString string) {
@@ -179,6 +195,19 @@ func (r *RuntimeConfig) SetHugePageSupport(hugePageStr string) {
 		hugePage = false
 	}
 	r.HugePageSupport = hugePage
+}
+
+func (r *RuntimeConfig) SetExclusiveDom0CPU(flag string) {
+	if strings.TrimSpace(flag) == "" {
+		return
+	}
+	enabled, err := strconv.ParseBool(flag)
+	if err != nil {
+		log.Debugf("failed to parse exclusive_dom0_cpu %q into bool", flag)
+		return
+	}
+	r.ExclusiveDom0CPU = enabled
+	pedestal.SetExclusiveDom0CPU(enabled)
 }
 
 func (r *RuntimeConfig) SetPauseImage(pauseImage string) {
@@ -250,7 +279,7 @@ func (cfg *RuntimeConfig) ParseRuntimeConfigFromAnno(annotations map[string]stri
 		case defs.RuntimePrefix + "sandbox.memory":
 			cfg.SetSandboxMemMB(value)
 		case defs.RuntimePrefix + "max_container_cpus":
-			cfg.SetMaxContainerCPUs(value)
+			cfg.SetMaxContainerVCPUs(value)
 		case defs.RuntimePrefix + "max_container_memory":
 			cfg.SetMaxContainerMemMB(value)
 		case defs.RuntimePrefix + "cpu_scheduler_policy":
@@ -259,6 +288,8 @@ func (cfg *RuntimeConfig) ParseRuntimeConfigFromAnno(annotations map[string]stri
 			log.Debugf("memory overcommit not implemented, ignoring: %s", value)
 		case defs.RuntimePrefix + "pause":
 			cfg.SetPauseImage(value)
+		case defs.RuntimeExclusiveDom0CPU:
+			cfg.SetExclusiveDom0CPU(value)
 		}
 	}
 

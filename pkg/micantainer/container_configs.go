@@ -30,7 +30,7 @@ func (r *ContainerConfig) ParseOCICPUResources(spec *specs.Spec) error {
 		return nil
 	}
 
-	essentialRes := pedestal.LinuxResource2Essential(spec)
+	essentialRes := pedestal.PlanEssentialResources(spec)
 	r.CpuLimit = *essentialRes.CpuCpacity
 	// Only copy CPU period/quota/shares when explicitly specified and non-zero
 	if cpu := spec.Linux.Resources.CPU; cpu != nil {
@@ -113,6 +113,9 @@ func (r *ContainerConfig) ParseOCIMemoryResources(spec *specs.Spec) error {
 
 	if memory.Reservation != nil && *memory.Reservation > 0 {
 		r.MemoryReservationMB = uint32(*memory.Reservation / 1024 / 1024)
+		if r.MemoryMinMB == 0 {
+			r.MemoryMinMB = r.MemoryReservationMB
+		}
 	}
 
 	if memory.Swap != nil && *memory.Swap > 0 {
@@ -146,10 +149,14 @@ func ValidateResourceLimits(config *ContainerConfig) error {
 
 	// Validate memory limits
 	if config.MemoryLimitMB > 0 {
-		systemMemory := getSystemMemoryBytes()
-		systemMemoryMB := systemMemory / 1024 / 1024
-		if config.MemoryLimitMB > uint32(systemMemoryMB) {
-			return fmt.Errorf("container memory limit %d MiB exceeds system memory %d MiB", config.MemoryLimitMB, systemMemoryMB)
+		mem := pedestal.HostMemoryMiB()
+		hostMemMB := mem.TotalMB
+		if hostMemMB == 0 {
+			log.Warn("Failed to detect host memory, using fallback value: 2 GiB")
+			hostMemMB = 2 * 1024 // Fallback to 2GiB when detection fails.
+		}
+		if config.MemoryLimitMB > hostMemMB {
+			return fmt.Errorf("container memory limit %d MiB exceeds system memory %d MiB", config.MemoryLimitMB, hostMemMB)
 		}
 	}
 

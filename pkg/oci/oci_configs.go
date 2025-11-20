@@ -3,6 +3,7 @@ package oci
 import (
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 
 	defs "mica-shim/definitions"
 	log "mica-shim/logger"
+	"mica-shim/pkg/configstack"
 	cntr "mica-shim/pkg/micantainer"
 	"mica-shim/pkg/pedestal"
 	"mica-shim/pkg/utils"
@@ -83,8 +85,13 @@ func bundleRootfs(bundle string) string {
 	return filepath.Join(bundle, "rootfs")
 }
 
-func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerType, detach bool, defaultFirmwarePath string) (*cntr.ContainerConfig, error) {
+func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerType, detach bool, defaultFirmwarePath string, runtimeConfig *RuntimeConfig) (*cntr.ContainerConfig, error) {
 	baseRootfs := bundleRootfs(bundle)
+
+	clientLayer, clientConfErr := configstack.LoadClientLayer(baseRootfs)
+	if clientConfErr != nil {
+		log.Warnf("failed to load client.conf for %s: %v", id, clientConfErr)
+	}
 
 	getAnnotation := func(key string) (string, bool) {
 		if ocispec.Annotations == nil {
@@ -107,6 +114,14 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 			log.Debugf("found pedestal type annotation: %s", pedAnnotation)
 		} else {
 			log.Warnf("unknown pedestal type '%s', using default", pedAnnotation)
+		}
+	} else if clientLayer.PedestalType != "" {
+		parsedType := pedestal.ParsePedType(clientLayer.PedestalType)
+		if parsedType != pedestal.Unsupported {
+			pedtype = parsedType
+			log.Debugf("client.conf overrides pedestal type: %s", clientLayer.PedestalType)
+		} else {
+			log.Warnf("unknown pedestal type '%s' in client.conf, using default", clientLayer.PedestalType)
 		}
 	}
 
@@ -142,11 +157,14 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 	}
 
 	var pedconf string
+	if cfg, ok := getAnnotation(defs.PedestalConf); ok {
+		pedconf = cfg
+		log.Debugf("pedestal config path from annotation: %s", pedconf)
+	} else if clientLayer.PedestalConf != "" {
+		pedconf = clientLayer.PedestalConf
+		log.Debugf("pedestal config path from client.conf: %s", pedconf)
+	}
 	if pedtype == pedestal.Xen {
-		if cfg, ok := getAnnotation(defs.PedestalConf); ok {
-			pedconf = cfg
-			log.Debugf("xen image file in-rootfs path from annotation: %s", pedconf)
-		}
 		if pedconf == "" {
 			pedconf = pedestal.XenDefaultPedConf()
 			log.Debugf("using default xen binary image path for xen <image.bin>: %s", pedconf)
@@ -173,6 +191,9 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 	if osAnnotation, ok := getAnnotation(defs.OSAnnotation); ok {
 		osName = osAnnotation
 		log.Debugf("found OS annotation: %s", osName)
+	} else if clientLayer.OS != "" {
+		osName = clientLayer.OS
+		log.Debugf("client.conf overrides OS: %s", osName)
 	}
 
 	resolveFirmwarePath := func(p string) (string, error) {
@@ -237,6 +258,12 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 		case annotationFirmware != "":
 			if resolved, err := resolveFirmwarePath(annotationFirmware); err != nil {
 				return nil, fmt.Errorf("failed to resolve firmware path from annotation: %w", err)
+			} else {
+				elfPath = resolved
+			}
+		case strings.TrimSpace(clientLayer.FirmwarePath) != "":
+			if resolved, err := resolveFirmwarePath(clientLayer.FirmwarePath); err != nil {
+				return nil, fmt.Errorf("failed to resolve firmware path from client.conf: %w", err)
 			} else {
 				elfPath = resolved
 			}
@@ -375,6 +402,7 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 	}
 
 	// Validate resource limits against system constraints
+	applyContainerRuntimeDefaults(config, ocispec.Annotations, runtimeConfig)
 	if err := cntr.ValidateResourceLimits(config); err != nil {
 		log.Warnf("resource validation warning: %v", err)
 		// Don't fail the container creation for resource validation warnings
@@ -391,22 +419,10 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 
 func SandboxConfig(ocispec *specs.Spec, rc RuntimeConfig, bundle, sbContainerID string, detach bool) (cntr.SandboxConfig, error) {
 	// generate sandbox container config
-	containerConfig, err := ContainerConfig(sbContainerID, bundle, *ocispec, cntr.PodSandbox, detach, rc.DefaultFirmwarePath)
+	containerConfig, err := ContainerConfig(sbContainerID, bundle, *ocispec, cntr.PodSandbox, detach, rc.DefaultFirmwarePath, &rc)
 	if err != nil {
 		return cntr.SandboxConfig{}, err
 	}
-	if containerConfig.MemoryMinMB == 0 {
-		if rc.MinContainerMemMB > 0 {
-			containerConfig.MemoryMinMB = rc.MinContainerMemMB
-		} else {
-			containerConfig.MemoryMinMB = defs.DefaultMinMemMB
-		}
-	}
-	// Clamp to limit if applicable
-	if containerConfig.MemoryLimitMB > 0 && containerConfig.MemoryMinMB > containerConfig.MemoryLimitMB {
-		containerConfig.MemoryMinMB = containerConfig.MemoryLimitMB
-	}
-
 	// TODO: allocated shared resources
 
 	networkConfig := cntr.NetworkConfig{}
@@ -532,6 +548,76 @@ func formatMemoryLimit(config *cntr.ContainerConfig) string {
 	}
 
 	return strings.Join(parts, ", ")
+}
+
+func applyContainerRuntimeDefaults(config *cntr.ContainerConfig, annotations map[string]string, runtimeConfig *RuntimeConfig) {
+	if config == nil {
+		return
+	}
+
+	runtimeCfg := runtimeConfig
+	if runtimeCfg == nil {
+		runtimeCfg = NewRuntimeConfig()
+	}
+
+	if config.MemoryMinMB == 0 {
+		if runtimeCfg.MinContainerMemMB > 0 {
+			config.MemoryMinMB = runtimeCfg.MinContainerMemMB
+		} else {
+			config.MemoryMinMB = defs.DefaultMinMemMB
+		}
+	}
+
+	if config.MemoryLimitMB > 0 && config.MemoryMinMB > config.MemoryLimitMB {
+		config.MemoryMinMB = config.MemoryLimitMB
+	}
+
+	config.MaxVcpuNum = resolveMaxVcpu(annotations, runtimeCfg)
+	config.MemoryThresholdMB = calculatePedMaxMemory(config, runtimeCfg)
+}
+
+func resolveMaxVcpu(annotations map[string]string, runtimeCfg *RuntimeConfig) uint32 {
+	if annotations != nil {
+		if value, ok := annotations[defs.ContainerMaxVcpuNum]; ok && value != "" {
+			if parsed, err := strconv.ParseUint(value, 10, 32); err == nil && parsed > 0 {
+				return uint32(parsed)
+			} else if err != nil {
+				log.Debugf("invalid %s %q: %v", defs.ContainerMaxVcpuNum, value, err)
+			}
+		}
+	}
+
+	if runtimeCfg != nil && runtimeCfg.MaxContainerVCPUs > 0 {
+		return runtimeCfg.MaxContainerVCPUs
+	}
+
+	return defaultMaxContainerVCPUs
+}
+
+func calculatePedMaxMemory(config *cntr.ContainerConfig, runtimeCfg *RuntimeConfig) uint32 {
+	maxMem := config.MemoryLimitMB
+	if maxMem == 0 {
+		maxMem = config.MemoryMinMB
+	}
+	if maxMem == 0 && runtimeCfg != nil && runtimeCfg.MinContainerMemMB > 0 {
+		maxMem = runtimeCfg.MinContainerMemMB
+	}
+	if maxMem == 0 {
+		maxMem = defs.DefaultMinMemMB
+	}
+	if runtimeCfg != nil && runtimeCfg.MaxContainerMemMB > 0 && maxMem > runtimeCfg.MaxContainerMemMB {
+		maxMem = runtimeCfg.MaxContainerMemMB
+	}
+
+	if maxMem > math.MaxUint32/2 {
+		return math.MaxUint32
+	}
+
+	doubled := maxMem * 2
+	if doubled == 0 {
+		doubled = defs.DefaultMinMemMB * 2
+	}
+	return doubled
 }
 
 // formatBytes formats bytes into human readable string

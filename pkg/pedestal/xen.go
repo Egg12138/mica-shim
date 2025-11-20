@@ -6,8 +6,6 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	er "mica-shim/errors"
-	log "mica-shim/logger"
 	"os/exec"
 	"regexp"
 	"runtime"
@@ -15,9 +13,11 @@ import (
 	"strings"
 	"sync"
 
-	"mica-shim/pkg/cpuset"
-	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/shirou/gopsutil/v3/mem"
+
+	er "mica-shim/errors"
+	log "mica-shim/logger"
+	"mica-shim/pkg/cpuset"
 )
 
 const DefaultCgroupShare = 1024
@@ -595,54 +595,6 @@ func XenDefaultPedConf() string {
 	return "image.bin"
 }
 
-// LinuxResource2Essential converts Linux OCI resource specifications to essential resources for MICA.
-func LinuxResource2Essential(spec *specs.Spec) *EssentialResource {
-	r := InitResource()
-	// cpu
-	cpu := spec.Linux.Resources.CPU
-	if cpu.Quota != nil && *cpu.Quota > 0 && cpu.Period != nil && *cpu.Period > 0 {
-		r.CpuPeriod = cpu.Period
-		r.CpuQuota = cpu.Quota
-		cpuCapacity := *cpu.Quota / int64(*cpu.Period)
-		if cpuCapacity > 0 {
-			*r.CpuCpacity = uint32(100 * cpuCapacity)
-		}
-	} else {
-		log.Debugf("cpu quota/period pair = < %s:%s > is incomplete,Xen scheduler will allow all possible cpu to container", cpu.Quota, cpu.Period)
-	}
-
-	var weight uint32
-	if cpu.Shares != nil && *cpu.Shares > 0 {
-		weight = ShareToWeight(*cpu.Shares)
-	} else {
-		log.Debugf("cpu shares is nil, use default weight %d", DefaultXenWeight)
-		weight = DefaultXenWeight
-	}
-	r.CPUWeight = &weight
-
-	cpus, set, vcpuNum := validateCPUSet(cpu.Cpus)
-
-	if cpus != "" && vcpuNum > 0 {
-		r.ClientCpuSet = cpus
-	}
-
-	log.Debugf("pinning cpu set = %v, parse to %v", cpus, set)
-	// vcpuNum = calculateVCPU(&set, int(r.CpuCpacity))
-	if vcpuNum > 0 {
-		*r.Vcpu = uint32(vcpuNum)
-	}
-
-	// mem
-	mem := spec.Linux.Resources.Memory
-	if mem != nil && mem.Limit != nil && *mem.Limit > 0 {
-		*r.MemoryLimitMB = uint32(*mem.Limit >> 20)
-	}
-
-	// net
-
-	return r
-}
-
 // assume cpu set is valid
 // do hard affinity only
 func PinVCPU(clientID, cpus string) error {
@@ -652,28 +604,6 @@ func PinVCPU(clientID, cpus string) error {
 		return fmt.Errorf("xl failed to pause %s: %v", clientID, err)
 	}
 	return nil
-}
-
-func validateCPUSet(s string) (validSet string, set cpuset.CPUSet, vcpus uint32) {
-	set, err := cpuset.Parse(s)
-	if err != nil {
-		return "", set, 0
-	}
-	validSet = s
-	return validSet, set, uint32(set.Size())
-}
-
-// if cpuSet is empty, container will see cpu the same as maxcpu??
-// TODO: not sure the default value
-func calculateVCPU(cpuSet *cpuset.CPUSet, vcpuAssigned int) int {
-	if vcpuAssigned == 0 {
-		vcpuAssigned = 1
-	}
-	if cpuSet == nil {
-		return vcpuAssigned // or 1?
-		// return 1
-	}
-	return cpuSet.Size()
 }
 
 func MemLowThreshold() uint32 {

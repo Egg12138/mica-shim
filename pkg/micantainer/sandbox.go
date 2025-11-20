@@ -17,8 +17,9 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/hashicorp/go-multierror"
 	"mica-shim/pkg/cpuset"
+
+	"github.com/hashicorp/go-multierror"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 )
@@ -683,7 +684,7 @@ func (s *Sandbox) SignalTask(ctx context.Context, containerID string, signal sys
 		return er.SandboxDown
 	}
 
-	log.Debugf("sending signal %s for containers %s in sandbox %s", uint32(signal), containerID, s.id)
+	log.Debugf("sending signal %d for container %s in sandbox %s", uint32(signal), containerID, s.id)
 	c, ok := s.containers[containerID]
 	if !ok || c == nil {
 		return er.ContainerNotFound

@@ -23,10 +23,31 @@ BIN_PROD := $(BIN)
 BIN_ARM64 := $(BUILD_DIRS)$(BIN)-arm64
 BIN_PROD_ARM64 := $(BUILD_DIRS)$(BIN_PROD)-arm64
 
+# Build mode configuration
+# Use vendor mode by default, can be overridden with BUILD_MODE=module
+BUILD_MODE ?= vendor
+
+# Base build flags
 DEV_BUILD_FLAGS := -ldflags "-X 'main.ShimName=${SHIM_NAME}'"
 CROSS_DEV_BUILD_FLAGS := $(DEV_BUILD_FLAGS) -a -installsuffix cgo
 RELEASE_BUILD_FLAGS := -ldflags "-s -w -X 'main.ShimName=${SHIM_NAME}'"
 CROSS_RELEASE_BUILD_FLAGS := $(RELEASE_BUILD_FLAGS) -a -installsuffix cgo
+
+# Vendor-specific flags
+VENDOR_FLAGS := -mod=vendor
+MODULE_FLAGS := -mod=mod
+
+# Determine build flags based on mode
+ifeq ($(BUILD_MODE),vendor)
+	GO_BUILD_FLAGS := $(VENDOR_FLAGS)
+	GO_TEST_FLAGS := $(VENDOR_FLAGS)
+else ifeq ($(BUILD_MODE),module)
+	GO_BUILD_FLAGS := $(MODULE_FLAGS)
+	GO_TEST_FLAGS := $(MODULE_FLAGS)
+else
+	GO_BUILD_FLAGS := $(VENDOR_FLAGS)
+	GO_TEST_FLAGS := $(VENDOR_FLAGS)
+endif
 
 -include .env
 TARGET_HOST ?= $(DEPLOY_HOST)
@@ -37,29 +58,29 @@ TARGET_PASS ?= $(DEPLOY_PASS)
 all: build
 
 build-prod:
-	@echo "🏭 Building production binary..."
-	go build ${RELEASE_BUILD_FLAGS} -o ${BIN_PROD} .
+	@echo "🏭 Building production binary (BUILD_MODE=${BUILD_MODE})..."
+	go build ${GO_BUILD_FLAGS} ${RELEASE_BUILD_FLAGS} -o ${BIN_PROD} .
 
 run-prod: build-prod
 	@echo "🏭 Running in production mode..."
 	./${BIN_PROD}
 
 test-prod:
-	@echo "🏭 Testing in production mode..."
-	go test -v ./...
+	@echo "🏭 Testing in production mode (BUILD_MODE=${BUILD_MODE})..."
+	go test ${GO_TEST_FLAGS} -v ./...
 
 build:
-	@echo "🐛 Building debug binary..."
-	go build -tags debug ${DEV_BUILD_FLAGS} -o ${BIN} .
+	@echo "🐛 Building debug binary (BUILD_MODE=${BUILD_MODE})..."
+	go build ${GO_BUILD_FLAGS} -tags debug ${DEV_BUILD_FLAGS} -o ${BIN} .
 
 # Temp target for amd64 to build arm64 binary
 build-arm64:
-	@echo "🔄 Cross-compiling debug binary for ARM64..."
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -tags debug ${CROSS_DEV_BUILD_FLAGS} -o ${BIN_ARM64} .
+	@echo "🔄 Cross-compiling debug binary for ARM64 (BUILD_MODE=${BUILD_MODE})..."
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build ${GO_BUILD_FLAGS} -tags debug ${CROSS_DEV_BUILD_FLAGS} -o ${BIN_ARM64} .
 
 build-prod-arm64:
-	@echo "🔄 Cross-compiling production binary for ARM64..."
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build ${CROSS_DEV_BUILD_FLAGS} -o ${BIN_PROD_ARM64} .
+	@echo "🔄 Cross-compiling production binary for ARM64 (BUILD_MODE=${BUILD_MODE})..."
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build ${GO_BUILD_FLAGS} ${CROSS_RELEASE_BUILD_FLAGS} -o ${BIN_PROD_ARM64} .
 
 run: build
 	@echo "🐛 Running in debug mode..."
@@ -67,32 +88,32 @@ run: build
 
 
 test-debug:
-	@echo "🐛 Testing in debug mode..."
-	go test -tags debug -v ./...
+	@echo "🐛 Testing in debug mode (BUILD_MODE=${BUILD_MODE})..."
+	go test ${GO_TEST_FLAGS} -tags debug -v ./...
 
 test-socket:
-	@echo "🧪 Testing socket communication in debug mode..."
-	cd tests && go run -tags debug test_socket_communication.go
+	@echo "🧪 Testing socket communication in debug mode (BUILD_MODE=${BUILD_MODE})..."
+	cd tests && go run ${GO_BUILD_FLAGS} -tags debug test_socket_communication.go
 
 test-socket-prod:
-	@echo "🧪 Testing socket communication in production mode..."
-	cd tests && go run test_socket_communication.go
+	@echo "🧪 Testing socket communication in production mode (BUILD_MODE=${BUILD_MODE})..."
+	cd tests && go run ${GO_BUILD_FLAGS} test_socket_communication.go
 
 test-sched:
-	@echo "🧪 Testing CPU scheduler in debug mode..."
-	cd libmica && go test -tags debug -v -run "Test.*Sched|Test.*Queue|Test.*CPU|Test.*Concurrent|Test.*Priority|Test.*Comprehensive"
+	@echo "🧪 Testing CPU scheduler in debug mode (BUILD_MODE=${BUILD_MODE})..."
+	cd libmica && go test ${GO_TEST_FLAGS} -tags debug -v -run "Test.*Sched|Test.*Queue|Test.*CPU|Test.*Concurrent|Test.*Priority|Test.*Comprehensive"
 
 bench-sched:
-	@echo "📊 Benchmarking CPU scheduler performance..."
-	cd libmica && go test -bench=BenchmarkSched -benchmem -v
+	@echo "📊 Benchmarking CPU scheduler performance (BUILD_MODE=${BUILD_MODE})..."
+	cd libmica && go test ${GO_TEST_FLAGS} -bench=BenchmarkSched -benchmem -v
 
 containerd-client: build-containerd-client
 	@echo "🐳 Testing containerd client integration..."
 	cd tests/containerd_client && sudo ./containerd_client
 
 build-containerd-client:
-	@echo "🐳 Building containerd client binary..."
-	cd tests/containerd_client && go build -ldflags "-X 'main.customRuntimeName=${SHIM_NAME}'" -o containerd_client containerd_client.go
+	@echo "🐳 Building containerd client binary (BUILD_MODE=${BUILD_MODE})..."
+	cd tests/containerd_client && go build ${GO_BUILD_FLAGS} -ldflags "-X 'main.customRuntimeName=${SHIM_NAME}'" -o containerd_client containerd_client.go
 
 mock-micad:
 	@echo "🎭 Building and running mock_micad... at ${BUILD_DIRS}mock_micad"
@@ -106,6 +127,49 @@ clean-all: clean
 	cd tests/mock_micad && make clean
 	cd tests/containerd_client && rm -f containerd_client
 	rm -f ${BIN} ${BIN_PROD} ${BIN_ARM64} ${BIN_PROD_ARM64}
+
+# Vendor-specific build targets
+build-vendor:
+	@echo "📦 Building with vendor dependencies..."
+	@$(MAKE) build BUILD_MODE=vendor
+
+build-prod-vendor:
+	@echo "📦 Building production with vendor dependencies..."
+	@$(MAKE) build-prod BUILD_MODE=vendor
+
+build-arm64-vendor:
+	@echo "📦 Cross-compiling ARM64 with vendor dependencies..."
+	@$(MAKE) build-arm64 BUILD_MODE=vendor
+
+build-prod-arm64-vendor:
+	@echo "📦 Cross-compiling ARM64 production with vendor dependencies..."
+	@$(MAKE) build-prod-arm64 BUILD_MODE=vendor
+
+# Module-specific build targets
+build-module:
+	@echo "📚 Building with Go modules..."
+	@$(MAKE) build BUILD_MODE=module
+
+build-prod-module:
+	@echo "📚 Building production with Go modules..."
+	@$(MAKE) build-prod BUILD_MODE=module
+
+build-arm64-module:
+	@echo "📚 Cross-compiling ARM64 with Go modules..."
+	@$(MAKE) build-arm64 BUILD_MODE=module
+
+build-prod-arm64-module:
+	@echo "📚 Cross-compiling ARM64 production with Go modules..."
+	@$(MAKE) build-prod-arm64 BUILD_MODE=module
+
+# Vendor management targets
+vendor-update:
+	@echo "📦 Updating vendor directory..."
+	go mod vendor
+
+vendor-verify:
+	@echo "🔍 Verifying vendor directory..."
+	go mod verify
 
 clean:
 	@echo "🧹 Cleaning up build artifacts..."
@@ -183,6 +247,10 @@ test-pty:
 help:
 	@echo "🚀 Mica Shim Build System"
 	@echo ""
+	@echo "Build Mode Configuration:"
+	@echo "  BUILD_MODE=vendor  - Use vendor directory (default)"
+	@echo "  BUILD_MODE=module  - Use Go modules"
+	@echo ""
 	@echo "Production Commands:"
 	@echo "  make build-prod    - Build production binary"
 	@echo "  make run-prod      - Run in production mode"
@@ -198,6 +266,20 @@ help:
 	@echo "  make build-prod-arm64 - Cross-compile production binary for ARM64"
 	@echo "  make install-arm64    - Install ARM64 debug binary"
 	@echo "  make install-prod-arm64 - Install ARM64 production binary"
+	@echo ""
+	@echo "Vendor-Specific Commands:"
+	@echo "  make build-vendor          - Build debug with vendor deps"
+	@echo "  make build-prod-vendor     - Build production with vendor deps"
+	@echo "  make build-arm64-vendor    - Cross-compile ARM64 with vendor deps"
+	@echo "  make build-prod-arm64-vendor - Cross-compile ARM64 production with vendor deps"
+	@echo "  make vendor-update         - Update vendor directory"
+	@echo "  make vendor-verify         - Verify vendor directory"
+	@echo ""
+	@echo "Module-Specific Commands:"
+	@echo "  make build-module          - Build debug with Go modules"
+	@echo "  make build-prod-module     - Build production with Go modules"
+	@echo "  make build-arm64-module    - Cross-compile ARM64 with Go modules"
+	@echo "  make build-prod-arm64-module - Cross-compile ARM64 production with Go modules"
 	@echo ""
 	@echo "Testing & Simulations:"
 	@echo "  make test-socket            - Test socket communication (debug)"
