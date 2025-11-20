@@ -38,7 +38,7 @@ const (
 	MaxNameLen         = 66
 	MaxFirmwarePathLen = 256
 	MaxCPUStringLen    = 128
-	MaxNetworkLen      = 512
+	MaxConfigStrLen    = 512
 )
 
 const (
@@ -68,11 +68,16 @@ const (
 const (
 	createMsgDebugFieldSize    = 1
 	createMsgIntFieldSize      = 4
-	createMsgIntFieldCount     = 4
+	createMsgIntFieldCount     = 6
 	createMsgPrefixSize        = MaxNameLen + MaxFirmwarePathLen + MaxNameLen + MaxFirmwarePathLen + createMsgDebugFieldSize + MaxCPUStringLen
 	createMsgPaddingAfterCPU   = (createMsgIntFieldSize - (createMsgPrefixSize % createMsgIntFieldSize)) % createMsgIntFieldSize
 	createMsgPackedIntsSize    = createMsgIntFieldCount * createMsgIntFieldSize
-	createMsgSerializedBufSize = createMsgPrefixSize + createMsgPaddingAfterCPU + createMsgPackedIntsSize + MaxNetworkLen
+	createMsgSerializedBufSize = createMsgPrefixSize + createMsgPaddingAfterCPU + createMsgPackedIntsSize + MaxConfigStrLen*2
+)
+
+const (
+	defaultMaxVCPUs     = 8
+	fallbackMaxMemoryMB = defs.DefaultMinMemMB * 2
 )
 
 type MicaExecutor struct {
@@ -135,19 +140,19 @@ type mcsFS struct {
 
 // MicaClientConfCreateOptions is an intermediate layer to pass configurations to MicaClientConf
 type MicaClientConfCreateOptions struct {
-	CPU         string
-	Name        string
-	Path        string
-	Ped         string
-	PedCfg      string
-	Debug       bool
-	VCPUs       int
-	MaxVCPUs    int
-	CPUWeight   int
-	CPUCapacity int
-	MemoryMB    int
-	MaxMemMB    int
-	Network     string
+	CPU             string
+	Name            string
+	Path            string
+	Ped             string
+	PedCfg          string
+	VCPUs           int
+	CPUWeight       int
+	CPUCapacity     int
+	MemoryMB        int
+	MaxVCPUs        int
+	MemoryThreshold int
+	IOMem           string
+	Network         string
 }
 
 // This is the conf struct mica daemon will see
@@ -155,24 +160,31 @@ type MicaClientConfCreateOptions struct {
 // #define MAX_NAME_LEN         66
 // #define MAX_FIRMWARE_PATH_LEN 256
 // #define MAX_CPUSTR_LEN       128
+// #define MAX_IOMEM_LEN      512 // reserved for IOMEM
 // #define MAX_NETWORK_LEN      512
 //
-//	struct create_msg {
-//		/* required configs */
-//		char name[MAX_NAME_LEN];
-//		char path[MAX_FIRMWARE_PATH_LEN];
-//		/* optional configs for MICA*/
-//		char ped[MAX_NAME_LEN];
-//		char ped_cfg[MAX_FIRMWARE_PATH_LEN];
-//		bool debug;
-//		/* optional configs for pedestal */
-//		char cpu_str[MAX_CPUSTR_LEN];
-//		int vcpu_num;            // 4
-//		int cpu_weight;          // 4
-//		int cpu_capacity;        // 4
-//		int memory;              // 4
-//		char network[MAX_NETWORK_LEN]; // 512
-//	};
+//		struct create_msg {
+//			/* required configs */
+//			char name[MAX_NAME_LEN];
+//			char path[MAX_FIRMWARE_PATH_LEN];
+//			/* optional configs for MICA*/
+//			char ped[MAX_NAME_LEN];
+//			char ped_cfg[MAX_FIRMWARE_PATH_LEN];
+//			bool debug;
+//			/* optional configs for pedestal */
+//			char cpu_str[MAX_CPUSTR_LEN];
+//			int vcpu_num;            // 4
+//	   /** NEW: max_vcpu_num */
+//	   int max_vcpu_num;          // 4
+//			int cpu_weight;          // 4
+//			int cpu_capacity;        // 4
+//			int memory;              // 4
+//	   /** NEW: max_memory */
+//	   int max_memory;            // 4
+//	   /** NEW: iomem */
+//		 char iomem[MAX_NETWORK_LEN]; // 512
+//		 char network[MAX_NETWORK_LEN]; // 512
+//		};
 type MicaClientConf struct {
 	// name is container ID, assigned by containerd.
 	name [MaxNameLen]byte
@@ -188,14 +200,21 @@ type MicaClientConf struct {
 	cpuStr [MaxCPUStringLen]byte
 	// vcpuNum is the number of vcpus
 	vcpuNum int
+	// TODO: micrun config set default maxVcpuNum (default of maxVcpuNum: 8)
+	maxVcpuNum int
 	// cpuWeight is the weight of cpu
 	cpuWeight int
 	// cpuCapacity is the capacity of cpu
 	cpuCapacity int
 	// memoryMB size in MiB
 	memoryMB int
+	// NOTICE: this is not maxmemory of container, it is the memory threshold of client, (default: 2 * memory)
+	// memoryThresholdMB => maxmemory for mica conf
+	memoryThresholdMB int
+	// NOTICE:  reserved for iomem
+	iomem [MaxConfigStrLen]byte
 	// network config
-	network [MaxNetworkLen]byte
+	network [MaxConfigStrLen]byte
 }
 
 // dummyCPUArr is a dummy CPU array for testing, always [1,4,5]
@@ -217,7 +236,7 @@ func (m *MicaClientConf) InitWithOpts(opts MicaClientConfCreateOptions) {
 
 	copy(m.pedcfg[:], opts.PedCfg)
 
-	m.debug = opts.Debug
+	m.debug = false
 
 	// Convert CPU array to string
 	// cpuStr := pedestal.ParseCPUArr(opts.CPU)
@@ -226,15 +245,29 @@ func (m *MicaClientConf) InitWithOpts(opts MicaClientConfCreateOptions) {
 
 	// Set other fields
 	m.vcpuNum = opts.VCPUs
+	if opts.MaxVCPUs > 0 {
+		m.maxVcpuNum = opts.MaxVCPUs
+	} else {
+		m.maxVcpuNum = defaultMaxVCPUs
+	}
 	m.cpuWeight = opts.CPUWeight
 	m.cpuCapacity = opts.CPUCapacity
 	m.memoryMB = opts.MemoryMB
-
+	m.iomem = [MaxConfigStrLen]byte{}
+	memInitThreshold := opts.MemoryThreshold
+	if memInitThreshold == 0 {
+		if opts.MemoryMB > 0 {
+			memInitThreshold = opts.MemoryMB * 2
+		} else {
+			memInitThreshold = fallbackMaxMemoryMB
+		}
+	}
+	m.memoryThresholdMB = memInitThreshold
+	if opts.IOMem != "" {
+		copy(m.iomem[:], opts.IOMem)
+	}
 	copy(m.network[:], opts.Network)
 
-	if opts.MaxMemMB != 0 {
-		log.Debugf("MaxMemMB provided but not yet sent to micad: %d", opts.MaxMemMB)
-	}
 }
 
 func (m *MicaClientConf) pack() []byte {
@@ -267,13 +300,19 @@ func (m *MicaClientConf) pack() []byte {
 
 	binary.LittleEndian.PutUint32(buf[offset:], uint32(m.vcpuNum))
 	offset += createMsgIntFieldSize
+	binary.LittleEndian.PutUint32(buf[offset:], uint32(m.maxVcpuNum))
+	offset += createMsgIntFieldSize
 	binary.LittleEndian.PutUint32(buf[offset:], uint32(m.cpuWeight))
 	offset += createMsgIntFieldSize
 	binary.LittleEndian.PutUint32(buf[offset:], uint32(m.cpuCapacity))
 	offset += createMsgIntFieldSize
 	binary.LittleEndian.PutUint32(buf[offset:], uint32(m.memoryMB))
 	offset += createMsgIntFieldSize
-	copy(buf[offset:offset+MaxNetworkLen], m.network[:])
+	binary.LittleEndian.PutUint32(buf[offset:], uint32(m.memoryThresholdMB))
+	offset += createMsgIntFieldSize
+	copy(buf[offset:offset+MaxConfigStrLen], m.iomem[:])
+	offset += MaxConfigStrLen
+	copy(buf[offset:offset+MaxConfigStrLen], m.network[:])
 
 	return buf
 }

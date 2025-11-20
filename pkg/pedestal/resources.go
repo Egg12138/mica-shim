@@ -1,6 +1,7 @@
 package pedestal
 
 import (
+	defs "mica-shim/definitions"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -19,10 +20,8 @@ type EssentialResource struct {
 	// mica conf: vcpu.
 	Vcpu *uint32
 	// mica conf: Memory.
-	// For Xen: DomU starts with 32MB memory without memory option, but errors when exceeding MemoryLimitMB.
-	MemoryLimitMB *uint32
-
-	// The initial memory for DomU client, default to be 32MiB.
+	MemoryMaxMB *uint32
+	// The initial max available memory for DomU client
 	MemoryMinMB uint32
 	// Virtual network interface.
 	VIF []string
@@ -41,15 +40,14 @@ func InitResource() *EssentialResource {
 	quota := int64(defaultQuota)
 	vcpu := uint32(defaultVcpus)
 	capacity := uint32(0)
-	memLimit := uint32(32)
+	maxmem := uint32(defs.DefaultMinMemMB)
 	cpuWeight := uint32(0)
 	res.CpuPeriod = &period
 	res.CpuQuota = &quota
 	res.Vcpu = &vcpu
 	res.CpuCpacity = &capacity
 	res.CPUWeight = &cpuWeight
-	res.MemoryLimitMB = &memLimit
-	res.MemoryMinMB = 32 // Default minimum memory for DomU.
+	res.MemoryMaxMB = &maxmem
 	return &res
 }
 

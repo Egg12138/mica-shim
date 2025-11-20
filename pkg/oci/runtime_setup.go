@@ -31,6 +31,10 @@ const (
 	KeyDefaultFirmware  = "firmware_path"         // default firmware path when annotation not set
 )
 
+// final fallbacks:
+const defaultMaxContainerVCPUs = 8
+const defaultContainerInitMemMiB = 32
+
 var (
 	thredsholdMemHigh = pedestal.MemHighThreshold()
 	thredsholdMemLow  = pedestal.MemLowThreshold()

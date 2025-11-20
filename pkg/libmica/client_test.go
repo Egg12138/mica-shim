@@ -4,6 +4,8 @@
 package libmica
 
 import (
+	"bytes"
+	"encoding/binary"
 	"mica-shim/pkg/pedestal"
 	"reflect"
 	"testing"
@@ -748,4 +750,48 @@ func TestBoundaryConditions(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestMicaClientConfPackIncludesMaxFields(t *testing.T) {
+	opts := MicaClientConfCreateOptions{
+		CPU:             "0-1",
+		VCPUs:           2,
+		MaxVCPUs:        5,
+		CPUWeight:       1024,
+		CPUCapacity:     100,
+		MemoryMB:        128,
+		MemoryThreshold: 256,
+		Network:         "net123",
+	}
+	conf := MicaClientConf{}
+	conf.InitWithOpts(opts)
+
+	buf := conf.pack()
+	if got := len(buf); got != createMsgSerializedBufSize {
+		t.Fatalf("pack() length = %d, want %d", got, createMsgSerializedBufSize)
+	}
+
+	offset := createMsgPrefixSize + createMsgPaddingAfterCPU
+	gotInts := make([]uint32, createMsgIntFieldCount)
+	for i := range gotInts {
+		gotInts[i] = binary.LittleEndian.Uint32(buf[offset : offset+createMsgIntFieldSize])
+		offset += createMsgIntFieldSize
+	}
+
+	wantInts := []uint32{uint32(opts.VCPUs), uint32(opts.MaxVCPUs), uint32(opts.CPUWeight), uint32(opts.CPUCapacity), uint32(opts.MemoryMB), uint32(opts.PedPreAllocMaxMem)}
+	if !reflect.DeepEqual(gotInts, wantInts) {
+		t.Fatalf("packed ints = %v, want %v", gotInts, wantInts)
+	}
+
+	iomemStart := offset
+	for i := 0; i < MaxConfigStrLen; i++ {
+		if buf[iomemStart+i] != 0 {
+			t.Fatalf("iomem byte %d = %d, want 0", i, buf[iomemStart+i])
+		}
+	}
+
+	networkStart := iomemStart + MaxConfigStrLen
+	if got := string(bytes.TrimRight(buf[networkStart:networkStart+len(opts.Network)], "\x00")); got != opts.Network {
+		t.Fatalf("network data = %q, want %q", got, opts.Network)
+	}
 }

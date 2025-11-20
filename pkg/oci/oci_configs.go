@@ -84,7 +84,7 @@ func bundleRootfs(bundle string) string {
 	return filepath.Join(bundle, "rootfs")
 }
 
-func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerType, detach bool, defaultFirmwarePath string) (*cntr.ContainerConfig, error) {
+func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerType, detach bool, defaultFirmwarePath string, runtimeConfig *RuntimeConfig) (*cntr.ContainerConfig, error) {
 	baseRootfs := bundleRootfs(bundle)
 
 	clientLayer, clientConfErr := configstack.LoadClientLayer(baseRootfs)
@@ -401,6 +401,7 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 	}
 
 	// Validate resource limits against system constraints
+	applyContainerRuntimeDefaults(config, ocispec.Annotations, runtimeConfig)
 	if err := cntr.ValidateResourceLimits(config); err != nil {
 		log.Warnf("resource validation warning: %v", err)
 		// Don't fail the container creation for resource validation warnings
@@ -417,22 +418,10 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 
 func SandboxConfig(ocispec *specs.Spec, rc RuntimeConfig, bundle, sbContainerID string, detach bool) (cntr.SandboxConfig, error) {
 	// generate sandbox container config
-	containerConfig, err := ContainerConfig(sbContainerID, bundle, *ocispec, cntr.PodSandbox, detach, rc.DefaultFirmwarePath)
+	containerConfig, err := ContainerConfig(sbContainerID, bundle, *ocispec, cntr.PodSandbox, detach, rc.DefaultFirmwarePath, &rc)
 	if err != nil {
 		return cntr.SandboxConfig{}, err
 	}
-	if containerConfig.MemoryMinMB == 0 {
-		if rc.MinContainerMemMB > 0 {
-			containerConfig.MemoryMinMB = rc.MinContainerMemMB
-		} else {
-			containerConfig.MemoryMinMB = defs.DefaultMinMemMB
-		}
-	}
-	// Clamp to limit if applicable
-	if containerConfig.MemoryLimitMB > 0 && containerConfig.MemoryMinMB > containerConfig.MemoryLimitMB {
-		containerConfig.MemoryMinMB = containerConfig.MemoryLimitMB
-	}
-
 	// TODO: allocated shared resources
 
 	networkConfig := cntr.NetworkConfig{}
@@ -558,6 +547,76 @@ func formatMemoryLimit(config *cntr.ContainerConfig) string {
 	}
 
 	return strings.Join(parts, ", ")
+}
+
+func applyContainerRuntimeDefaults(config *cntr.ContainerConfig, annotations map[string]string, runtimeConfig *RuntimeConfig) {
+	if config == nil {
+		return
+	}
+
+	runtimeCfg := runtimeConfig
+	if runtimeCfg == nil {
+		runtimeCfg = NewRuntimeConfig()
+	}
+
+	if config.MemoryMinMB == 0 {
+		if runtimeCfg.MinContainerMemMB > 0 {
+			config.MemoryMinMB = runtimeCfg.MinContainerMemMB
+		} else {
+			config.MemoryMinMB = defs.DefaultMinMemMB
+		}
+	}
+
+	if config.MemoryLimitMB > 0 && config.MemoryMinMB > config.MemoryLimitMB {
+		config.MemoryMinMB = config.MemoryLimitMB
+	}
+
+	config.MaxVcpuNum = resolveMaxVcpu(annotations, runtimeCfg)
+	config.MemoryThresholdMB = calculatePedMaxMemory(config, runtimeCfg)
+}
+
+func resolveMaxVcpu(annotations map[string]string, runtimeCfg *RuntimeConfig) uint32 {
+	if annotations != nil {
+		if value, ok := annotations[defs.ContainerMaxVcpuNum]; ok && value != "" {
+			if parsed, err := strconv.ParseUint(value, 10, 32); err == nil && parsed > 0 {
+				return uint32(parsed)
+			} else if err != nil {
+				log.Debugf("invalid %s %q: %v", defs.ContainerMaxVcpuNum, value, err)
+			}
+		}
+	}
+
+	if runtimeCfg != nil && runtimeCfg.MaxContainerVCPUs > 0 {
+		return runtimeCfg.MaxContainerVCPUs
+	}
+
+	return defaultMaxContainerVCPUs
+}
+
+func calculatePedMaxMemory(config *cntr.ContainerConfig, runtimeCfg *RuntimeConfig) uint32 {
+	maxMem := config.MemoryLimitMB
+	if maxMem == 0 {
+		maxMem = config.MemoryMinMB
+	}
+	if maxMem == 0 && runtimeCfg != nil && runtimeCfg.MinContainerMemMB > 0 {
+		maxMem = runtimeCfg.MinContainerMemMB
+	}
+	if maxMem == 0 {
+		maxMem = defs.DefaultMinMemMB
+	}
+	if runtimeCfg != nil && runtimeCfg.MaxContainerMemMB > 0 && maxMem > runtimeCfg.MaxContainerMemMB {
+		maxMem = runtimeCfg.MaxContainerMemMB
+	}
+
+	if maxMem > math.MaxUint32/2 {
+		return math.MaxUint32
+	}
+
+	doubled := maxMem * 2
+	if doubled == 0 {
+		doubled = defs.DefaultMinMemMB * 2
+	}
+	return doubled
 }
 
 // formatBytes formats bytes into human readable string

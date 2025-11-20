@@ -122,7 +122,7 @@ func create(ctx context.Context, s *shimService, r *taskAPI.CreateTaskRequest) (
 		log.Debug("rootfs mounted for pod container, showing rootfs contents: ")
 		utils.TravelDir(rootfsPath)
 
-		err = createContainerInSandbox(ctx, s.sandbox, *ociSpec, rootfs, r.ID, bundlePath, disableOutput)
+		err = createContainerInSandbox(ctx, s.sandbox, *ociSpec, rootfs, r.ID, bundlePath, s.config, disableOutput)
 		if err != nil {
 			return nil, err
 		}
@@ -324,7 +324,7 @@ func createSandbox(ctx context.Context, ocispec *specs.Spec,
 // createContainerInSandbox creates a container within an existing sandbox.
 func createContainerInSandbox(ctx context.Context, sandbox cntr.SandboxTraits,
 	ocispec specs.Spec, rootfs cntr.RootFs,
-	containerID, bundlePath string, disableOutput bool) error {
+	containerID, bundlePath string, runtimeConfig *oci.RuntimeConfig, disableOutput bool) error {
 
 	var defaultFirmware string
 	if sandbox != nil {
@@ -333,7 +333,7 @@ func createContainerInSandbox(ctx context.Context, sandbox cntr.SandboxTraits,
 		}
 	}
 
-	containerConfig, err := oci.ContainerConfig(containerID, bundlePath, ocispec, cntr.PodContainer, disableOutput, defaultFirmware)
+	containerConfig, err := oci.ContainerConfig(containerID, bundlePath, ocispec, cntr.PodContainer, disableOutput, defaultFirmware, runtimeConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create container config: %w", err)
 	}

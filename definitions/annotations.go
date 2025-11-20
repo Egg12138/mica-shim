@@ -57,6 +57,8 @@ const (
 	// ContainerMinMemMB specifies the initial memory (MiB) assigned to the client at boot.
 	// This differs from the max memory limit (Memory/MaxMemMB) that may come from OCI.
 	ContainerMinMemMB = ContainerPrefix + "min_memory_mb"
+	// ContainerMaxVcpuNum allows overriding the runtime max_vcpu_num for micad create messages.
+	ContainerMaxVcpuNum = ContainerPrefix + "max_vcpu_num"
 	// legacy PTY mode: true(default) => external console, false => use micad's rpmsg pty
 	LegacyPty = ContainerPrefix + "legacy_pty"
 )
