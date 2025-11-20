@@ -17,19 +17,26 @@ func deleteContainer(ctx context.Context, s *shimService, c *container) error {
 	if c == nil {
 		return nil
 	}
+	// reduntantly signalExit()?
+	c.signalExit()
 
 	// Forcibly delete pod containers.
 	if !c.cType.CanBeSandbox() {
-		if c.status != task.Status_STOPPED {
-			if _, err := s.sandbox.StopContainer(ctx, c.id, false); err != nil && errors.Is(err, er.ContainerNotFound) {
-				log.Infof("Container %s not found in real sandbox, already deleted.", c.id)
-			} else {
+		// Check if sandbox still exists before trying to stop/delete container
+		if s.sandbox == nil {
+			log.Debugf("Sandbox already deleted, skipping StopContainer/DeleteContainer for %s", c.id)
+		} else {
+			if c.status != task.Status_STOPPED {
+				if _, err := s.sandbox.StopContainer(ctx, c.id, false); err != nil && errors.Is(err, er.ContainerNotFound) {
+					log.Debugf("Container %s not found in real sandbox, already deleted.", c.id)
+				} else {
+					return err
+				}
+			}
+			if c, err := s.sandbox.DeleteContainer(ctx, c.id); err != nil && errors.Is(err, er.ContainerNotFound) {
+				log.Debugf("Container %s not found in real sandbox, already deleted.", c.ID())
 				return err
 			}
-		}
-		if c, err := s.sandbox.DeleteContainer(ctx, c.id); err != nil && errors.Is(err, er.ContainerNotFound) {
-			log.Infof("Container %s not found in real sandbox, already deleted.", c.ID())
-			return err
 		}
 	}
 

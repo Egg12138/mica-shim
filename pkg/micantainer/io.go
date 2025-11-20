@@ -11,7 +11,7 @@ import (
 	er "mica-shim/errors"
 	log "mica-shim/logger"
 	"mica-shim/pkg/libmica"
-	utils "mica-shim/pkg/utils"
+	ped "mica-shim/pkg/pedestal"
 )
 
 type iostream struct {
@@ -49,7 +49,7 @@ func newIOStream(s *Sandbox, c *Container, proc string) *iostream {
 }
 
 // BUG: mica create ttydevice not by container id
-func (s *iostream) ensureDevice() error {
+func (s *iostream) ensureDevice(legacyPty bool) error {
 	if s.container != nil && s.container.config != nil && s.container.config.IsInfra {
 		return nil
 	}
@@ -60,7 +60,7 @@ func (s *iostream) ensureDevice() error {
 		return nil
 	}
 	// Highest priority: explicit override for debugging/testing.
-	if override := os.Getenv("MICRAN_PTY_DEVICE"); override != "" {
+	if override := os.Getenv("MICRAN_DEBUG_PTY_DEVICE"); override != "" {
 		f, err := os.OpenFile(override, os.O_RDWR, 0)
 		if err == nil {
 			s.pty = f
@@ -68,17 +68,26 @@ func (s *iostream) ensureDevice() error {
 		}
 	}
 
-	shortID := ""
+	clientID := ""
 	if s.container != nil {
-		shortID = utils.ShortID(s.container.id)
+		clientID = s.container.id
 	}
 
-	if shortID == "" {
+	if clientID == "" {
 		return er.EmptyContainerID
 	}
 
+	if legacyPty {
+		f, err := openConsolePTYFallback(s.container.id)
+		if err != nil {
+			return fmt.Errorf("console PTY fallback failed for %s: %w", clientID, err)
+		}
+		s.pty = f
+		return nil
+	}
+
 	// Prefer client-name based symlink provided by micad (ttyRPMSG_<name> -> /dev/pts/N).
-	symlink := fmt.Sprintf(libmica.PTYDevPattern, shortID)
+	symlink := fmt.Sprintf(libmica.PTYDevPattern, clientID)
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		target, err := filepath.EvalSymlinks(symlink)
@@ -88,26 +97,12 @@ func (s *iostream) ensureDevice() error {
 				return nil
 			}
 		} else if !os.IsNotExist(err) {
-			log.Infof("wait for pty device %s prepared", target)
+			log.Debugf("waiting for PTY device %s", symlink)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 
-    // Legacy numeric discovery ONLY in mock mode
-    if defs.IsMock {
-        deadline := time.Now().Add(2 * time.Second)
-        for time.Now().Before(deadline) {
-            for i := range libmica.MaxPTYDevLegacyNum {
-                path := fmt.Sprintf(libmica.PTYDevLegacyPattern, i)
-                if f, err := os.OpenFile(path, os.O_RDWR, 0); err == nil {
-                    s.pty = f
-                    return nil
-                }
-            }
-            time.Sleep(100 * time.Millisecond)
-        }
-    }
-    return fmt.Errorf("pty device not found for client %s", s.container.id)
+	return fmt.Errorf("pty device not found for client %s", s.container.id)
 }
 
 func (s *iostream) stdin() io.WriteCloser {
@@ -134,7 +129,11 @@ func (s *stdinStream) Write(data []byte) (n int, err error) {
 	if defs.IsMock {
 		return len(data), nil
 	}
-	if err := s.ensureDevice(); err != nil {
+	legacyPty := true // default
+	if s.container != nil && s.container.config != nil {
+		legacyPty = s.container.config.LegacyPty
+	}
+	if err := s.ensureDevice(legacyPty); err != nil {
 		return 0, err
 	}
 	return s.pty.Write(data)
@@ -164,7 +163,11 @@ func (s *stdoutStream) Read(data []byte) (n int, err error) {
 	if defs.IsMock {
 		return 0, io.EOF
 	}
-	if err := s.ensureDevice(); err != nil {
+	legacyPty := true // default
+	if s.container != nil && s.container.config != nil {
+		legacyPty = s.container.config.LegacyPty
+	}
+	if err := s.ensureDevice(legacyPty); err != nil {
 		return 0, err
 	}
 	return s.pty.Read(data)
@@ -177,4 +180,17 @@ func (s *stderrStream) Read(data []byte) (n int, err error) {
 
 	// same as stdout for now
 	return (&stdoutStream{s.iostream}).Read(data)
+}
+
+func openConsolePTYFallback(containerID string) (*os.File, error) {
+	path, err := ped.ConsolePTYPathForDomain(containerID)
+	if err != nil {
+		return nil, err
+	}
+
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		return nil, fmt.Errorf("opening console PTY %s: %w", path, err)
+	}
+	return f, nil
 }

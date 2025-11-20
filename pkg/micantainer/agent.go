@@ -1,20 +1,17 @@
 package micantainer
 
 import (
+	"context"
 	er "mica-shim/errors"
+	log "mica-shim/logger"
 	"mica-shim/pkg/libmica"
-	"mica-shim/pkg/utils"
-	"os"
-	"path/filepath"
 	"time"
 
-	"github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/cpuset"
+	"mica-shim/pkg/cpuset"
 )
 
 const (
 	maxHostnameLength = 64
-	// End Of Transmission control characters
-	eotAscii = 0x04
 )
 
 type SandboxAgent struct {
@@ -22,7 +19,7 @@ type SandboxAgent struct {
 	VcpuNum uint32
 
 	// TODO: Pool is not enabled currently
-	// Physical cpu pool for container, 
+	// Physical cpu pool for container,
 	PcpuPool []int
 
 	// Vcpu number of each container
@@ -31,12 +28,14 @@ type SandboxAgent struct {
 	ContainerCpuSets map[string]cpuset.CPUSet
 	// Total requested memory of sandbox workloads
 	MemoryPoolBytes uint64
-
 }
 
 // nolint:golint
 func NewAgent() *SandboxAgent {
-	return &SandboxAgent{}
+	return &SandboxAgent{
+		ContainerVcpus:   make(map[string][]int),
+		ContainerCpuSets: make(map[string]cpuset.CPUSet),
+	}
 }
 
 // init initializes the Noop agent, i.e. it does nothing.
@@ -53,10 +52,14 @@ func (n *SandboxAgent) disconnect() error {
 	return nil
 }
 
-// stopSandbox is the Noop agent Sandbox stopping implementation. It does nothing.
-func (n *SandboxAgent) stopSandbox(sandbox *Sandbox) error {
-	if err := libmica.Stop(sandbox.id); err != nil {
-		return err
+// stopClients is the Noop agent Sandbox stopping implementation. It does nothing.
+func (n *SandboxAgent) stopClients(ctx context.Context, sandbox *Sandbox) error {
+	log.Infof("stopping client os in sandbox %s", sandbox.id)
+	for _, c := range sandbox.containers {
+		if err := c.stop(ctx, true); err != nil {
+			log.Errorf("failed to stop container %s: %v", c.id, err)
+			return err
+		}
 	}
 	return nil
 }
@@ -87,10 +90,9 @@ func (n *SandboxAgent) createContainer(sandbox *Sandbox, c *Container) (*RTOSTas
 	// 	return nil, err
 	// }
 	// TODO: libmica
-	shortId := utils.ShortID(c.ID())
 	task := &RTOSTask{
-		TaskID:       shortId,
-		CreateTime:    time.Now(),
+		TaskID:       c.ID(),
+		CreateTime:   time.Now(),
 		ReservedAddr: 0x1000,
 	}
 
@@ -103,44 +105,24 @@ func (n *SandboxAgent) startContainer(sandbox *Sandbox, c *Container) error {
 	if err := libmica.Start(c.id); err != nil {
 		return err
 	}
-	// Update container state
-	c.state.State = StateRunning
-	return nil
+	return c.setContainerState(c.ctx, StateRunning)
 }
 
 // closeContainerStdin is the Noop agent process stdin closer. It does nothing.
 // nolint
-// closeContainerStdin signals EOF to the container's PTY input without tearing down output.
-// Rationale: For a PTY, closing the file descriptor would also affect reads; sending EOF (Ctrl-D)
-// is the conventional way to indicate stdin closure while allowing stdout to continue.
 func (n *SandboxAgent) closeContainerStdin(c *Container) error {
-    if c == nil || c.config == nil {
-        return er.EmptyContainerID
-    }
-    if c.config.IsInfra {
-        return nil
-    }
+	if c == nil || c.config == nil {
+		return er.EmptyContainerID
+	}
+	if c.config.IsInfra {
+		return nil
+	}
 
-    shortID := utils.ShortID(c.id)
-    if shortID == "" {
-        return er.EmptyContainerID
-    }
+	if c.id == "" {
+		return er.EmptyContainerID
+	}
 
-    // mica create symlink /dev/ttyRPMSG_<shortID> -> /dev/pts/N; 
-		// it's better to resolve the link and write Ctrl-D to the pty slave.
-    symlink := filepath.Clean("/dev/ttyRPMSG_" + shortID)
-    target, err := filepath.EvalSymlinks(symlink)
-    if err != nil {
-        // Best-effort: in mock mode or legacy systems we may not have the symlink.
-        return nil
-    }
-    f, err := os.OpenFile(target, os.O_WRONLY, 0)
-    if err != nil {
-        return nil
-    }
-    defer f.Close()
-    _, _ = f.Write([]byte{eotAscii})
-    return nil
+	return nil
 }
 
 // it is a temporary solution that merge stdout, stderr into ont output stream
@@ -154,14 +136,19 @@ func (n *SandboxAgent) readTaskStdout(c *Container, taskID string, data []byte) 
 }
 
 func (n *SandboxAgent) resizeVCPUs(newNum uint32) (uint32, uint32) {
-    old := n.VcpuNum
-    n.VcpuNum = newNum
-    return old, n.VcpuNum
+	old := n.VcpuNum
+	n.VcpuNum = newNum
+	return old, n.VcpuNum
 }
 
 func (n *SandboxAgent) resizeMemory(newMemMB uint64) (uint64, uint64) {
-	newMem := newMemMB << 8
+	// Convert MiB to bytes
+	newMem := newMemMB << 20
 	old := n.MemoryPoolBytes
+	if old == newMem {
+		// No change; avoid unnecessary churn
+		return old, old
+	}
 	n.MemoryPoolBytes = newMem
 	return old, newMem
 }

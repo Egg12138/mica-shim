@@ -5,14 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	defs "mica-shim/definitions"
+	er "mica-shim/errors"
+	log "mica-shim/logger"
 	cntr "mica-shim/pkg/micantainer"
 
 	cgroupsv1 "github.com/containerd/cgroups/stats/v1"
 	cgroupsv2 "github.com/containerd/cgroups/v2/stats"
 	ptypes "github.com/containerd/containerd/protobuf/types"
+	typeurl "github.com/containerd/typeurl/v2"
 	"github.com/gogo/protobuf/proto"
-	"github.com/gogo/protobuf/types"
 )
 
 // ContainerStats represents container statistics matching containerd's expected format.
@@ -77,9 +78,9 @@ func (s *shimService) DummyStats() (*ptypes.Any, error) {
 	dummyData := map[string]interface{}{
 		"cpu_stats": map[string]interface{}{
 			"cpu_usage": map[string]interface{}{
-				"total_usage":         1500000000,                       // 1.5 seconds in nanoseconds.
-				"usage_in_kernelmode": 300000000,                        // 300ms kernel time.
-				"usage_in_usermode":   1200000000,                       // 1.2 seconds user time.
+				"total_usage":         1500000000,                     // 1.5 seconds in nanoseconds.
+				"usage_in_kernelmode": 300000000,                      // 300ms kernel time.
+				"usage_in_usermode":   1200000000,                     // 1.2 seconds user time.
 				"percpu_usage":        []uint64{750000000, 750000000}, // Per-core usage.
 			},
 			"throttling_data": map[string]interface{}{
@@ -136,57 +137,140 @@ func (s *shimService) DummyStats() (*ptypes.Any, error) {
 // NOTICE: We check the cgroup version not for the mica client, but for potential
 // future support of Linux-native containers.
 func marshalMetrics(ctx context.Context, s *shimService, cid string) (*ptypes.Any, error) {
+	if s.sandbox == nil {
+		log.Debugf("Sandbox is nil, cannot get stats for container %s", cid)
+		return nil, er.SandboxNotFound
+	}
 	stats, err := s.sandbox.StatsContainer(ctx, cid)
 	if err != nil {
 		return nil, err
 	}
 
+	// Force CRI-compatible metrics (cgroups v1) to avoid decode errors in kubelet/k3s.
 	isCgroupV1, err := cgroupV1()
 	if err != nil {
-		return nil, err
+		log.Debugf("Failed to determine cgroup version: %v", err)
+		isCgroupV1 = true
 	}
 
 	var metrics proto.Message
 
-	if isCgroupV1 && defs.HostContainerSupports {
+	var (
+		cpuUsageUsec   uint64
+		memUsageBytes  uint64
+		memLimitBytes  uint64
+		memFailcnt     uint64
+		memMaxBytes    uint64
+		resourceExists bool
+	)
+
+	if stats.ResourceStats != nil {
+		resourceExists = true
+		cpuUsageUsec = stats.ResourceStats.CPUStats.TotalUsage
+		memUsageBytes = stats.ResourceStats.MemoryStats.Usage.Usage
+		memLimitBytes = stats.ResourceStats.MemoryStats.Usage.Limit
+		memFailcnt = stats.ResourceStats.MemoryStats.Usage.Failcnt
+		memMaxBytes = stats.ResourceStats.MemoryStats.Usage.MaxEver
+	}
+
+	if isCgroupV1 {
 		metrics = statsToMetricsV1(&stats)
 	} else {
 		metrics = statsToMetricsV2(&stats)
 	}
 
-	data, err := types.MarshalAny(metrics)
+	// Ensure metrics is not nil before marshaling
+	if metrics == nil {
+		return nil, fmt.Errorf("metrics is nil for container %s", cid)
+	}
+
+	typeAny, err := typeurl.MarshalAny(metrics)
 	if err != nil {
 		return nil, err
 	}
 
+	log.Debugf(
+		"marshalMetrics: container=%s cgroup_v1=%t resources=%t cpu_usage_usec=%d memory_usage_bytes=%d memory_limit_bytes=%d memory_failcnt=%d memory_max_bytes=%d type=%s",
+		cid,
+		isCgroupV1,
+		resourceExists,
+		cpuUsageUsec,
+		memUsageBytes,
+		memLimitBytes,
+		memFailcnt,
+		memMaxBytes,
+		typeAny.GetTypeUrl(),
+	)
+
 	return &ptypes.Any{
-		TypeUrl: data.TypeUrl,
-		Value:   data.Value,
+		TypeUrl: typeAny.GetTypeUrl(),
+		Value:   typeAny.GetValue(),
 	}, nil
+}
+
+func EmptyMetricsV1() *ptypes.Any {
+	m := statsToMetricsV1(nil)
+	typeAny, err := typeurl.MarshalAny(m)
+	if err != nil {
+		return &ptypes.Any{}
+	}
+	return &ptypes.Any{
+		TypeUrl: typeAny.GetTypeUrl(),
+		Value:   typeAny.GetValue(),
+	}
 }
 
 // statsToMetricsV1 converts micantainer stats to cgroups v1 metrics format.
 func statsToMetricsV1(stats *cntr.ContainerStats) *cgroupsv1.Metrics {
-	if stats == nil {
-		return nil
-	}
 	m := &cgroupsv1.Metrics{}
+
+	if stats == nil || stats.ResourceStats == nil {
+		return m
+	}
+
+	cpuStats := stats.ResourceStats.CPUStats
+	memStats := stats.ResourceStats.MemoryStats
+
+	m.CPU = &cgroupsv1.CPUStat{
+		Usage: &cgroupsv1.CPUUsage{
+			Total: cpuStats.TotalUsage * 1000, // convert µs to ns for CRI consumers.
+		},
+		Throttling: &cgroupsv1.Throttle{
+			Periods: cpuStats.NrPeriods,
+		},
+	}
+
+	m.Memory = &cgroupsv1.MemoryStat{
+		Cache: memStats.Cache,
+		Usage: &cgroupsv1.MemoryEntry{
+			Usage:   memStats.Usage.Usage,
+			Limit:   memStats.Usage.Limit,
+			Max:     memStats.Usage.MaxEver,
+			Failcnt: memStats.Usage.Failcnt,
+		},
+		TotalRSS:        memStats.Stats["total_rss"],
+		TotalCache:      memStats.Stats["total_cache"],
+		TotalPgFault:    memStats.Stats["pgfault"],
+		TotalPgMajFault: memStats.Stats["pgmajfault"],
+	}
+
 	return m
 }
 
 // statsToMetricsV2 converts micantainer stats to cgroups v2 metrics format.
 func statsToMetricsV2(stats *cntr.ContainerStats) *cgroupsv2.Metrics {
-	var m *cgroupsv2.Metrics
-	if stats.ResourceStats != nil {
-		m = &cgroupsv2.Metrics{
-			Pids: &cgroupsv2.PidsStat{
-				Current: uint64(shimPid),
-				Limit:   uint64(shimPid),
-			},
-			CPU:    setMetricsCPUStats(&stats.ResourceStats.CPUStats),
-			Memory: setMetricsMemStats(&stats.ResourceStats.MemoryStats),
-		}
+	m := &cgroupsv2.Metrics{
+		Pids: &cgroupsv2.PidsStat{
+			Current: uint64(shimPid),
+			Limit:   uint64(shimPid),
+		},
 	}
+
+	if stats != nil && stats.ResourceStats != nil {
+		m.CPU = setMetricsCPUStats(&stats.ResourceStats.CPUStats)
+		m.Memory = setMetricsMemStats(&stats.ResourceStats.MemoryStats)
+	}
+
 	return m
 }
 

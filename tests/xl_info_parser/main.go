@@ -13,41 +13,40 @@ import (
 
 // XlInfo struct matches the one from xen.go
 type XlInfo struct {
-	host        string
-	machine     string
+	host    string
+	machine string
 	// max physical cpus that Xen can handle
 	nrCpus      uint32
 	totalMemory uint64
 	freeMemory  uint64
 	// xlver = <info::xen_major>.<info::xen_minor>.<info::xen_extra>
 	xlver string
-	
+
 	// CPU topology and scheduling information
-	maxCpuId         uint32  // Maximum CPU ID (useful for CPU topology awareness)
-	coresPerSocket   uint32  // Cores per socket (NUMA/topology awareness)
-	threadsPerCore   uint32  // Threads per core (SMT/hyperthreading info)
-	cpuMhz          float64  // CPU frequency (performance calculations and RTOS timing)
-	freeCpus        uint32   // Available CPUs for allocation (resource management)
-	
+	maxCpuId       uint32  // Maximum CPU ID (useful for CPU topology awareness)
+	coresPerSocket uint32  // Cores per socket (NUMA/topology awareness)
+	threadsPerCore uint32  // Threads per core (SMT/hyperthreading info)
+	cpuMhz         float64 // CPU frequency (performance calculations and RTOS timing)
+	freeCpus       uint32  // Available CPUs for allocation (resource management)
+
 	// Xen capabilities and features (critical for feature detection)
-	xenCaps         string   // Xen capabilities (xen-3.0-aarch64, etc.)
-	xenScheduler    string   // Scheduler type (credit, credit2, etc.) - affects RTOS scheduling
-	xenPagesize     uint32   // Page size (memory management and allocation alignment)
-	virtCaps        string   // Virtualization capabilities (hvm, hap, etc.)
-	
+	xenCaps      string // Xen capabilities (xen-3.0-aarch64, etc.)
+	xenScheduler string // Scheduler type (credit, credit2, etc.) - affects RTOS scheduling
+	xenPagesize  uint32 // Page size (memory management and allocation alignment)
+	virtCaps     string // Virtualization capabilities (hvm, hap, etc.)
+
 	// Memory management details (for resource allocation decisions)
-	outstandingClaims uint64 // Memory claims pending (affects available memory calculations)
+	outstandingClaims  uint64 // Memory claims pending (affects available memory calculations)
 	sharingFreedMemory uint64 // Shared memory freed (memory reuse optimization)
 	sharingUsedMemory  uint64 // Shared memory used (current shared memory usage)
-	
+
 	// Platform-specific information (for hardware-specific optimizations)
-	platformParams  string   // Platform-specific parameters (hardware-specific settings)
-	xenCommandline  string   // Xen boot parameters (dom0_mem, etc. - affects resource availability)
-	
+	platformParams string // Platform-specific parameters (hardware-specific settings)
+	xenCommandline string // Xen boot parameters (dom0_mem, etc. - affects resource availability)
+
 	// ARM-specific fields (for aarch64 systems - architecture optimizations)
 	armSVEVectorLength uint32 // SVE vector length for ARM optimizations (RTOS performance)
 }
-
 
 // Sample xl info output for testing (real aarch64 Xen output)
 const sampleXlInfoOutput = `host                   : qemu-aarch64
@@ -134,7 +133,7 @@ func parseXlInfo(output string) (*XlInfo, error) {
 			if info.xlver != "" {
 				info.xlver += value
 			}
-			
+
 		case "max_cpu_id":
 			if maxCpuId, err := strconv.ParseUint(value, 10, 32); err == nil {
 				info.maxCpuId = uint32(maxCpuId)
@@ -155,7 +154,7 @@ func parseXlInfo(output string) (*XlInfo, error) {
 			if freeCpus, err := strconv.ParseUint(value, 10, 32); err == nil {
 				info.freeCpus = uint32(freeCpus)
 			}
-			
+
 		// Xen capabilities and features
 		case "xen_caps":
 			info.xenCaps = value
@@ -167,7 +166,7 @@ func parseXlInfo(output string) (*XlInfo, error) {
 			}
 		case "virt_caps":
 			info.virtCaps = value
-			
+
 		// Memory management details
 		case "outstanding_claims":
 			if outstandingClaims, err := strconv.ParseUint(value, 10, 64); err == nil {
@@ -181,13 +180,13 @@ func parseXlInfo(output string) (*XlInfo, error) {
 			if sharingUsedMemory, err := strconv.ParseUint(value, 10, 64); err == nil {
 				info.sharingUsedMemory = sharingUsedMemory
 			}
-			
+
 		// Platform-specific information
 		case "platform_params":
 			info.platformParams = value
 		case "xen_commandline":
 			info.xenCommandline = value
-			
+
 		// ARM-specific fields
 		case "arm_sve_vector_length":
 			if armSVEVectorLength, err := strconv.ParseUint(value, 10, 32); err == nil {
@@ -202,7 +201,6 @@ func parseXlInfo(output string) (*XlInfo, error) {
 
 	return info, nil
 }
-
 
 // runXlInfo runs the actual xl info command
 func runXlInfo() (*XlInfo, error) {
@@ -219,7 +217,6 @@ func runXlInfo() (*XlInfo, error) {
 	return parseXlInfo(out.String())
 }
 
-
 func printXlInfo(info *XlInfo, title string) {
 	fmt.Printf("\n=== %s ===\n", title)
 	fmt.Printf("Host: %s\n", info.host)
@@ -228,7 +225,7 @@ func printXlInfo(info *XlInfo, title string) {
 	fmt.Printf("Total Memory: %d MB\n", info.totalMemory)
 	fmt.Printf("Free Memory: %d MB\n", info.freeMemory)
 	fmt.Printf("Xen Version: %s\n", info.xlver)
-	
+
 	// CPU topology and scheduling information
 	if info.maxCpuId > 0 {
 		fmt.Printf("Max CPU ID: %d\n", info.maxCpuId)
@@ -245,7 +242,7 @@ func printXlInfo(info *XlInfo, title string) {
 	if info.freeCpus > 0 {
 		fmt.Printf("Free CPUs: %d\n", info.freeCpus)
 	}
-	
+
 	// Xen capabilities and features
 	if info.xenCaps != "" {
 		fmt.Printf("Xen Capabilities: %s\n", info.xenCaps)
@@ -259,7 +256,7 @@ func printXlInfo(info *XlInfo, title string) {
 	if info.virtCaps != "" {
 		fmt.Printf("Virtualization Capabilities: %s\n", info.virtCaps)
 	}
-	
+
 	// Memory management details
 	if info.outstandingClaims > 0 {
 		fmt.Printf("Outstanding Claims: %d MB\n", info.outstandingClaims)
@@ -270,7 +267,7 @@ func printXlInfo(info *XlInfo, title string) {
 	if info.sharingUsedMemory > 0 {
 		fmt.Printf("Sharing Used Memory: %d MB\n", info.sharingUsedMemory)
 	}
-	
+
 	// Platform-specific information
 	if info.platformParams != "" {
 		fmt.Printf("Platform Parameters: %s\n", info.platformParams)
@@ -278,7 +275,7 @@ func printXlInfo(info *XlInfo, title string) {
 	if info.xenCommandline != "" {
 		fmt.Printf("Xen Command Line: %s\n", info.xenCommandline)
 	}
-	
+
 	// ARM-specific fields
 	if info.armSVEVectorLength > 0 {
 		fmt.Printf("ARM SVE Vector Length: %d\n", info.armSVEVectorLength)
@@ -311,7 +308,7 @@ func main() {
 		if *verbose {
 			fmt.Println("Running 'xl info' command...")
 		}
-		
+
 		_, err = exec.LookPath("xl")
 		if err != nil {
 			fmt.Println("xl command not found. Using sample data instead.")
@@ -335,7 +332,7 @@ func main() {
 		fmt.Printf("CPU count > 0: %t\n", info.nrCpus > 0)
 		fmt.Printf("Total memory > 0: %t\n", info.totalMemory > 0)
 		fmt.Printf("Free memory <= Total memory: %t\n", info.freeMemory <= info.totalMemory)
-		
+
 		if info.totalMemory > 0 {
 			freePercentage := float64(info.freeMemory) / float64(info.totalMemory) * 100
 			fmt.Printf("Free memory percentage: %.1f%%\n", freePercentage)

@@ -8,12 +8,61 @@ import (
 	"strings"
 )
 
+const cpuCapRatio = 100
+
 // TODO: this function is not in use now, we migrate from `UpdateVCPUs` to this function
 // after allocating sandbox cpus in xen pool is finished.
 func (me *MicaExecutor) UpdateSandboxPoolVCPUs() {}
 
+func (me *MicaExecutor) MemoryThresholdMB() uint32 {
+	return me.memoryThresholdMB
+}
+
+func (me *MicaExecutor) CurrentMemoryMB() uint32 {
+	if me.records.memoryMB <= 0 {
+		return 0
+	}
+	return uint32(me.records.memoryMB)
+}
+
+func (me *MicaExecutor) RecordMemoryState(current, threshold uint32) {
+	me.records.memoryMB = int(current)
+	if threshold == 0 {
+		threshold = current
+	}
+	me.memoryThresholdMB = max(me.memoryThresholdMB, threshold)
+}
+
+// EnsureMemoryLimit applies the requested memory limit, expanding the pedestal maximum first when needed.
+func (me *MicaExecutor) EnsureMemoryLimit(target uint32) error {
+	current := me.CurrentMemoryMB()
+	threshold := me.MemoryThresholdMB()
+
+	if threshold == 0 {
+		threshold = current
+	}
+
+	if threshold < target {
+		if err := me.UpdateMemoryPedMax(target); err != nil {
+			return err
+		}
+		me.memoryThresholdMB = target
+	}
+
+	if current == target {
+		return nil
+	}
+
+	if err := me.UpdateMemory(target); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // number of visible vcpus
-func (me *MicaExecutor) UpdateVCPUNum(newVCPUs uint32) (oldCPUs, newCPUs uint32, retErr error)  {
+func (me *MicaExecutor) UpdateVCPUNum(newVCPUs uint32) (oldCPUs, newCPUs uint32, retErr error) {
+	log.Debugf("UpdateVCPUNum: container=%s, old=%d, new=%d", me.Id, me.records.vcpuNum, newVCPUs)
 	cmdArgs := []string{"VCPU", strconv.Itoa(int(newVCPUs))}
 	s := strings.Join(cmdArgs, " ")
 	err := micaCtl(MUpdate, me.Id, s)
@@ -21,77 +70,84 @@ func (me *MicaExecutor) UpdateVCPUNum(newVCPUs uint32) (oldCPUs, newCPUs uint32,
 		log.Warnf("failed to update vcpu number: %v", err)
 		return uint32(me.records.vcpuNum), uint32(me.records.vcpuNum), err
 	}
-	return uint32(me.records.cpuWeight), newVCPUs, err
-} 
+	return uint32(me.records.vcpuNum), newVCPUs, err
+}
 
 // TODO: temporarily dirty-join string as command line, need to change to a better way
 func (me *MicaExecutor) UpdatePCPUConstrains(cpus string) error {
+	log.Debugf("UpdatePCPUConstrains: container=%s, cpuset=%s", me.Id, cpus)
 	cmdArgs := []string{"CPU", cpus}
 	s := strings.Join(cmdArgs, " ")
-	err := micaCtl(MUpdate, me.Id,s)
+	err := micaCtl(MUpdate, me.Id, s)
 	if err != nil {
-		log.Warnf("failed to bind physical cpuset \"%s\" to container: %v", cpus,  err)
+		log.Warnf("failed to bind physical cpuset \"%s\" to container: %v", cpus, err)
 	} else {
 		me.records.cpuStr = [MaxCPUStringLen]byte{}
-		log.Info("updated to new cpuset")
+		copy(me.records.cpuStr[:], []byte(cpus))
+		log.Debugf("updated to new cpuset: %s", cpus)
 	}
 	return err
 }
-
 
 func (me *MicaExecutor) UpdateCPUCapacity(cap uint32) error {
+	log.Debugf("UpdateCPUCapacity: container=%s, old=%d, new=%d", me.Id, me.records.cpuCapacity, cap)
 	cmdArgs := []string{"CPUCpacity", strconv.Itoa(int(cap))}
 	s := strings.Join(cmdArgs, " ")
-	err := micaCtl(MUpdate, me.Id,s)
+	err := micaCtl(MUpdate, me.Id, s)
 	if err != nil {
-		log.Warnf("failed to update cap time to %d that container can run: %v", cap,  err)
+		log.Warnf("failed to update cap time to %d that container can run: %v", cap, err)
 	} else {
 		me.records.cpuCapacity = int(cap)
-		log.Info("updated to new cpu capacity")
+		log.Debugf("updated to new cpu capacity: %d", cap)
 	}
 	return err
 }
 
-func (me *MicaExecutor) UpdateCPUShare(weight uint32) error {
+func (me *MicaExecutor) UpdateCPUWeight(weight uint32) error {
+	log.Debugf("UpdateCPUWeight: container=%s, old=%d, new=%d", me.Id, me.records.cpuWeight, weight)
 	cmdArgs := []string{"CPUWeight", strconv.Itoa(int(weight))}
 	s := strings.Join(cmdArgs, " ")
-	err := micaCtl(MUpdate, me.Id,s)
+	err := micaCtl(MUpdate, me.Id, s)
 	if err != nil {
-		log.Warnf("failed to update cpu share time to %d that container can run: %v", weight,  err)
+		log.Warnf("failed to update cpu share time to %d that container can run: %v", weight, err)
 	} else {
 		me.records.cpuWeight = int(weight)
-		log.Info("updated to new cpu weight")
+		log.Debugf("updated to new cpu weight: %d", weight)
 	}
 	return err
 }
 
-
-func (me *MicaExecutor) UpdateMemoryLimit(memMiB uint32) error {
+// NOTICE: MemoryLimit is not max memory of client.It is the max memory
+// that pedestal can allocate to container.
+// Memory is just the max memory of a client
+func (me *MicaExecutor) UpdateMemoryPedMax(memMiB uint32) error {
+	log.Debugf("UpdateMemoryPedMax: container=%s, old=%d, new=%d", me.Id, me.records.memoryMB, memMiB)
 	cmdArgs := []string{"MaxMem", strconv.Itoa(int(memMiB))}
 	s := strings.Join(cmdArgs, " ")
-	err := micaCtl(MUpdate, me.Id,s)
+	err := micaCtl(MUpdate, me.Id, s)
 	if err != nil {
-		log.Warnf("failed to request new max memory \"%d\" to container: %v", memMiB,  err)
+		log.Warnf("failed to request new max memory \"%d\" to container: %v", memMiB, err)
 	} else {
-		me.records.memoryMB = int(memMiB)
-		log.Infof("update max memory to %d", memMiB)
+		me.memoryThresholdMB = max(memMiB, me.memoryThresholdMB)
+		log.Debugf("update max memory threshold to %d", memMiB)
 	}
 	return err
 }
 
 func (me *MicaExecutor) UpdateMemory(memMiB uint32) error {
+	log.Debugf("UpdateMemory: container=%s, old=%d, new=%d", me.Id, me.records.memoryMB, memMiB)
 	cmdArgs := []string{"Memory", strconv.Itoa(int(memMiB))}
 	s := strings.Join(cmdArgs, " ")
-	err := micaCtl(MUpdate, me.Id,s)
+	err := micaCtl(MUpdate, me.Id, s)
 	if err != nil {
-		log.Warnf("failed to request new memory \"%d\" to container: %v", memMiB,  err)
+		log.Warnf("failed to request new memory \"%d\" to container: %v", memMiB, err)
 	} else {
 		me.records.memoryMB = int(memMiB)
-		log.Infof("update memory to %d", memMiB)
+		me.memoryThresholdMB = max(memMiB, me.memoryThresholdMB)
+		log.Debugf("update memory to %d", memMiB)
 	}
 	return err
 }
-
 
 func (me *MicaExecutor) ReadResource() *pedestal.EssentialResource {
 	res := pedestal.InitResource()
@@ -105,6 +161,8 @@ func (me *MicaExecutor) ReadResource() *pedestal.EssentialResource {
 	if me.records.cpuWeight > 0 {
 		weight := uint32(me.records.cpuWeight)
 		res.CPUWeight = &weight
+	} else {
+		res.CPUWeight = nil
 	}
 
 	if me.records.cpuCapacity > 0 {
@@ -115,6 +173,8 @@ func (me *MicaExecutor) ReadResource() *pedestal.EssentialResource {
 	if me.records.memoryMB > 0 {
 		memory := uint32(me.records.memoryMB)
 		res.MemoryLimitMB = &memory
+	} else {
+		res.MemoryLimitMB = nil
 	}
 
 	// Set ClientCpuSet from cpuStr (convert byte array to string)
@@ -123,12 +183,65 @@ func (me *MicaExecutor) ReadResource() *pedestal.EssentialResource {
 	return res
 }
 
-
-func (me *MicaExecutor) VcpuPin(cpuList []int) error {	
+func (me *MicaExecutor) VcpuPin(cpuList []int) error {
 	cpustr := pedestal.ParseCPUArr(cpuList)
 	if cpustr == "" {
 		return fmt.Errorf("received cpuList %v, parsed into an empty array", cpuList)
 	}
 
 	return me.UpdatePCPUConstrains(cpustr)
+}
+
+func (me *MicaExecutor) NeedUpdateCpuCap(target uint32) bool {
+	current := uint32(0)
+	if me.records.cpuCapacity > 0 {
+		current = uint32(me.records.cpuCapacity)
+	}
+	if current == target && target >= uint32(cpuCapRatio)*pedestal.MaxCPUNum() {
+		return false
+	}
+	return true
+}
+
+func (me *MicaExecutor) NeedUpdateMemLimit(target uint32) bool {
+	return me.CurrentMemoryMB() != target
+}
+
+func (me *MicaExecutor) NeedUpdateVCpus(target uint32) bool {
+	if target == 0 || target > pedestal.MaxCPUNum() {
+		return false
+	}
+	current := uint32(0)
+	if me.records.vcpuNum > 0 {
+		current = uint32(me.records.vcpuNum)
+	}
+	return current != target
+}
+
+func (me *MicaExecutor) NeedUpdateCpuSet(old, new string) bool {
+	old = strings.TrimSpace(old)
+	new = strings.TrimSpace(new)
+
+	// Fast-path: if caller provided old/new and they are identical, no update needed
+	if old == new {
+		return false
+	}
+
+	// Prefer comparing against our current recorded cpuset when available
+	current := strings.TrimRight(string(me.records.cpuStr[:]), "\x00")
+	current = strings.TrimSpace(current)
+	if current != "" {
+		return current != new
+	}
+
+	// If we don't know current state, conservatively update when new is non-empty or differs
+	return old != new
+}
+
+func (me *MicaExecutor) NeedUpdateCpuShare(target uint32) bool {
+	current := uint32(0)
+	if me.records.cpuWeight > 0 {
+		current = uint32(me.records.cpuWeight)
+	}
+	return current != target
 }

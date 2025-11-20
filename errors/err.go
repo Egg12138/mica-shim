@@ -46,19 +46,19 @@ var (
 	EmptySandboxID    = new(invalid, "empty sandbox id")
 	AlreadyExists     = new(alreadyExists, "already exists")
 	ContainerNotFound = new(notFound, "container not found")
-	SandboxNotFound    = new(notFound, "sandbox is nil")
+	SandboxNotFound   = new(notFound, "sandbox is nil")
 	SandboxDown       = new(unexpectedStatus, "sandbox is not running")
-	IOClosed           = new(ioClose, "io closed")
+	IOClosed          = new(ioClose, "io closed")
 	NotRunning        = new(unexpectedStatus, "container is not running")
 
 	PedestalMismatched = new(invalid, "host pedestal type mismatch with image pedestal type")
-	ErrOutputParse = new(parseFailed, "failed to parse command output")
+	ErrOutputParse     = new(parseFailed, "failed to parse command output")
 
-	MicadOpFailed     = new(micadFailed, "mica operation failed")
+	MicadOpFailed   = new(micadFailed, "mica operation failed")
 	MicadNotRunning = new(micadAbnormal, "mica daemon is not running")
-	MicaSocketDown = new(micadAbnormal, "mica-create socket is not alive")
-	NotSupported     = new(notSupported, "micran or mica does not support this")
-	InvalidSignal      = new(invalid, "invalid signal for client os")
+	MicaSocketDown  = new(micadAbnormal, "mica-create socket is not alive")
+	NotSupported    = new(notSupported, "micran or mica does not support this")
+	InvalidSignal   = new(invalid, "invalid signal for client os")
 )
 
 // Type errors
@@ -72,5 +72,5 @@ var (
 
 var (
 	FlexibleTaskUnsupported = new(micadFailed, "micran does not support exec task, task are immutable inside client os")
-	ContainerVCPUNotPined = new(micadFailed, "container's vcpus are not pinned")
+	ContainerVCPUNotPined   = new(micadFailed, "container's vcpus are not pinned")
 )

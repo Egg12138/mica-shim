@@ -3,7 +3,7 @@ package shim
 import "context"
 
 const (
-	DefaultConfig = "micran.toml"
+	defaultConfig = "micran.toml"
 )
 
 // Configuration related types

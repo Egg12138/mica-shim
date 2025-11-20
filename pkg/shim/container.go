@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	defs "mica-shim/definitions"
 	log "mica-shim/logger"
 	cntr "mica-shim/pkg/micantainer"
 	"net/url"
 	"os"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -29,6 +31,7 @@ type container struct {
 	spec        *specs.Spec
 	exitTime    time.Time
 	exitIOch    chan struct{}
+	exitOnce    sync.Once
 	stdinPipe   io.WriteCloser
 	stdinCloser chan struct{}
 	exitCh      chan uint32
@@ -43,6 +46,58 @@ type container struct {
 	terminal    bool
 	mounted     bool
 	pid         uint32
+	execs       map[string]*execProcess
+}
+
+type execProcess struct {
+	id  string
+	pid uint32
+	// we use contaienrd shim task status to represent process status
+	status     task.Status
+	exitStatus uint32
+	exitTime   time.Time
+	waitCh     chan struct{}
+	waitOnce   sync.Once
+
+	// stdio from ExecProcessRequest; used to bridge to container PTY
+	stdin    string
+	stdout   string
+	stderr   string
+	terminal bool
+
+	// IO bridging for exec session
+	ttyio       *ttyIO
+	stdinPipe   io.WriteCloser
+	stdinCloser chan struct{}
+	exitIOch    chan struct{}
+}
+
+func newExecProcess(id string) *execProcess {
+	return &execProcess{
+		id:          id,
+		status:      task.Status_CREATED,
+		waitCh:      make(chan struct{}),
+		stdinCloser: make(chan struct{}),
+		exitIOch:    make(chan struct{}),
+	}
+}
+
+func (p *execProcess) markStarted(pid uint32) {
+	p.pid = pid
+	p.status = task.Status_RUNNING
+}
+
+func (p *execProcess) markExited(exitStatus uint32) (changed bool) {
+	if p.status != task.Status_STOPPED {
+		p.status = task.Status_STOPPED
+		p.exitStatus = exitStatus
+		p.exitTime = time.Now()
+		changed = true
+	}
+	p.waitOnce.Do(func() {
+		close(p.waitCh)
+	})
+	return changed
 }
 
 // newContainer creates a new container object for the shim.
@@ -71,9 +126,20 @@ func newContainer(s *shimService, r *taskAPI.CreateTaskRequest, cType cntr.Conta
 		terminal:    r.Terminal,
 		mounted:     mounted,
 		pid:         shimPid,
+		execs:       make(map[string]*execProcess),
 	}
 
 	return c, nil
+}
+
+func (c *container) signalExit() {
+	log.Debugf("received exit signal")
+	if c == nil {
+		return
+	}
+	c.exitOnce.Do(func() {
+		close(c.exitIOch)
+	})
 }
 
 // stdio defines the standard IO paths for a container.
@@ -130,10 +196,10 @@ func newTtyIO(ctx context.Context, id, stdin, stdout, stderr string, terminal bo
 	case "fifo":
 		ioImpl, err = newPipeIO(ctx, stream)
 	case "binary":
-		log.Debugf("************ binary io ************")
+		log.Debugf("using binary IO for container %s", id)
 		ioImpl, err = newBinaryIO(ctx, id, uri)
 	case "file":
-		log.Debugf("************ file io ************")
+		log.Debugf("using file IO for container %s", id)
 		ioImpl, err = newFileIO(ctx, stream, uri)
 	default:
 		return nil, fmt.Errorf("unknown STDIO scheme %s", uri.Scheme)
@@ -223,22 +289,18 @@ func (p *pipeIO) Close() error {
 }
 
 func (p *pipeIO) Stdin() io.ReadCloser {
-	log.Debugf("<== io stream: %v", p.in)
 	return p.in
 }
 
 func (p *pipeIO) Stdout() io.Writer {
-	log.Debugf("=> io stream: %v", p.out)
 	return p.out
 }
 
 func (p *pipeIO) Stderr() io.Writer {
-	log.Debugf("=> io stream: %v", p.out)
 	return p.out
 }
 
 func (b *binaryIO) Close() error {
-	log.Debugf("=> io stream: %v, %v", b.cmd, b.out)
 	err0 := b.out.Close()
 	err1 := b.cmd.Cancel()
 	return errors.Join(err0, err1)
@@ -249,17 +311,14 @@ func (b *binaryIO) Stdin() io.ReadCloser {
 }
 
 func (b *binaryIO) Stdout() io.Writer {
-	log.Debugf("=> io stream: %v", b.out)
 	return b.out.w
 }
 
 func (b *binaryIO) Stderr() io.Writer {
-	log.Debugf("=> io stream: %v", b.out)
 	return b.out.w
 }
 
 func (f *fileIO) Close() error {
-	log.Debugf("io stream, close file: %v", f.in)
 	var err error
 	if err = f.out.Close(); err != nil && f.out != nil {
 		return err
@@ -268,17 +327,14 @@ func (f *fileIO) Close() error {
 }
 
 func (f *fileIO) Stdin() io.ReadCloser {
-	log.Debugf("<== io stream, open file: %v", f.in)
 	return nil
 }
 
 func (f *fileIO) Stdout() io.Writer {
-	log.Debugf("=> io stream, open file: %v", f.out)
 	return f.out
 }
 
 func (f *fileIO) Stderr() io.Writer {
-	log.Debugf("=> io stream, open file: %v", f.out)
 	return f.out
 }
 
@@ -310,19 +366,6 @@ func (p *pipe) Close() error {
 func ioCopy(exitch, stdinCloser chan struct{}, tty *ttyIO, stdinPipe io.WriteCloser, stdoutPipe io.Reader) {
 	var wg sync.WaitGroup
 
-	if tty.io.Stdin() != nil {
-		wg.Add(1)
-		go func() {
-			log.Debug("Starting stdin copy from containerd to PTY.")
-			// TALK: Maybe CopyBuffer with a buffer pool is a better choice?
-			io.Copy(stdinPipe, tty.io.Stdin())
-			log.Debug("Stdin copy completed.")
-			close(stdinCloser)
-			wg.Done()
-			log.Info("Stdin io stream copy exited.")
-		}()
-	}
-
 	// Since the RTOS doesn't distinguish stderr, we copy from the PTY stdout
 	// to both stdout and stderr to ensure containerd receives the same output on both streams.
 	if tty.io.Stdout() != nil {
@@ -339,21 +382,91 @@ func ioCopy(exitch, stdinCloser chan struct{}, tty *ttyIO, stdinPipe io.WriteClo
 		}()
 	}
 
+	if tty.io.Stdin() != nil {
+		wg.Add(1)
+		go func() {
+			log.Debug("Starting stdin copy from containerd to PTY.")
+			// TALK: Maybe CopyBuffer with a buffer pool is a better choice?
+			io.Copy(stdinPipe, tty.io.Stdin())
+			log.Debug("Stdin copy completed.")
+			close(stdinCloser)
+			wg.Done()
+			log.Info("Stdin io stream copy exited.")
+		}()
+	}
+
 	wg.Wait()
 	close(exitch)
 	log.Debug("All IO copies completed.")
+}
+
+// getBoolAnnotation parses a boolean annotation from the container spec with a default value.
+// Returns (value, isExplicitlySet) where isExplicitlySet indicates if the annotation was provided.
+func getBoolAnnotation(spec *specs.Spec, key string, defaultValue bool) (bool, bool) {
+	if spec == nil || spec.Annotations == nil {
+		return defaultValue, false
+	}
+
+	if value, ok := spec.Annotations[key]; ok {
+		if parsed, err := strconv.ParseBool(value); err == nil {
+			return parsed, true
+		}
+		log.Warnf("Failed to parse boolean annotation, using default: %v", defaultValue)
+	}
+	return defaultValue, false
+}
+
+// getDurationAnnotation parses a duration annotation (in seconds) from the container spec with a default value.
+// Returns (value, isExplicitlySet) where isExplicitlySet indicates if the annotation was provided.
+func getDurationAnnotation(spec *specs.Spec, key string, defaultValue time.Duration) (time.Duration, bool) {
+	if spec == nil || spec.Annotations == nil {
+		return defaultValue, false
+	}
+
+	if value, ok := spec.Annotations[key]; ok {
+		if seconds, err := strconv.ParseInt(value, 10, 64); err == nil {
+			duration := time.Duration(seconds) * time.Second
+			if duration > 0 {
+				return duration, true
+			}
+			log.WithField("annotation", key).Warnf("Invalid duration value (must be positive seconds): %s, using default: %v", value, defaultValue)
+		} else {
+			log.WithField("annotation", key).WithError(err).Warnf("Failed to parse duration annotation, using default: %v", defaultValue)
+		}
+	}
+	return defaultValue, false
 }
 
 // waitContainerExit waits for the container to exit and updates its status.
 func waitContainerExit(ctx context.Context, s *shimService, c *container) (int32, error) {
 	// Wait for IO streams to close, or mock an exit after a timeout since micad
 	// cannot yet detect client OS exit.
-	const mockExitTimeout = 5 * time.Second
-	select {
-	case <-c.exitIOch:
-		log.WithField("container", c.id).Debug("The container IO streams closed.")
-	case <-time.After(mockExitTimeout):
-		log.WithField("container", c.id).Infof("No IO activity; mock exit after %s.", mockExitTimeout)
+	defaultTimeout := 30 * time.Second
+	ptyAutoClose, ptyAutoCloseSet := getBoolAnnotation(c.spec, defs.PtyAutoClose, true) // Default to true for backward compatibility
+	mockExitTimeout, timeoutSet := getDurationAnnotation(c.spec, defs.PtyAutoCloseTimeout, defaultTimeout)
+
+	// If pty_auto_disconnect is explicitly set to false, disable auto disconnect even if timeout is provided
+	// If timeout is explicitly set but pty_auto_disconnect is not set, enable auto disconnect
+	if ptyAutoCloseSet {
+		// pty_auto_disconnect is explicitly set, use its value
+	} else if timeoutSet {
+		// timeout is set but pty_auto_disconnect is not explicitly set, enable auto disconnect
+		ptyAutoClose = true
+	}
+
+	if c.cType.IsCriSandbox() || !ptyAutoClose {
+		// Pod infra containers must remain alive until the runtime explicitly
+		// tears them down (e.g. via Kill/Delete). Block here until we receive
+		// that signal.
+		<-c.exitIOch
+		log.Debugf("received explicit exit signal for infra container %s.", c.id)
+	} else if ptyAutoClose {
+		select {
+		case <-c.exitIOch:
+			log.Debugf("The container %s IO streams closed.", c.id)
+		case <-time.After(mockExitTimeout):
+			log.Debugf("Auto-disconnect %s terminal after %v timeout.", c.id, mockExitTimeout)
+		}
 	}
 
 	timeStamp := time.Now()
@@ -362,25 +475,43 @@ func waitContainerExit(ctx context.Context, s *shimService, c *container) (int32
 	s.mu.Lock()
 	// Update container status and exit information.
 	if c.cType.CanBeSandbox() {
+		// Signal monitor goroutine to stop cleanly (non-blocking to avoid deadlock)
 		if s.monitor != nil {
-			s.monitor <- nil
+			select {
+			case s.monitor <- nil:
+				log.Debugf("Successfully signaled monitor from waitContainerExit")
+			default:
+				log.Debugf("Monitor channel full or closed in waitContainerExit, skipping signal")
+			}
 		}
 
-		if err := s.sandbox.Stop(ctx, true); err != nil {
-			log.Errorf("Failed to stop sandbox %s.", s.sandbox.SandboxID())
-		}
+		if s.sandbox != nil {
+			sandboxID := s.sandbox.SandboxID()
+			if err := s.sandbox.Stop(ctx, true); err != nil {
+				log.Errorf("Failed to stop sandbox %s.", sandboxID)
+			}
 
-		if err := s.sandbox.Delete(ctx); err != nil {
-			log.Errorf("Failed to delete sandbox %s.", s.sandbox.SandboxID())
+			if err := s.sandbox.Delete(ctx); err != nil {
+				log.Errorf("Failed to delete sandbox %s.", sandboxID)
+			}
+		} else {
+			log.Debugf("Sandbox already deleted, skipping stop/delete in waitContainerExit")
 		}
 	} else {
-		if _, err := s.sandbox.StopContainer(ctx, c.id, true); err != nil {
-			log.Errorf("Failed to stop pod container %s.", c.id)
+		if s.sandbox != nil {
+			if _, err := s.sandbox.StopContainer(ctx, c.id, true); err != nil {
+				log.Errorf("Failed to stop pod container %s.", c.id)
+			}
+		} else {
+			log.Debugf("Sandbox already deleted, skipping StopContainer for %s", c.id)
 		}
 	}
 	c.status = task.Status_STOPPED
 	c.exit = uint32(ret)
 	c.exitTime = timeStamp
+	for _, exec := range c.execs {
+		exec.markExited(uint32(ret))
+	}
 
 	c.exitCh <- uint32(ret)
 	log.Debugf("The container %s status is StatusStopped.", c.id)

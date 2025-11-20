@@ -5,27 +5,29 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	defs "mica-shim/definitions"
 	er "mica-shim/errors"
 	log "mica-shim/logger"
 	"mica-shim/pkg/libmica"
+	"mica-shim/pkg/netns"
 	ped "mica-shim/pkg/pedestal"
 	utils "mica-shim/pkg/utils"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/containerd/errdefs"
 	"github.com/hashicorp/go-multierror"
-	vc "github.com/kata-containers/kata-containers/src/runtime/virtcontainers"
-	"github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/cpuset"
+	"mica-shim/pkg/cpuset"
 	"github.com/opencontainers/runtime-spec/specs-go"
-	"github.com/pkg/errors"
 )
 
 // ContainerStats holds statistics for a container.
@@ -36,8 +38,8 @@ type ContainerStats struct {
 
 // ResourceStats holds CPU and memory statistics.
 type ResourceStats struct {
-	CPUStats    CPUStats    `json:"cpu_stats,omitempty"`
-	MemoryStats MemoryStats `json:"memory_stats,omitempty"`
+	CPUStats    CPUStats    `json:"cpu_stats"`
+	MemoryStats MemoryStats `json:"memory_stats"`
 }
 
 // CPUStats holds CPU usage statistics.
@@ -116,8 +118,8 @@ type ContainerConfig struct {
 	Annotations    map[string]string
 	Resources      *specs.LinuxResources
 
-	// ElfAbsPath is the relative path of the <os>.elf in the bundle.
-	ElfAbsPath      string      `json:"relative_path"`
+	// ElfAbsPath is the absolute path of the <os>.elf in the host.
+	ElfAbsPath   string      `json:"elf_abs_path"`
 	PedestalType ped.PedType `json:"pedestal_type"`
 	PedestalConf string      `json:"pedestal_conf"`
 	OS           string      `json:"os"`
@@ -129,7 +131,7 @@ type ContainerConfig struct {
 	// CpusetCpus is the set of physical CPUs the client is allowed to use (e.g., "1,3-5").
 	CpusetCpus string `json:"cpuset_cpus"`
 	// CpuShares is the relative weight of the container for CPU time.
-	CpuShares uint32 `json:"cpu_shares"`
+	CpuShares uint64 `json:"cpu_shares"`
 	// VCPUNum is the number of virtual CPUs. Equals CpuLimit if not pinning; otherwise, equals the size of the cpuset.
 	VCPUNum uint32 `json:"vcpu_num"`
 	// PCPUNum is the number of allocated physical CPUs.
@@ -145,6 +147,9 @@ type ContainerConfig struct {
 	MemoryKernelMB      uint32  `json:"memory_kernel"`
 	MemorySwappinessMB  *uint32 `json:"memory_swappiness"`
 	OomKillDisable      bool    `json:"oom_kill_disable"`
+
+	// LegacyPty specifies whether to use legacy PTY mode (true) or micad's rpmsg PTY (false)
+	LegacyPty bool `json:"legacy_pty"`
 
 	// Cmdline is the boot command line for the guest.
 	Cmdline string `json:"cmdline"`
@@ -172,6 +177,11 @@ type RootFs struct {
 	Options []string
 	// Mounted indicates whether the rootfs is mounted.
 	Mounted bool
+}
+
+type helperExit struct {
+	code int
+	err  error
 }
 
 // ContainerType is a string representing the type of a container.
@@ -208,6 +218,8 @@ type Container struct {
 	taskInfo      RTOSTask
 	exitNotifier  chan struct{}
 	exitOnce      sync.Once
+	helperCmd     *exec.Cmd
+	helperExitCh  chan helperExit
 }
 
 func (ct ContainerType) IsRegularContainer() bool {
@@ -224,29 +236,12 @@ func (ct ContainerType) IsCriSandbox() bool {
 	return ct == PodSandbox
 }
 
-// From converts a virtcontainers.ContainerType to a micantainer.ContainerType.
-func From(ct vc.ContainerType) ContainerType {
-	var into ContainerType = UnknownContainerType
-	switch ct {
-	case vc.PodContainer:
-		into = PodContainer
-	case vc.PodSandbox:
-		into = PodSandbox
-	case vc.SingleContainer:
-		into = SingleContainer
-	default:
-		into = UnknownContainerType
-	}
-	return into
-}
-
 // loadSandbox restores a sandbox from disk by its ID.
 func loadSandbox(ctx context.Context, id string) (sandbox *Sandbox, err error) {
 	if id == "" {
 		return nil, er.EmptySandboxID
 	}
 
-	log.Debugf("Trying to restore sandbox from disk.")
 	ss, err := RestoreSandbox(ctx, id)
 	if err != nil {
 		log.Debugf("Failed to restore sandbox from disk: %v.", err)
@@ -278,25 +273,33 @@ func CleanupContainer(ctx context.Context, sandboxID string, containerID string,
 		return er.EmptyContainerID
 	}
 
-	// BUG: Logic error, config loader is incomplete:
-	// 1. Multithread unsafe.
-	// 2. Missing fields.
-	// 3. Lacks verifications.
 	sandbox, err := loadSandbox(ctx, sandboxID)
 	if err != nil {
-		return err
-	}
-	_, err = sandbox.StopContainer(ctx, containerID, force)
-	if err != nil && !force {
+		if err == er.SandboxNotFound {
+			if !libmica.ClientNotExist(containerID) && !force {
+				return fmt.Errorf("sandbox state missing while client %s still exists", containerID)
+			}
+			log.Debugf("Sandbox %s already removed from disk, skipping container %s cleanup.", sandboxID, containerID)
+			return nil
+		}
 		return err
 	}
 
-	_, err = sandbox.DeleteContainer(ctx, containerID)
-	if err != nil && !force {
-		return err
+	if _, err = sandbox.StopContainer(ctx, containerID, force); err != nil {
+		if err != er.ContainerNotFound && !force {
+			return err
+		}
+		log.Debugf("Container %s already stopped or absent in sandbox %s: %v.", containerID, sandboxID, err)
 	}
 
-	if len(sandbox.AllAnnotations()) > 0 {
+	if _, err = sandbox.DeleteContainer(ctx, containerID); err != nil {
+		if err != er.ContainerNotFound && !force {
+			return err
+		}
+		log.Debugf("Container %s already deleted from sandbox %s: %v.", containerID, sandboxID, err)
+	}
+
+	if len(sandbox.containers) > 0 {
 		return nil
 	}
 
@@ -332,7 +335,7 @@ func newContainer(ctx context.Context, s *Sandbox, cc *ContainerConfig) (*Contai
 		rootfs:        cc.Rootfs,
 		containerPath: filepath.Join(s.id, cc.ID),
 		mounts:        cc.Mount,
-		state:         ContainerState{},
+		state:         ContainerState{State: StateDown},
 		taskInfo:      RTOSTask{},
 		ctx:           s.ctx,
 	}
@@ -341,40 +344,45 @@ func newContainer(ctx context.Context, s *Sandbox, cc *ContainerConfig) (*Contai
 		log.Warnf("Failed to restore container state: %v.", err)
 	}
 
-	c.updateExitNotifier(c.state.State)
+	c.updateExitNotifier(c.checkState())
 
 	return c, nil
 }
 
 // start begins the execution of the container.
 func (c *Container) start(ctx context.Context) error {
+	currentState, err := c.ensureClientPresence()
+	if err != nil {
+		return err
+	}
+
 	if c.config != nil && c.config.IsInfra {
-		if c.state.State == StateRunning {
+		if currentState == StateRunning {
 			return nil
 		}
-		if c.state.State != StateReady && c.state.State != StateStopped {
+		if currentState != StateReady && currentState != StateStopped {
 			return fmt.Errorf("container is not ready or stopped, cannot start")
 		}
-		if err := c.state.ValidTransition(c.state.State, StateRunning); err != nil {
+		if err := c.state.ValidTransition(currentState, StateRunning); err != nil {
 			return err
 		}
 		return c.setContainerState(ctx, StateRunning)
 	}
 
-	if c.state.State == StateRunning {
+	if currentState == StateRunning {
 		return fmt.Errorf("container %s is already running", c.id)
 	}
 
-	if c.state.State != StateReady && c.state.State != StateStopped {
+	if currentState != StateReady && currentState != StateStopped {
 		return fmt.Errorf("container is not ready or stopped, cannot start")
 	}
 
-	if err := c.state.ValidTransition(c.state.State, StateRunning); err != nil {
+	if err := c.state.ValidTransition(currentState, StateRunning); err != nil {
 		return err
 	}
 
 	if err := startClient(ctx, c.sandbox, c); err != nil {
-		log.Errorf("Failed to start container: %v.", err)
+		log.Warnf("Failed to start container: %v, stopping it", err)
 		if err := c.stop(ctx, true); err != nil {
 			log.Warn("Failed to stop the container after start failed.")
 		}
@@ -384,9 +392,228 @@ func (c *Container) start(ctx context.Context) error {
 	return c.setContainerState(ctx, StateRunning)
 }
 
+func (c *Container) startInfraProcess(ctx context.Context) error {
+	if c.helperCmd != nil {
+		return nil
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get cwd: %v", err)
+	}
+
+	bundle, err := utils.ValidBundle(c.id, cwd)
+	if err != nil {
+		return err
+	}
+
+	spec, err := loadSpecFromBundle(bundle)
+	if err != nil {
+		return fmt.Errorf("failed to load sandbox spec: %w", err)
+	}
+
+	nsenterPath, err := exec.LookPath("nsenter")
+	if err != nil {
+		return fmt.Errorf("nsenter not found: %w", err)
+	}
+
+	rootfs := filepath.Join(bundle, "rootfs")
+	if c.config.Rootfs.Target != "" {
+		rootfs = c.config.Rootfs.Target
+	}
+
+	netPath := ""
+	if c.sandbox != nil && c.sandbox.config != nil {
+		netPath = c.sandbox.config.NetworkConfig.NetworkID
+	}
+
+	args, err := buildNsenterArgs(spec, rootfs, netPath)
+	if err != nil {
+		return err
+	}
+
+	cmd := exec.CommandContext(ctx, nsenterPath, args...)
+
+	env := assembleHelperEnv(spec)
+	cmd.Env = env
+
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setsid:    true,
+		Pdeathsig: syscall.SIGKILL,
+	}
+
+	devNull, err := os.OpenFile("/dev/null", os.O_RDWR, 0)
+	if err != nil {
+		return fmt.Errorf("failed to open /dev/null: %w", err)
+	}
+	defer devNull.Close()
+
+	cmd.Stdin = devNull
+	cmd.Stdout = devNull
+	cmd.Stderr = devNull
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start sandbox pause helper: %w", err)
+	}
+
+	c.helperCmd = cmd
+	c.helperExitCh = make(chan helperExit, 1)
+
+	go c.monitorHelperExit(cmd)
+
+	c.config.Pid = cmd.Process.Pid
+	if c.sandbox != nil && c.sandbox.config != nil {
+		prev := c.sandbox.config.NetworkConfig.HolderPid
+		c.sandbox.config.NetworkConfig.HolderPid = cmd.Process.Pid
+		if c.sandbox.config.NetworkConfig.NetworkCreated && prev > 0 && prev != cmd.Process.Pid {
+			if err := netns.Cleanup(c.sandbox.id, prev); err != nil && !errors.Is(err, os.ErrProcessDone) {
+				log.Warnf("failed to cleanup previous netns holder %d: %v", prev, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func (c *Container) monitorHelperExit(cmd *exec.Cmd) {
+	err := cmd.Wait()
+	exitCode := extractExitCode(err)
+	if c.helperExitCh != nil {
+		c.helperExitCh <- helperExit{code: exitCode, err: nil}
+		close(c.helperExitCh)
+	}
+	c.helperCmd = nil
+	c.helperExitCh = nil
+	if c.config != nil {
+		c.config.Pid = 0
+	}
+	if c.sandbox != nil && c.sandbox.config != nil {
+		c.sandbox.config.NetworkConfig.HolderPid = 0
+	}
+}
+
+func extractExitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode()
+	}
+	return 255
+}
+
+func buildNsenterArgs(spec specs.Spec, rootfs, fallbackNetPath string) ([]string, error) {
+	if spec.Process == nil || len(spec.Process.Args) == 0 {
+		return nil, fmt.Errorf("invalid sandbox process definition")
+	}
+
+	args := make([]string, 0)
+	nsSeen := make(map[specs.LinuxNamespaceType]struct{})
+	if spec.Linux != nil {
+		for _, ns := range spec.Linux.Namespaces {
+			if ns.Path == "" {
+				continue
+			}
+			switch ns.Type {
+			case specs.NetworkNamespace:
+				args = append(args, "--net="+ns.Path)
+				nsSeen[specs.NetworkNamespace] = struct{}{}
+			case specs.IPCNamespace:
+				args = append(args, "--ipc="+ns.Path)
+			case specs.UTSNamespace:
+				args = append(args, "--uts="+ns.Path)
+			case specs.PIDNamespace:
+				args = append(args, "--pid="+ns.Path)
+			case specs.UserNamespace:
+				args = append(args, "--user="+ns.Path)
+			case specs.MountNamespace:
+				args = append(args, "--mount="+ns.Path)
+			}
+		}
+	}
+
+	if fallbackNetPath != "" {
+		if _, ok := nsSeen[specs.NetworkNamespace]; !ok {
+			args = append(args, "--net="+fallbackNetPath)
+		}
+	}
+
+	if rootfs != "" {
+		args = append(args, "--root="+rootfs)
+	}
+	if spec.Process.Cwd != "" {
+		args = append(args, "--wd="+spec.Process.Cwd)
+	}
+
+	args = append(args, "--")
+	args = append(args, spec.Process.Args...)
+	return args, nil
+}
+
+func assembleHelperEnv(spec specs.Spec) []string {
+	env := append([]string{}, os.Environ()...)
+
+	if spec.Process != nil && len(spec.Process.Env) > 0 {
+		env = mergeEnv(env, spec.Process.Env)
+	}
+
+	if !envHasKey(env, "PATH") {
+		env = append(env, "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+	}
+	return env
+}
+
+func envHasKey(env []string, key string) bool {
+	prefix := key + "="
+	for _, e := range env {
+		if strings.HasPrefix(e, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func mergeEnv(base, override []string) []string {
+	result := append([]string{}, base...)
+	index := make(map[string]int, len(result))
+	for i, kv := range result {
+		if pos := strings.Index(kv, "="); pos >= 0 {
+			index[kv[:pos]] = i
+		}
+	}
+
+	for _, kv := range override {
+		if pos := strings.Index(kv, "="); pos >= 0 {
+			key := kv[:pos]
+			if idx, ok := index[key]; ok {
+				result[idx] = kv
+			} else {
+				index[key] = len(result)
+				result = append(result, kv)
+			}
+		}
+	}
+	return result
+}
+
+func loadSpecFromBundle(bundle string) (specs.Spec, error) {
+	configPath := filepath.Join(bundle, "config.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return specs.Spec{}, fmt.Errorf("failed to read %s: %w", configPath, err)
+	}
+	var spec specs.Spec
+	if err := json.Unmarshal(data, &spec); err != nil {
+		return specs.Spec{}, fmt.Errorf("failed to unmarshal %s: %w", configPath, err)
+	}
+	return spec, nil
+}
+
 // create prepares the container to be started.
 func (c *Container) create(ctx context.Context) error {
 	if c.config != nil && c.config.IsInfra {
+		log.Debugf("************* Is An Infra Container **************")
 		c.taskInfo = RTOSTask{
 			CreateTime: time.Now(),
 			TaskID:     c.id,
@@ -401,6 +628,10 @@ func (c *Container) create(ctx context.Context) error {
 
 	c.taskInfo = *rtosTask
 
+	if _, err := c.ensureClientPresence(); err != nil {
+		return err
+	}
+
 	if err := c.setContainerState(ctx, StateReady); err != nil {
 		return err
 	}
@@ -410,14 +641,21 @@ func (c *Container) create(ctx context.Context) error {
 // doStop performs the actual stop operation on the client.
 func (c *Container) doStop(force bool) error {
 	if c.config != nil && c.config.IsInfra {
+		if c.helperCmd == nil || c.helperCmd.Process == nil {
+			return nil
+		}
+		if err := c.helperCmd.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) && !errors.Is(err, syscall.ESRCH) {
+			return err
+		}
 		return nil
 	}
-	if c.state.State == StateStopped {
-		log.Infof("Container %s is already stopped.", c.id)
+	currentState := c.checkState()
+	if currentState == StateStopped {
+		log.Debugf("Container %s is already stopped.", c.id)
 		return nil
 	}
 
-	if err := c.state.State.validTransition(c.state.State, StateStopped); err != nil && !force {
+	if err := c.state.ValidTransition(currentState, StateStopped); err != nil && !force {
 		return err
 	}
 
@@ -429,10 +667,16 @@ func (c *Container) doStop(force bool) error {
 
 // stop stops the container.
 func (c *Container) stop(ctx context.Context, force bool) error {
-	var err error
-	if err = c.doStop(force); err != nil {
+	if _, err := c.ensureClientPresence(); err != nil {
 		return err
 	}
+
+	var err error
+	if err = c.doStop(force); err != nil {
+		log.Debugf("failed to stop container %s: %v", c.id, err)
+		return err
+	}
+	log.Debugf("container %s stopped", c.id)
 
 	if err = c.setContainerState(ctx, StateStopped); err != nil {
 		return err
@@ -444,32 +688,46 @@ func (c *Container) stop(ctx context.Context, force bool) error {
 // kill forcibly stops the container.
 // Due to the 1:1:1 relationship of Container:ClientOS:Task in mica, kill() is essentially stop().
 func (c *Container) kill() error {
+
+	if c.sandbox == nil {
+		return fmt.Errorf("container sandbox is nil")
+	}
 	if c.sandbox.state.State != StateReady && c.sandbox.state.State != StateRunning {
 		return fmt.Errorf("sandbox is not running or ready, can not signal container")
 	}
-	log.Debugf("Container state is %s.", c.state.State)
-	if c.state.State != StateRunning &&
-		c.state.State != StateReady &&
-		c.state.State != StatePaused {
-		return fmt.Errorf("container is not running, ready or paused, can not be killed")
-	}
-
-	if err := c.doStop(true); err != nil {
+	currentState, err := c.ensureClientPresence()
+	if err != nil {
 		return err
 	}
+	log.Debugf("Container state is %s.", currentState)
 
-	// NOTICE: there is no need to call setContainerState, because kill is a task-scope operation;
-	// after supports for different POSIX signals, kill -> stopped will be incorrect
-	c.state.State = StateStopped
+	if libmica.ClientNotExist(c.id) {
+		return c.setContainerState(c.ctx, StateStopped)
+	} else if err := c.doStop(true); err != nil {
+		log.Debugf("failed to stop container %s: %v", c.id, err)
+		return err
+	}
+	log.Debugf("container %s stopped", c.id)
+
+	if err := c.setContainerState(c.ctx, StateStopped); err != nil {
+		return err
+	}
 	return nil
 }
 
 // delete removes the container.
 // This differs from mica, where `rm` forces a client stop. For a container engine, that is bad practice.
 func (c *Container) delete(ctx context.Context) error {
-	if c.state.State != StateReady &&
-		c.state.State != StatePaused &&
-		c.state.State != StateStopped {
+	if c.sandbox == nil {
+		return fmt.Errorf("container sandbox reference is nil")
+	}
+	currentState, err := c.ensureClientPresence()
+	if err != nil {
+		return err
+	}
+	if currentState != StateReady &&
+		currentState != StatePaused &&
+		currentState != StateStopped {
 		return fmt.Errorf("sandbox is not ready, paused, or stopped, cannot delete container")
 	}
 
@@ -482,12 +740,22 @@ func (c *Container) delete(ctx context.Context) error {
 	if err := c.sandbox.removeContainer(c.id); err != nil {
 		return err
 	}
-	return c.sandbox.StoreSandbox(ctx)
+	if err := c.sandbox.StoreSandbox(ctx); err != nil {
+		return fmt.Errorf("failed to store sandbox")
+	}
+	if err := utils.RemoveContainerCacheDir(c.id); err != nil {
+		log.Warnf("failed to remove cache directory for container %s: %v", c.id, err)
+	}
+	return nil
 }
 
 // pause pauses the container's execution.
 func (c *Container) pause(ctx context.Context) error {
-	if c.state.State != StateRunning {
+	currentState, err := c.ensureClientPresence()
+	if err != nil {
+		return err
+	}
+	if currentState != StateRunning {
 		return fmt.Errorf("container is not running, cannot pause container")
 	}
 	if c.config != nil && c.config.IsInfra {
@@ -501,13 +769,20 @@ func (c *Container) pause(ctx context.Context) error {
 
 // resume resumes a paused container.
 func (c *Container) resume(ctx context.Context) error {
-	if c.state.State != StatePaused && c.sandbox.state.State != StateStopped {
+	if c.sandbox == nil {
+		return fmt.Errorf("container sandbox reference is nil")
+	}
+	currentState, err := c.ensureClientPresence()
+	if err != nil {
+		return err
+	}
+	if currentState != StatePaused && c.sandbox.state.State != StateStopped {
 		return fmt.Errorf("container is not paused, cannot resume container")
 	}
 	if c.config != nil && c.config.IsInfra {
 		return c.setContainerState(ctx, StateRunning)
 	}
-	log.Infof("Micran restart a client os, acting as `resume`.")
+	log.Debugf("resuming container %s (restarting RTOS)", c.id)
 	if err := libmica.Start(c.id); err != nil {
 		return er.MicadOpFailed
 	}
@@ -515,65 +790,153 @@ func (c *Container) resume(ctx context.Context) error {
 }
 
 // update modifies the container's resources.
-// TODO: Implement container resource update.
 func (c *Container) update(ctx context.Context, resources specs.LinuxResources) error {
 	if c.config != nil && c.config.IsInfra {
 		return nil
 	}
+	if c.sandbox == nil {
+		return fmt.Errorf("container sandbox reference is nil")
+	}
 	if c.sandbox.state.State != StateRunning {
 		return fmt.Errorf("sandbox is not running, cannot stats container")
 	}
-
 	if c.notOperational() {
 		return fmt.Errorf("container not ready or running, impossible to update the container")
 	}
 
-	res := c.config.Resources
-	pedRes := ped.InitResource()
-	if res.CPU == nil {
-		c.config.Resources.CPU = resources.CPU
+	// Ensure resource structs are initialized to avoid nil-pointer dereferences
+	if c.config == nil {
+		return fmt.Errorf("container config is nil")
 	}
+	if c.config.Resources == nil {
+		c.config.Resources = &specs.LinuxResources{}
+	}
+	res := c.config.Resources
+
+	pedRes := ped.InitResource()
+	// Default to nil so we only update fields explicitly requested.
+	pedRes.MemoryLimitMB = nil
+	pedRes.CPUWeight = nil
+
+	if res.CPU == nil {
+		res.CPU = &specs.LinuxCPU{}
+	}
+	if res.Memory == nil {
+		res.Memory = &specs.LinuxMemory{}
+	}
+
+	// IMPORTANT: Prepare updated values WITHOUT modifying container config yet.
+	// We must apply changes to RTOS first, then update config only if successful.
+	// This prevents sandbox resource accounting from counting resources that weren't
+	// actually allocated (which would happen if RTOS update fails but config was already changed).
+	var updatedCPUPeriod *uint64
+	var updatedCPUQuota *int64
+	var updatedCPUs string
+	var updatedMems string
+	var updatedMemLimit *int64
+	var providedCpuShares uint64
+	var cpuSharesProvided bool
 
 	if cpu := resources.CPU; cpu != nil {
 		period := cpu.Period
 		quota := cpu.Quota
-		Cpus := cpu.Cpus
-		Mems := cpu.Mems
+		cpus := cpu.Cpus
+		mems := cpu.Mems
+		shares := cpu.Shares
 
 		if period != nil && *period != 0 {
-			res.CPU.Period = period
+			updatedCPUPeriod = period
 			*pedRes.CpuPeriod = *period
 		}
 
 		if quota != nil && *quota != 0 {
-			res.CPU.Quota = quota
+			updatedCPUQuota = quota
 			*pedRes.CpuQuota = *quota
 		}
 
-		if Cpus != "" {
-			res.CPU.Cpus = Cpus
-			pedRes.ClientCpuSet = Cpus
+		if cpus != "" {
+			updatedCPUs = cpus
+			pedRes.ClientCpuSet = cpus
 		}
 
-		if Mems != "" {
-			res.CPU.Mems = Mems
+		if mems != "" {
+			updatedMems = mems
 		}
-	}
 
-	if res.Memory == nil {
-		c.config.Resources.Memory = resources.Memory
+		if shares != nil {
+			cpuSharesProvided = true
+			providedCpuShares = *shares
+			weight := ped.ShareToWeight(providedCpuShares)
+			weightCopy := weight
+			pedRes.CPUWeight = &weightCopy
+		}
 	}
 
 	if mem := resources.Memory; mem != nil && mem.Limit != nil {
-		c.config.Resources.Memory.Limit = mem.Limit
-		*pedRes.MemoryLimitMB = uint32(*mem.Limit >> 20)
+		limitBytes := *mem.Limit
+		updatedMemLimit = &limitBytes
+		limitMiB := uint32(limitBytes >> 20)
+		pedLimit := limitMiB
+		pedRes.MemoryLimitMB = &pedLimit
 	}
 
-	if err := c.sandbox.updateResources(ctx); err != nil {
+	// CRITICAL ORDER: Apply changes to RTOS FIRST before updating container config.
+	// If this fails, we return error immediately without updating config.
+	// This ensures sandbox resource accounting (which uses config) stays in sync with reality.
+	if err := updateContainerResource(c, pedRes); err != nil {
 		return err
 	}
 
-	return updateContainerResource(c, pedRes)
+	// Only update container config AFTER successful RTOS update.
+	// Now it's safe to modify config because RTOS has accepted the changes.
+	if updatedCPUPeriod != nil {
+		if res.CPU.Period == nil || *res.CPU.Period != *updatedCPUPeriod {
+			res.CPU.Period = updatedCPUPeriod
+		}
+	}
+	if updatedCPUQuota != nil {
+		if res.CPU.Quota == nil || *res.CPU.Quota != *updatedCPUQuota {
+			res.CPU.Quota = updatedCPUQuota
+		}
+	}
+	if updatedCPUs != "" {
+		if res.CPU.Cpus != updatedCPUs {
+			res.CPU.Cpus = updatedCPUs
+		}
+	}
+	if updatedMems != "" {
+		if res.CPU.Mems != updatedMems {
+			res.CPU.Mems = updatedMems
+		}
+	}
+	if updatedMemLimit != nil {
+		if res.Memory.Limit == nil || *res.Memory.Limit != *updatedMemLimit {
+			res.Memory.Limit = updatedMemLimit
+			newLimitMB := uint32(*updatedMemLimit >> 20)
+			if c.config.MemoryLimitMB != newLimitMB {
+				c.config.MemoryLimitMB = newLimitMB
+			}
+		}
+	}
+	if cpuSharesProvided {
+		// Only write when changed
+		if res.CPU.Shares == nil || *res.CPU.Shares != providedCpuShares {
+			shareCopy := providedCpuShares
+			res.CPU.Shares = &shareCopy
+		}
+		if c.config.CpuShares != providedCpuShares {
+			c.config.CpuShares = providedCpuShares
+		}
+	}
+
+	// Now update sandbox resource accounting with the new config values.
+	// This uses calculateSandboxMemory() which sums all container configs,
+	// so it will now correctly include the newly applied resource limits.
+	if err := c.sandbox.updateResources(ctx); err != nil {
+		log.Debugf("Update best-effort: ignore sandbox.updateResources error for %s: %v", c.id, err)
+	}
+
+	return nil
 }
 
 func (c *Container) ID() string {
@@ -601,20 +964,28 @@ func (c *Container) TaskInfo() RTOSTask {
 }
 
 func (c *Container) Status() StateString {
-	return c.state.State
+	return c.checkState()
 }
 
 func (c *Container) State() *ContainerState {
+	c.checkState()
 	return &c.state
 }
 
 // Signal sends a signal to the container.
 // TODO: Implement a POSIX signals hub.
 func (c *Container) Signal(ctx context.Context, signal syscall.Signal) error {
+	if c.sandbox == nil {
+		return fmt.Errorf("container sandbox reference is nil")
+	}
 	if c.sandbox.notOperational() {
 		return fmt.Errorf("sandbox is not running or ready, can not signal container")
 	}
-	if c.state.State != StateRunning && c.state.State != StateReady && c.state.State != StatePaused {
+	currentState, err := c.ensureClientPresence()
+	if err != nil {
+		return err
+	}
+	if currentState != StateRunning && currentState != StateReady && currentState != StatePaused {
 		return fmt.Errorf("client os is not running, ready or paused, can not signal container")
 	}
 
@@ -630,8 +1001,6 @@ func validOS(os string) bool {
 
 // validComponent checks if a component file is a regular file.
 func validComponent(component string) bool {
-	log.Debugf("File exist: %v.", utils.FileExist(component))
-	log.Debugf("File is regular: %v.", utils.IsRegular(component))
 	if !utils.IsRegular(component) {
 		return false
 	}
@@ -659,7 +1028,7 @@ func validComponent(component string) bool {
 }
 
 // validFirmware checks if the firmware file is valid.
-func validFirmware(bundle, firmware string) bool {
+func validFirmware(firmware string) bool {
 	return validComponent(firmware)
 }
 
@@ -675,21 +1044,15 @@ func (c *Container) validMicaContainer() bool {
 	if c.config != nil && c.config.IsInfra {
 		return true
 	}
-	cwd, _ := os.Getwd()
 
 	osValid := validOS(c.GetOS())
-	fwValid := validFirmware(cwd, c.GetFirmwarePath())
+	fwValid := validFirmware(c.GetFirmwarePath())
 	if HostPedType == ped.Xen {
 		binFile := validBinfile(c.GetPedestalConf())
 		fwValid = binFile && fwValid
 	}
 	judge := osValid && fwValid
-	log.Debugf(`
-	validMicaContainer:
-		osValid = %v,
-		fwValid = %v,
-		judge = %v
-	`, osValid, fwValid, judge)
+	log.Debugf("container validation: os=%v, firmware=%v, valid=%v", osValid, fwValid, judge)
 
 	return judge
 }
@@ -700,13 +1063,121 @@ func (c *Container) setContainerState(ctx context.Context, state StateString) er
 		return fmt.Errorf("state cannot be empty")
 	}
 
-	log.Debugf("Set container state from %s to %s.", c.state.State, state)
+	if c.sandbox == nil {
+		return fmt.Errorf("container sandbox reference is nil")
+	}
+
 	c.state.State = state
 	c.updateExitNotifier(state)
-	if err := c.sandbox.StoreSandbox(ctx); err != nil {
-		log.Errorf("Save sandbox state failed.")
+	if err := c.SaveState(); err != nil {
+		log.Errorf("failed to save container state: %v", err)
 		return err
 	}
+	if err := c.sandbox.StoreSandbox(ctx); err != nil {
+		log.Errorf("failed to save sandbox state: %v", err)
+		return err
+	}
+	return nil
+}
+
+func (c *Container) checkState() StateString {
+	if c == nil || c.id == "" {
+		return StateDown
+	}
+
+	if c.config != nil && c.config.IsInfra {
+		return c.state.State
+	}
+
+	if libmica.ClientNotExist(c.id) {
+		if c.state.State != StateDown {
+			if err := c.setContainerState(c.ctx, StateDown); err != nil {
+				log.Warnf("failed to mark container %s as down: %v", c.id, err)
+			}
+		}
+		return StateDown
+	}
+
+	return c.state.State
+}
+
+func (c *Container) ensureClientPresence() (StateString, error) {
+	state := c.checkState()
+	if state != StateDown {
+		return state, nil
+	}
+
+	if err := c.registerClientWithMicad(); err != nil {
+		return StateDown, err
+	}
+
+	state = c.checkState()
+	if state == StateDown {
+		return StateDown, er.ContainerNotFound
+	}
+
+	return state, nil
+}
+
+func (c *Container) registerClientWithMicad() error {
+	if c == nil || c.config == nil || c.config.IsInfra {
+		return nil
+	}
+
+	if !libmica.ClientNotExist(c.id) {
+		return nil
+	}
+
+	conf, err := createMicaClientConf(c)
+	if err != nil {
+		return err
+	}
+
+	if err := libmica.Create(conf); err != nil {
+		return err
+	}
+
+	initialMem := c.config.MemoryMinMB
+	if initialMem == 0 {
+		initialMem = ped.InitResource().MemoryMinMB
+	}
+	limit := c.config.MemoryLimitMB
+	if limit > 0 && initialMem > limit {
+		initialMem = limit
+	}
+	c.me.RecordMemoryState(initialMem, initialMem)
+
+	return c.setContainerState(c.ctx, StateReady)
+}
+
+func (c *Container) applyXenMemoryLimit() error {
+	if c == nil || c.config == nil || c.config.IsInfra {
+		return nil
+	}
+
+	if ped.GetHostPed() != ped.Xen {
+		return nil
+	}
+
+	limit := c.config.MemoryLimitMB
+	if limit == 0 {
+		return nil
+	}
+
+	if c.me.CurrentMemoryMB() == limit && c.me.MemoryThresholdMB() >= limit {
+		return nil
+	}
+
+	target := int(limit)
+	log.Debugf("setting mem max to %d MB", target)
+	if err := ped.XlMemMax(c.id, target); err != nil {
+		return fmt.Errorf("failed to set mem-max to %d MB for %s: %w", limit, c.id, err)
+	}
+	if err := ped.XlMemSet(c.id, target); err != nil {
+		return fmt.Errorf("failed to set memory to %d MB for %s: %w", limit, c.id, err)
+	}
+
+	c.me.RecordMemoryState(limit, limit)
 	return nil
 }
 
@@ -774,10 +1245,17 @@ func (c *Container) SaveState() error {
 	var err error
 	var err1 error
 
-	stateInBundle := filepath.Join(c.containerPath, defs.MicantainerStateFile)
-	stateInMicranDir := filepath.Join(defs.DefaultMicranStateDir, c.id, defs.MicantainerStateFile)
+	cwd, err := os.Getwd()
+	if err != nil {
+		log.Warnf("Failed to get current working directory: %v", err)
+		cwd = "."
+	}
+	stateInBundle := filepath.Join(cwd, c.containerPath, defs.MicantainerStateFile)
+	stateInMicranDir := filepath.Join(defs.MicranContainerStateDir, c.containerPath, defs.MicantainerStateFile)
+	log.Infof("stateInBundle: %s", stateInBundle)
 
-	if err := utils.EnsureDir(filepath.Dir(stateInBundle), defs.DirMode); err != nil {
+	bundleDir := filepath.Dir(stateInBundle)
+	if err := utils.EnsureDir(bundleDir, defs.DirMode); err != nil {
 		log.Warnf("Failed to ensure bundle directory: %v.", err)
 	}
 	if err := utils.EnsureDir(filepath.Dir(stateInMicranDir), defs.DirMode); err != nil {
@@ -814,11 +1292,16 @@ func (c *Container) RestoreState() error {
 
 	var storage ContainerStorage
 
-	stateInMicranDir := filepath.Join(defs.DefaultMicranStateDir, c.id, defs.MicantainerStateFile)
+	stateInMicranDir := filepath.Join(defs.MicranContainerStateDir, c.id, defs.MicantainerStateFile)
 	raw, err := utils.RestoreStructFromJSON(stateInMicranDir)
 
 	if err != nil {
-		stateInBundle := filepath.Join(c.containerPath, defs.MicantainerStateFile)
+		cwd, err := os.Getwd()
+		if err != nil {
+			log.Warnf("Failed to get current working directory: %v", err)
+			cwd = "."
+		}
+		stateInBundle := filepath.Join(cwd, c.containerPath, defs.MicantainerStateFile)
 		raw, err = utils.RestoreStructFromJSON(stateInBundle)
 		if err != nil {
 			return fmt.Errorf("failed to restore container state from both locations: %w", err)
@@ -844,12 +1327,57 @@ func (c *Container) RestoreState() error {
 }
 
 // stats returns the container statistics.
-// TODO: Extend the range of stats collected.
+// For Xen-based guests, we derive CPU usage from xl vcpu-list time(s) and memory from libmica.
 func (c *Container) stats() (*ContainerStats, error) {
+	if c.sandbox == nil {
+		return nil, fmt.Errorf("container sandbox reference is nil")
+	}
 	if c.sandbox.state.State != StateRunning {
 		return nil, fmt.Errorf("sandbox is not running, cannot stats container")
 	}
-	st := &ContainerStats{}
+
+	// CPU: sum per-vCPU consumed time(s) -> microseconds
+	var totalUsec uint64
+	if vcpuInfo, err := ped.XlVcpuList(); err == nil && vcpuInfo != nil {
+		var entries []ped.VCPUEntry
+
+		if v, ok := vcpuInfo.DomainVCPUMap[c.id]; ok {
+			entries = v
+		}
+		for _, e := range entries {
+			if e.TimeSeconds > 0 {
+				totalUsec += uint64(e.TimeSeconds * 1_000_000.0)
+			}
+		}
+	}
+
+	curMB := c.me.CurrentMemoryMB()
+	thrMB := c.me.MemoryThresholdMB()
+	if thrMB == 0 {
+		thrMB = uint32(c.config.MemoryLimitMB)
+	}
+	usageBytes := uint64(curMB) << 20
+	limitBytes := uint64(thrMB) << 20
+
+	st := &ContainerStats{
+		ResourceStats: &ResourceStats{
+			CPUStats: CPUStats{
+				TotalUsage: totalUsec,
+				NrPeriods:  0, // no cgroup-like period semantics in Xen; leave zero.
+			},
+			MemoryStats: MemoryStats{
+				Cache: 0,
+				Usage: MemoryEntry{
+					Failcnt: 0,
+					Limit:   limitBytes,
+					MaxEver: limitBytes, // Conservative default until HWM tracking exists.
+					Usage:   usageBytes,
+				},
+				Stats: map[string]uint64{}, // Reserved for future detailed stats.
+			},
+		},
+		NetworkStats: nil,
+	}
 	return st, nil
 }
 
@@ -857,10 +1385,11 @@ func (c *Container) stats() (*ContainerStats, error) {
 // TODO: For now, taskId is always a dummy because one client has one task.
 // TALK: Is it possible to apply a new task to the client OS in the future, perhaps via Xen?
 func (c *Container) wait4exit() (int32, error) {
-	if c.state.State == StateStopped {
+	currentState := c.checkState()
+	if currentState == StateStopped {
 		return ok0, nil
 	}
-	if c.notOperational() && c.state.State != StatePaused {
+	if c.notOperational() && currentState != StatePaused {
 		return ok0, errors.New("container is not ready or running, cannot wait for exit")
 	}
 	return ok0, nil
@@ -903,7 +1432,7 @@ func (c *Container) winresize(height, width uint32) error {
 	if c.notOperational() {
 		return fmt.Errorf("container not ready or running, impossible to resize the container pty")
 	}
-	log.Debugf("Resize pty -> %dx%d.", width, height)
+	log.Debugf("resizing PTY for container %s to [%dx%d]", c.id, width, height)
 	return nil
 }
 
@@ -954,5 +1483,6 @@ func (c *Container) updateExitNotifier(state StateString) {
 
 // notOperational checks if the container is not in a state to be operated on.
 func (c *Container) notOperational() bool {
-	return c.state.State != StateReady && c.state.State != StateRunning
+	currentState := c.checkState()
+	return currentState != StateReady && currentState != StateRunning
 }

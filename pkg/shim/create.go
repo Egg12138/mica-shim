@@ -70,6 +70,9 @@ func create(ctx context.Context, s *shimService, r *taskAPI.CreateTaskRequest) (
 			s.config.SandboxCPUs, s.config.SandboxMemMB = oci.CalculateContainerSizing(ociSpec)
 		}
 
+		if containerType != cntr.PodSandbox {
+			utils.TravelDir(r.Rootfs[0].GetSource())
+		}
 		if err := mountRootfs(rootfsPath, r.Rootfs); err != nil {
 			return nil, err
 		}
@@ -82,6 +85,12 @@ func create(ctx context.Context, s *shimService, r *taskAPI.CreateTaskRequest) (
 				}
 			}
 		}()
+
+		// After mounting rootfs, show the actual mounted content for debugging
+		if containerType != cntr.PodSandbox {
+			log.Debug("rootfs mounted for single container, showing rootfs contents:")
+			utils.TravelDir(rootfsPath)
+		}
 
 		sandbox, err := createSandbox(ctx, ociSpec, runtimeConfig, rootfs, r.ID, bundlePath, disableOutput)
 		if err != nil {
@@ -107,6 +116,9 @@ func create(ctx context.Context, s *shimService, r *taskAPI.CreateTaskRequest) (
 				}
 			}
 		}()
+
+		log.Debug("rootfs mounted for pod container, showing rootfs contents: ")
+		utils.TravelDir(rootfsPath)
 
 		err = createContainerInSandbox(ctx, s.sandbox, *ociSpec, rootfs, r.ID, bundlePath, disableOutput)
 		if err != nil {
@@ -222,7 +234,7 @@ func loadConfigFromFile(configPath string) (*oci.RuntimeConfig, error) {
 
 // setupMicranStateDir ensures the state directory for micran exists.
 func setupMicranStateDir() error {
-	if err := os.MkdirAll(defs.DefaultMicranStateDir, 0755); err != nil {
+	if err := os.MkdirAll(defs.MicranContainerStateDir, 0755); err != nil {
 		return fmt.Errorf("failed to create micran state directory: %w", err)
 	}
 	return nil
@@ -291,7 +303,7 @@ func createSandbox(ctx context.Context, ocispec *specs.Spec,
 	log.Debugf("Sandbox <%s> created.", sandbox.SandboxID())
 	containers := sandbox.GetAllContainers()
 	for _, c := range containers {
-		log.Infof("Detect inside sandbox <%s>: container %s.", c.ID(), sandbox.SandboxID())
+		log.Debugf("Detect inside sandbox <%s>: container %s.", c.ID(), sandbox.SandboxID())
 	}
 	if len(containers) != 1 {
 		return nil, fmt.Errorf("container list from sandbox is wrong, expecting only one container, got %d", len(containers))
@@ -318,6 +330,11 @@ func createContainerInSandbox(ctx context.Context, sandbox cntr.SandboxTraits,
 	}
 
 	containerConfig.Rootfs = rootfs
+
+	// Validate firmware path before creating container in sandbox
+	if err := validateFirmwareForContainer(containerConfig); err != nil {
+		return fmt.Errorf("firmware validation failed for container %s: %w", containerID, err)
+	}
 
 	_, err = sandbox.CreateContainer(ctx, *containerConfig)
 	if err != nil {
@@ -361,5 +378,35 @@ func setupNS(sandboxID string, netcfg *cntr.NetworkConfig) error {
 	netcfg.NetworkID = path
 	netcfg.NetworkCreated = true
 	netcfg.HolderPid = pid
+	return nil
+}
+
+func validateFirmwareForContainer(config *cntr.ContainerConfig) error {
+	if config.IsInfra {
+		log.Debugf("skipping firmware validation for infra container")
+		return nil
+	}
+
+	if config.ElfAbsPath == "" {
+		return fmt.Errorf("firmware path is empty in container config")
+	}
+
+	if _, err := os.Stat(config.ElfAbsPath); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("firmware file does not exist: %s", config.ElfAbsPath)
+		}
+		return fmt.Errorf("failed to access firmware file %s: %v", config.ElfAbsPath, err)
+	}
+
+	info, err := os.Stat(config.ElfAbsPath)
+	if err != nil {
+		return fmt.Errorf("failed to stat firmware file %s: %v", config.ElfAbsPath, err)
+	}
+
+	if info.IsDir() {
+		return fmt.Errorf("firmware path is a directory, not a file: %s", config.ElfAbsPath)
+	}
+
+	log.Debugf("firmware path validated for container: %s", config.ElfAbsPath)
 	return nil
 }

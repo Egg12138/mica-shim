@@ -15,7 +15,7 @@ import (
 var (
 	hostPedCache PedType
 	hostPedOnce  sync.Once
-	// TODO: considering calculate default max vcpu number when 
+	// TODO: considering calculate default max vcpu number when
 	DefaultMaxVCPUs uint32
 )
 
@@ -30,10 +30,7 @@ func GetHostPed() PedType {
 
 // computeHostPed performs the actual pedestal type detection
 func computeHostPed() PedType {
-	if defs.IsMock {
-		return Xen
-	}
-	if detectXen() {
+	if defs.IsMock || detectXen() {
 		return Xen
 	}
 
@@ -44,37 +41,30 @@ func computeHostPed() PedType {
 }
 
 func detectXen() bool {
-	// xl binary exist
 	if !utils.FileExist("/proc/xen/xenbus") {
 		log.Debug("missing xen bus")
 		return false
 	}
 
-	if err := checkXLCommand(); err != nil {
-		log.Debug("xl command not found or not working correctly")
-		return false
-	}
-
-	// TODO: check new xen ko
 	if err := checkXenKos(); err != nil {
-		log.Debug("xen kernel modules requirements not met")
-		return false
+		log.Debugf("xen kernel modules requirements may not met: %v", err)
 	}
 
 	return true
 }
 
 func checkXenKos() error {
-	// xen_netback, xen_blkback, xen_gntalloc, xen_gntdev
+	// xen_gntalloc, xen_gntdev, xen-mcsback
 	// TODO: migrate xen-essentials ko to mica-xen related ko
-	essentials := []string{"xen_gntalloc", "xen_gntdev"}
+	essentials := []string{"xen_gntalloc", "xen_gntdev", "xen_mcsback"}
 	for i, ko := range essentials {
 		loaded, err := utils.KoLoaded(ko)
 		if err != nil {
 			return err
 		}
 		if !loaded {
-			return fmt.Errorf("xl: %s is not loaded", essentials[i])
+			err = utils.FindAndLoadKo(ko)
+			return fmt.Errorf("kernel module %s is not loaded", essentials[i])
 		}
 	}
 	return nil
@@ -108,13 +98,14 @@ func detectACRN() bool {
 }
 
 const hpsupport = false
+
 // for xen, if ballooning driver was enable, hugepage is not supported
-func HugePageSupport(dynamicMem bool) bool { 
+func HugePageSupport(dynamicMem bool) bool {
 	if dynamicMem || GetHostPed() != Xen {
 		return false
 	}
 
-	if ConflictKoLoaded, err := utils.KoLoaded(balloonDriverName); err != nil && hpsupport{
+	if ConflictKoLoaded, err := utils.KoLoaded(balloonDriverName); err != nil && hpsupport {
 		return !ConflictKoLoaded
 	}
 

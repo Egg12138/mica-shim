@@ -21,12 +21,12 @@ import (
 
 func main() {
 	var (
-		taskID    string
-		ptyPath   string
-		stdinFifo string
+		taskID     string
+		ptyPath    string
+		stdinFifo  string
 		stdoutFifo string
 		stderrFifo string
-		terminal  bool
+		terminal   bool
 	)
 
 	flag.StringVar(&taskID, "taskid", fmt.Sprintf("iowf-%d", time.Now().Unix()), "Task ID for MicaIO instance")

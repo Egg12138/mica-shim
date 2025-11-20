@@ -26,11 +26,11 @@ func startContainer(ctx context.Context, s *shimService, c *container) (retErr e
 		return err
 	}
 
-	log.Debug("sandbox is about to start container")
 	if c.cType.CanBeSandbox() {
 		log.Debugf("container %s can be sandbox, trying to start it now", c.id)
 		err := s.sandbox.Start(ctx)
 		if err != nil {
+			log.Errorf("failed to start sandbox for container %s", c.id)
 			return err
 		}
 
@@ -62,12 +62,16 @@ func startContainer(ctx context.Context, s *shimService, c *container) (retErr e
 
 		go ioCopy(c.exitIOch, c.stdinCloser, tty, stdin, stdout)
 	} else {
-		// close the io exit channel, since there is no io for this container,
-		// otherwise the following wait goroutine will hang on this channel.
-		close(c.exitIOch)
-		// close the stdin closer channel to notify that it's safe to close process's
-		// io.
+		// Close stdin closer so CloseIO can unblock even when the container never
+		// had an input fifo.
 		close(c.stdinCloser)
+		// Infra (pause) containers must stay alive to keep the sandbox ready.
+		// Skip closing exitIOch so waitContainerExit only runs when we receive an
+		// explicit teardown signal (Kill/Delete). Non-sandbox workloads retain
+		// the original behaviour.
+		if !c.cType.IsCriSandbox() {
+			c.signalExit()
+		}
 	}
 
 	go waitContainerExit(ctx, s, c)

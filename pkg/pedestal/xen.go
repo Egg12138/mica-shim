@@ -6,7 +6,6 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	defs "mica-shim/definitions"
 	er "mica-shim/errors"
 	log "mica-shim/logger"
 	"os/exec"
@@ -16,7 +15,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/cpuset"
+	"mica-shim/pkg/cpuset"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/shirou/gopsutil/v3/mem"
 )
@@ -25,6 +24,26 @@ const DefaultCgroupShare = 1024
 const DefaultXenWeight = 256
 const ShareWeightRatio = DefaultCgroupShare / DefaultXenWeight
 const balloonDriverName = "xen_balloon"
+
+// ShareToWeight converts an OCI cpu.shares style value into the Xen credit2
+// scheduler weight range [1, 65535]. When shares is 0 (unset) we fall back to
+// Xen's default weight.
+func ShareToWeight(shares uint64) uint32 {
+	if ShareWeightRatio <= 0 {
+		return DefaultXenWeight
+	}
+	if shares == 0 {
+		return DefaultXenWeight
+	}
+	weight := shares / uint64(ShareWeightRatio)
+	if weight == 0 {
+		return 1
+	}
+	if weight > 65535 {
+		return 65535
+	}
+	return uint32(weight)
+}
 
 // xl info:
 // `host                   : qemu-aarch64
@@ -63,73 +82,72 @@ const balloonDriverName = "xen_balloon"
 // build_id               : d54faddad0e57e72305a485d9b89288188c56ae8
 // xend_config_format     : 4`
 
-
 type XlInfo struct {
-	host        string
-	machine     string
+	host    string
+	machine string
 	// max physical cpus that Xen can handle
-	nrCpus      uint32
+	nrCpus        uint32
 	totalMemoryMB uint32
 	freeMemoryMB  uint32
-	xlver string
-	
-	maxCpuId         uint32  
+	xlver         string
+
+	maxCpuId uint32
 	// Cores per socket (NUMA/topology awareness)
-	coresPerSocket   uint32  
+	coresPerSocket uint32
 	// Threads per core (SMT/hyperthreading info)
-	threadsPerCore   uint32  
-	cpuMhz          float64  
+	threadsPerCore uint32
+	cpuMhz         float64
 	// number of cpus that are not allocated in **a cpu pool**
-	freeCpus        uint32   
-	
-	xenCaps         string   
+	freeCpus uint32
+
+	xenCaps string
 	// Scheduler type (credit, credit2, etc.)
 	// decides in Xen building, default to be credit2 for now
-	xenScheduler    string   
-	xenPagesize     uint32   
-	virtCaps        string   
+	xenScheduler string
+	xenPagesize  uint32
+	virtCaps     string
 
 	// Memory claims pending (affects available memory calculations)
-	outstandingClaims uint64 
+	outstandingClaims uint64
 	// Shared memory freed (memory reuse optimization)
-	sharingFreedMemory uint64 
+	sharingFreedMemory uint64
 	// Shared memory used (current shared memory usage)
-	sharingUsedMemory  uint64 
-	
-	platformParams  string   
-	// Xen boot parameters 
-	xenCommandline  string   
-	
+	sharingUsedMemory uint64
+
+	platformParams string
+	// Xen boot parameters
+	xenCommandline string
+
 	// ARM-specific fields (for aarch64 systems - architecture optimizations)
 	// turn off by default
 	armSVEVectorLength uint32
 }
 
-
-//  xl vcpu-list Output Format
-//   Header Line:
-//   Name                              ID  VCPU  CPU  State  Time(s)  Affinity (Hard / Soft)
-//   Data Lines:
-//   <domain_name>                    <domid> <vcpuid> <cpu> <state> <time> <hard_affinity> / <soft_affinity>
-//   Field Details:
-//   1. Name (32 chars, left-aligned): Domain name
-//   2. ID (5 chars, right-aligned): Domain ID (numeric)
-//   3. VCPU (5 chars, right-aligned): VCPU ID (numeric)
-//   4. CPU (5 chars, right-aligned):
-//     - If VCPU is offline: -
-//     - If VCPU is online: CPU number the VCPU is currently running on
-//   5. State (5 chars):
-//     - Format: XYZ- where:
-//         - X: r if running, - if not
-//       - Y: b if blocked, - if not
-//       - Z: - (always)
-//     - If VCPU is offline: ---
-//   6. Time(s) (9 chars, right-aligned): CPU time consumed by this VCPU in seconds (with 1 decimal place)
-//   7. Affinity (variable width):
-//     - Hard affinity: CPU bitmap showing which CPUs the VCPU is allowed to run on
-//     - Soft affinity: CPU bitmap showing preferred CPUs for the VCPU
-//     - Format: <hard_bitmap> / <soft_bitmap>
-//   Example Output:
+//	xl vcpu-list Output Format
+//	 Header Line:
+//	 Name                              ID  VCPU  CPU  State  Time(s)  Affinity (Hard / Soft)
+//	 Data Lines:
+//	 <domain_name>                    <domid> <vcpuid> <cpu> <state> <time> <hard_affinity> / <soft_affinity>
+//	 Field Details:
+//	 1. Name (32 chars, left-aligned): Domain name
+//	 2. ID (5 chars, right-aligned): Domain ID (numeric)
+//	 3. VCPU (5 chars, right-aligned): VCPU ID (numeric)
+//	 4. CPU (5 chars, right-aligned):
+//	   - If VCPU is offline: -
+//	   - If VCPU is online: CPU number the VCPU is currently running on
+//	 5. State (5 chars):
+//	   - Format: XYZ- where:
+//	       - X: r if running, - if not
+//	     - Y: b if blocked, - if not
+//	     - Z: - (always)
+//	   - If VCPU is offline: ---
+//	 6. Time(s) (9 chars, right-aligned): CPU time consumed by this VCPU in seconds (with 1 decimal place)
+//	 7. Affinity (variable width):
+//	   - Hard affinity: CPU bitmap showing which CPUs the VCPU is allowed to run on
+//	   - Soft affinity: CPU bitmap showing preferred CPUs for the VCPU
+//	   - Format: <hard_bitmap> / <soft_bitmap>
+//	 Example Output:
+//
 // $xl vcpu-list
 // Name                                ID  VCPU   CPU State   Time(s) Affinity (Hard / Soft)
 // Domain-0                             0     0    1   -b-     271.1  all / all
@@ -142,26 +160,31 @@ type XlVcpuInfo struct {
 // VCPUEntry represents a single VCPU entry
 type VCPUEntry struct {
 	// short Id
-	DomainName    string
+	DomainName string
 	// micran ignore it acutally;
-	DomainID      int
-	VCPUID        int
-	CPU           int  // -1 if offline
-	State         string
-	TimeSeconds   float64
-	HardAffinity  string
-	SoftAffinity  string
+	DomainID     int
+	VCPUID       int
+	CPU          int // -1 if offline
+	State        string
+	TimeSeconds  float64
+	HardAffinity string
+	SoftAffinity string
 }
 
 type xlSubCmd string
 
 const (
-	info   xlSubCmd = "info"
-	vcpulist  xlSubCmd = "vcpu-list"
-	vcpupin  xlSubCmd = "vcpu-pin"
-	vmlist   xlSubCmd = "vm-list"
-	pause    xlSubCmd = "pause"
-	resume   xlSubCmd = "unpause"
+	info        xlSubCmd = "info"
+	vcpulist    xlSubCmd = "vcpu-list"
+	vcpupin     xlSubCmd = "vcpu-pin"
+	vcpuset     xlSubCmd = "vcpu-set"
+	vmlist      xlSubCmd = "vm-list"
+	pause       xlSubCmd = "pause"
+	resume      xlSubCmd = "unpause"
+	domid       xlSubCmd = "domid"
+	memset      xlSubCmd = "mem-set"
+	memmax      xlSubCmd = "mem-max"
+	schedcredit xlSubCmd = "sched-credit2"
 )
 
 func newxl(subcmd xlSubCmd, args ...string) *exec.Cmd {
@@ -169,7 +192,6 @@ func newxl(subcmd xlSubCmd, args ...string) *exec.Cmd {
 	cmdArgs = append(cmdArgs, args...)
 	return exec.Command("xl", cmdArgs...)
 }
-
 
 func xlvcpu() (*XlVcpuInfo, error) {
 	var cmd *exec.Cmd
@@ -181,6 +203,37 @@ func xlvcpu() (*XlVcpuInfo, error) {
 	}
 
 	return parseXlVcpuInfo(out.String())
+}
+
+func XlVcpuList() (*XlVcpuInfo, error) {
+	return xlvcpu()
+}
+
+func XlDomID(clientID string) (int, error) {
+	var stdout, stderr bytes.Buffer
+	cmd := newxl(domid, clientID)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		return 0, fmt.Errorf("xl domid %s: %s", clientID, msg)
+	}
+
+	out := strings.TrimSpace(stdout.String())
+	if out == "" {
+		return 0, fmt.Errorf("xl domid %s returned empty output", clientID)
+	}
+
+	domid, err := strconv.Atoi(out)
+	if err != nil {
+		return 0, fmt.Errorf("xl domid %s invalid output %q: %w", clientID, out, err)
+	}
+
+	return domid, nil
 }
 
 func xinfo() (*XlInfo, error) {
@@ -195,7 +248,6 @@ func xinfo() (*XlInfo, error) {
 
 	return parseXlInfo(out.String())
 }
-
 
 func parseXlInfo(output string) (*XlInfo, error) {
 	info := &XlInfo{}
@@ -249,7 +301,7 @@ func parseXlInfo(output string) (*XlInfo, error) {
 			if info.xlver != "" {
 				info.xlver += value
 			}
-			
+
 		case "max_cpu_id":
 			maxCpuId, err := strconv.ParseUint(value, 10, 32)
 			if err != nil {
@@ -281,7 +333,7 @@ func parseXlInfo(output string) (*XlInfo, error) {
 				return nil, fmt.Errorf("failed to parse free_cpus: %v", err)
 			}
 			info.freeCpus = uint32(freeCpus)
-			
+
 		case "xen_caps":
 			info.xenCaps = value
 		case "xen_scheduler":
@@ -339,9 +391,9 @@ func parseXlVcpuInfo(output string) (*XlVcpuInfo, error) {
 	info := &XlVcpuInfo{
 		DomainVCPUMap: make(map[string][]VCPUEntry),
 	}
-	
+
 	scanner := bufio.NewScanner(strings.NewReader(output))
-	
+
 	headerFound := false
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -350,25 +402,25 @@ func parseXlVcpuInfo(output string) (*XlVcpuInfo, error) {
 			break
 		}
 	}
-	
+
 	if !headerFound {
 		return nil, fmt.Errorf("could not find vcpu-list header")
 	}
-	
+
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
-		
+
 		vcpu, err := parseVcpuLine(line)
 		if err != nil {
 			return nil, fmt.Errorf("error parsing line '%s': %v", line, err)
 		}
-		
+
 		info.DomainVCPUMap[vcpu.DomainName] = append(info.DomainVCPUMap[vcpu.DomainName], vcpu)
 	}
-	
+
 	return info, nil
 }
 
@@ -379,23 +431,23 @@ func parseVcpuLine(line string) (VCPUEntry, error) {
 	if matches == nil {
 		return VCPUEntry{}, er.ErrOutputParse
 	}
-	
+
 	domainName := strings.TrimSpace(matches[1])
 	domainID, _ := strconv.Atoi(matches[2])
 	vcpuid, _ := strconv.Atoi(matches[3])
-	
+
 	cpu := -1
 	if matches[4] != "-" {
 		cpu, _ = strconv.Atoi(matches[4])
 	}
-	
+
 	state := "---"
 	if matches[4] != "-" {
 		state = matches[5] + matches[6] + matches[7]
 	}
-	
+
 	timeSeconds, _ := strconv.ParseFloat(matches[8], 64)
-	
+
 	affinity := matches[9]
 	parts := strings.Split(affinity, " / ")
 	hardAffinity := parts[0]
@@ -403,9 +455,9 @@ func parseVcpuLine(line string) (VCPUEntry, error) {
 	if len(parts) > 1 {
 		softAffinity = parts[1]
 	}
-	
+
 	return VCPUEntry{
-		DomainName:    domainName,
+		DomainName:   domainName,
 		DomainID:     domainID,
 		VCPUID:       vcpuid,
 		CPU:          cpu,
@@ -423,11 +475,8 @@ func (xi *XlInfo) nodePhysicalCPUNum() uint32 {
 // MemoryMB returns the amount of free and total memory in MB.
 func MemoryMB() (free, total uint32) {
 	v, _ := mem.VirtualMemory()
-	free = uint32(v.Free >> 20) // Convert bytes to MB
+	free = uint32(v.Free >> 20)   // Convert bytes to MB
 	total = uint32(v.Total >> 20) // Convert bytes to MB
-	if defs.IsMock {
-		return free, total
-	}
 
 	i, err := xinfo()
 	if err != nil {
@@ -447,10 +496,6 @@ var (
 // This function uses sync.Once to ensure the value is calculated only once,
 // as the physical CPU count is static and won't change during runtime.
 func MaxCPUNum() uint32 {
-	if defs.IsMock {
-		return uint32(runtime.NumCPU())
-	}
-	
 	maxCPUNumOnce.Do(func() {
 		i, err := xinfo()
 		if err != nil {
@@ -461,15 +506,74 @@ func MaxCPUNum() uint32 {
 		}
 		log.Debugf("MaxCPUNum initialized to: %d", maxCPUNum)
 	})
-	
+
 	return maxCPUNum
+}
+
+// XlMemSet sets memory for a domain using xl mem-set
+func XlMemSet(domainName string, memMB int) error {
+	cmd := newxl(memset, domainName, strconv.Itoa(memMB))
+	log.Debugf("run %s to set memory to %d MB for domain %s", cmd.String(), memMB, domainName)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("xl mem-set failed for domain %s: %v", domainName, err)
+	}
+	log.Debugf("mem-set %d MB for domain %s successfully", memMB, domainName)
+	return nil
+}
+
+// XlMemMax sets maximum memory for a domain using xl mem-max
+func XlMemMax(domainName string, memMB int) error {
+	cmd := newxl(memmax, domainName, strconv.Itoa(memMB))
+	log.Debugf("run %s to set max memory to %d MB for domain %s", cmd.String(), memMB, domainName)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("xl mem-max failed for domain %s: %v", domainName, err)
+	}
+	log.Debugf("mem-max %d MB for domain %s successfully", memMB, domainName)
+	return nil
+}
+
+// XlVcpuSet sets VCPU count for a domain using xl vcpu-set
+func XlVcpuSet(domainName string, vcpuCount int) error {
+	cmd := newxl(vcpuset, domainName, strconv.Itoa(vcpuCount))
+	log.Debugf("run %s to set VCPU count to %d for domain %s", cmd.String(), vcpuCount, domainName)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("xl vcpu-set failed for domain %s: %v", domainName, err)
+	}
+	log.Debugf("vcpu-set %d for domain %s successfully", vcpuCount, domainName)
+	return nil
+}
+
+// XlSchedCredit2 sets CPU weight and capacity for a domain using xl sched-credit2
+func XlSchedCredit2(domainName string, weight, cap int) error {
+	// Validate weight if a value is provided
+	if weight != 0 && weight < 1 {
+		return fmt.Errorf("CPU weight must be >= 1, got %d", weight)
+	}
+
+	var args []string
+	args = append(args, "-d", domainName)
+
+	// Only set weight if provided
+	if weight > 0 {
+		args = append(args, "-w", strconv.Itoa(weight))
+	}
+
+	// Only set cap if provided (and > 0)
+	if cap > 0 {
+		args = append(args, "-c", strconv.Itoa(cap))
+	}
+
+	cmd := newxl(schedcredit, args...)
+	log.Debugf("run %s to set scheduler parameters for domain %s", cmd.String(), domainName)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("xl sched-credit2 failed for domain %s: %v", domainName, err)
+	}
+	log.Debugf("sched-credit2 set weight=%d, cap=%d for domain %s successfully", weight, cap, domainName)
+	return nil
 }
 
 // For cases, id is truncated id
 func Resume(id string) error {
-	if defs.IsMock {
-		return nil
-	}
 	cmd := newxl(resume, id)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("xl failed to resume %s: %v", id, err)
@@ -479,9 +583,6 @@ func Resume(id string) error {
 }
 
 func Pause(id string) error {
-	if defs.IsMock {
-		return nil
-	}
 	cmd := newxl(pause, id)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("xl failed to pause %s: %v", id, err)
@@ -490,57 +591,52 @@ func Pause(id string) error {
 	return nil
 }
 
-
 func XenDefaultPedConf() string {
 	return "image.bin"
 }
 
-
 // LinuxResource2Essential converts Linux OCI resource specifications to essential resources for MICA.
 func LinuxResource2Essential(spec *specs.Spec) *EssentialResource {
-    r := InitResource()
-    // cpu
-    cpu := spec.Linux.Resources.CPU
-	if cpu.Quota != nil && cpu.Period != nil && *cpu.Period > 0 {
+	r := InitResource()
+	// cpu
+	cpu := spec.Linux.Resources.CPU
+	if cpu.Quota != nil && *cpu.Quota > 0 && cpu.Period != nil && *cpu.Period > 0 {
 		r.CpuPeriod = cpu.Period
 		r.CpuQuota = cpu.Quota
 		cpuCapacity := *cpu.Quota / int64(*cpu.Period)
 		if cpuCapacity > 0 {
 			*r.CpuCpacity = uint32(100 * cpuCapacity)
-		} 
+		}
 	} else {
 		log.Debugf("cpu quota/period pair = < %s:%s > is incomplete,Xen scheduler will allow all possible cpu to container", cpu.Quota, cpu.Period)
 	}
 
-	if cpu.Shares != nil {
-		calculatedWeight := *cpu.Shares / ShareWeightRatio
-		if calculatedWeight < 1 {
-			*r.CPUWeight = 1
-		} else if calculatedWeight > 65535 {
-			log.Debugf("cpu.Shares %d is too high, resulting weight is greater than 65535. Clamping to 65535.", *cpu.Shares)
-			*r.CPUWeight = 65535
-		} else {
-			*r.CPUWeight = uint32(calculatedWeight)
-		}
+	var weight uint32
+	if cpu.Shares != nil && *cpu.Shares > 0 {
+		weight = ShareToWeight(*cpu.Shares)
 	} else {
 		log.Debugf("cpu shares is nil, use default weight %d", DefaultXenWeight)
-		*r.CPUWeight = DefaultXenWeight
+		weight = DefaultXenWeight
 	}
+	r.CPUWeight = &weight
 
-    cpus, set, vcpuNum := validateCPUSet(cpu.Cpus)
+	cpus, set, vcpuNum := validateCPUSet(cpu.Cpus)
 
-    r.ClientCpuSet = cpus
+	if cpus != "" && vcpuNum > 0 {
+		r.ClientCpuSet = cpus
+	}
 
 	log.Debugf("pinning cpu set = %v, parse to %v", cpus, set)
 	// vcpuNum = calculateVCPU(&set, int(r.CpuCpacity))
-	*r.Vcpu = uint32(vcpuNum)
+	if vcpuNum > 0 {
+		*r.Vcpu = uint32(vcpuNum)
+	}
 
 	// mem
 	mem := spec.Linux.Resources.Memory
-	if mem != nil && mem.Limit != nil {
+	if mem != nil && mem.Limit != nil && *mem.Limit > 0 {
 		*r.MemoryLimitMB = uint32(*mem.Limit >> 20)
 	}
-
 
 	// net
 
@@ -549,14 +645,11 @@ func LinuxResource2Essential(spec *specs.Spec) *EssentialResource {
 
 // assume cpu set is valid
 // do hard affinity only
-func PinVCPU(shortId, cpus string) error {
-	if defs.IsMock {
-		return nil
-	}
-	cmd := newxl(vcpupin, shortId, "all", cpus)
-	log.Debugf("run %s to pinning vcpu %s to %s", cmd.String(), cpus, shortId)
+func PinVCPU(clientID, cpus string) error {
+	cmd := newxl(vcpupin, clientID, "all", cpus)
+	log.Debugf("run %s to pinning vcpu %s to %s", cmd.String(), cpus, clientID)
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("xl failed to pause %s: %v", shortId, err)
+		return fmt.Errorf("xl failed to pause %s: %v", clientID, err)
 	}
 	return nil
 }
@@ -583,16 +676,12 @@ func calculateVCPU(cpuSet *cpuset.CPUSet, vcpuAssigned int) int {
 	return cpuSet.Size()
 }
 
-
 func MemLowThreshold() uint32 {
-	if defs.IsMock {
-		return 32
-	}
 	return 2
 }
 
 func MemHighThreshold() uint32 {
-	xi, err :=xinfo()
+	xi, err := xinfo()
 	if err != nil {
 		return 0
 	}
@@ -605,22 +694,19 @@ func MemHighThreshold() uint32 {
 }
 
 func ControlOSCpuset() cpuset.CPUSet {
-	if defs.IsMock {
-		return cpuset.NewCPUSet(0, 1)
-	}
-	
+
 	vcpuInfo, err := xlvcpu()
 	if err != nil {
 		log.Debugf("failed to get vcpu info: %v", err)
 		return cpuset.NewCPUSet(0)
 	}
-	
+
 	dom0VCPUs, exists := vcpuInfo.DomainVCPUMap["Domain-0"]
 	if !exists {
 		log.Debugf("Domain-0 not found in vcpu list")
 		return cpuset.NewCPUSet(0)
 	}
-	
+
 	cpuSet := cpuset.NewCPUSet()
 	for _, vcpu := range dom0VCPUs {
 		affinityCPUs, err := parseAffinity(vcpu.HardAffinity)
@@ -630,11 +716,11 @@ func ControlOSCpuset() cpuset.CPUSet {
 		}
 		cpuSet = cpuSet.Union(affinityCPUs)
 	}
-	
+
 	if cpuSet.Size() == 0 {
 		return cpuset.NewCPUSet(0)
 	}
-	
+
 	return cpuSet
 }
 
@@ -650,11 +736,142 @@ func parseAffinity(affinity string) (cpuset.CPUSet, error) {
 		}
 		return cpuset.NewCPUSet(cpuList...), nil
 	}
-	
+
 	set, err := cpuset.Parse(affinity)
 	if err != nil {
 		return cpuset.NewCPUSet(), err
 	}
-	
+
 	return set, nil
+}
+
+func DomainID(clientID string) (int, error) {
+	if domid, err := XlDomID(clientID); err == nil {
+		return domid, nil
+	} else {
+		log.Debugf("xl domid fallback failed for %s: %v", clientID, err)
+	}
+
+	return parseXLListForDomain(clientID)
+}
+
+func parseXLListForDomain(clientID string) (int, error) {
+	var stdout, stderr bytes.Buffer
+	cmd := exec.Command("xl", "list")
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		return 0, fmt.Errorf("xl list failed: %s", msg)
+	}
+
+	scanner := bufio.NewScanner(strings.NewReader(stdout.String()))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "Name") {
+			continue
+		}
+
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+
+		if fields[0] != clientID {
+			continue
+		}
+
+		domid, err := strconv.Atoi(fields[1])
+		if err != nil {
+			return 0, fmt.Errorf("xl list returned invalid domid %q for %s: %w", fields[1], clientID, err)
+		}
+		return domid, nil
+	}
+
+	if err := scanner.Err(); err != nil {
+		return 0, fmt.Errorf("xl list parse error: %w", err)
+	}
+
+	return 0, fmt.Errorf("domain %s not found in xl list output", clientID)
+}
+
+const xenstorePathFmt = "/local/domain/%d/%s"
+
+func xenStoreRead(name, item string) (string, error) {
+	domId, err := XlDomID(name)
+	if err != nil {
+		return "", err
+	}
+	xenstoreKey := fmt.Sprintf(xenstorePathFmt, domId, item)
+	out, err := xenStoreReadRaw(xenstoreKey)
+	if err != nil {
+		return "", err
+	}
+	return out, nil
+}
+
+func xenStoreReadRaw(key string) (string, error) {
+	var stdout, stderr bytes.Buffer
+	cmd := exec.Command("xenstore-read", key)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		return "", fmt.Errorf("xenstore-read %s: %s", key, msg)
+	}
+
+	out := strings.TrimSpace(stdout.String())
+	if out == "" {
+		return "", fmt.Errorf("xenstore-read %s returned empty output", key)
+	}
+	return out, nil
+}
+
+// XenStoreReadDomainState reads the domain state from xenstore
+// Returns "running" if domain is active and ready, otherwise returns the actual state
+func XenStoreReadDomainState(name string) (string, error) {
+	// Try to read domain state from xenstore
+	// Xen stores domain state as a number, but we can also check via xl list
+	domId, err := XlDomID(name)
+	if err != nil {
+		return "", err
+	}
+
+	// Check if domain exists and is running via xl list
+	var stdout bytes.Buffer
+	cmd := exec.Command("xl", "list", fmt.Sprintf("%d", domId))
+	cmd.Stdout = &stdout
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to check domain %s state: %w", name, err)
+	}
+
+	output := stdout.String()
+	lines := strings.Split(output, "\n")
+
+	// Parse xl list output - format: Name ID Mem VCPUs State Time(s)
+	// State format: r----- (running), ---s-- (shutdown), etc.
+	for _, line := range lines {
+		if strings.Contains(line, fmt.Sprintf("%d", domId)) {
+			fields := strings.Fields(line)
+			if len(fields) >= 5 {
+				state := fields[4]
+				// If first character is 'r', domain is running
+				if len(state) > 0 && state[0] == 'r' {
+					return "running", nil
+				}
+				return state, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("domain %s not found in xl list", name)
 }

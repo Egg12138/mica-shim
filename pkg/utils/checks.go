@@ -5,46 +5,30 @@ import (
 	"fmt"
 	log "mica-shim/logger"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
+	"strings"
 )
 
-const MAX_ID_LENGTH = 31
-const validCIDRegex = "^[a-zA-Z0-9][a-zA-Z0-9_.-]+$"
+const maxClientIDLength = 66
+
+var cidPattern = regexp.MustCompile("^[a-zA-Z0-9][a-zA-Z0-9_.-]+$")
 
 func ValidContainerID(id string) error {
 	if id == "" {
 		return fmt.Errorf("container ID cannot be empty")
 	}
 
-	if len(id) > MAX_ID_LENGTH {
-		log.Debugf("container is %s too long, we will pass a new shorted ID %s to micad", id, ShortID(id))
+	if len(id) > maxClientIDLength {
+		return fmt.Errorf("container/sandbox ID %q exceeds mica limit (%d characters)", id, maxClientIDLength)
 	}
 
-	pattern := regexp.MustCompile(validCIDRegex)
-	matched := pattern.MatchString(id)
-	if !matched {
+	if !cidPattern.MatchString(id) {
 		return fmt.Errorf("invalid container/sandbox ID: %s", id)
 	}
 	return nil
-}
-
-// Truncate the ID to the maximum allowed length.
-// Truncating the original hash is good at collision resistance.
-func truncateID(id string) string {
-	idBytes := []byte(id)
-	if len(idBytes) > MAX_ID_LENGTH {
-		idBytes = idBytes[:MAX_ID_LENGTH]
-	}
-	return string(idBytes)
-}
-
-func ShortID(id string) string {
-	return truncateID(id)
-}
-
-func IdMatched(longID string, shortID string) bool {
-	return truncateID(longID) == shortID
 }
 
 func FileExist(path string) bool {
@@ -80,4 +64,62 @@ func InList(list []string, item string) bool {
 		}
 	}
 	return false
+}
+
+// LsofSocket returns a slice of PIDs using the given socket path
+// It runs lsof to check which processes are using the socket
+func LsofSocket(socketPath string, command string) []int {
+	var pids []int
+	cmd := exec.Command("lsof", socketPath)
+	output, err := cmd.Output()
+	if err != nil {
+		log.Debugf("Failed to run lsof on %s: %v", socketPath, err)
+		return pids
+	}
+
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "COMMAND") || line == "" {
+			continue
+		}
+
+		fields := strings.Fields(line)
+		if len(fields) >= 2 {
+			if fields[0] != command {
+				continue
+			}
+			if pid, err := strconv.Atoi(fields[1]); err == nil {
+				pids = append(pids, pid)
+			}
+		}
+	}
+	return pids
+}
+
+
+// Validate the bundle and rootfs.
+func ValidBundle(containerID, bundlePath string) (string, error) {
+	if containerID == "" {
+		return "", fmt.Errorf("container ID is empty")
+	}
+
+	if bundlePath == "" {
+		return "", fmt.Errorf("bundle path is required")
+	}
+
+	// resolve path first to handle symlinks before other checks
+	resolved, err := ResolvePath(bundlePath)
+	if err != nil {
+		return "", err
+	}
+
+	stat, err := os.Stat(resolved)
+	if err != nil {
+		return "", fmt.Errorf("invalid resolved bundle path '%s': %w", resolved, err)
+	}
+	if !stat.IsDir() {
+		return "", fmt.Errorf("invalid resolved bundle path '%s', it should be a directory", resolved)
+	}
+
+	return resolved, nil
 }

@@ -238,7 +238,7 @@ func (r *RuntimeConfig) SetStateDir(stateDir string) {
 func (cfg *RuntimeConfig) ParseRuntimeConfigFromAnno(annotations map[string]string) *RuntimeConfig {
 	// Parse runtime-level annotations with mica annotation prefix
 	for key, value := range annotations {
-		if !strings.HasPrefix(key, defs.MicraAnnotationPrefix) || value == "" {
+		if !strings.HasPrefix(key, defs.MicranAnnotationPrefix) || value == "" {
 			continue
 		}
 

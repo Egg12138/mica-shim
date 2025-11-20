@@ -3,15 +3,12 @@ package libmica
 import (
 	"fmt"
 	defs "mica-shim/definitions"
-	log "mica-shim/logger"
 	ped "mica-shim/pkg/pedestal"
-	utils "mica-shim/pkg/utils"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 )
-
 
 func MaxMemMB() uint32 {
 	_, max := ped.MemoryMB()
@@ -32,7 +29,6 @@ func MaxClientCPUNum() int {
 func dummyCPUNum() int {
 	return runtime.NumCPU()
 }
-
 
 // validStatusResponse validates if the response string contains valid status information
 // This function is kept for backward compatibility, but new code should use parseMicaStatus
@@ -249,15 +245,8 @@ func success(res string) bool {
 	return res != "" && !strings.Contains(res, defs.MicaFailed) && !strings.Contains(res, "Error")
 }
 
-func completelyDown(id string) bool {
-	clientId := utils.ShortID(id)
-	socketPath := filepath.Join(defs.MicaStateDir, clientId+".socket")
+func ClientNotExist(id string) bool {
+	socketPath := filepath.Join(defs.MicaStateDir, id+".socket")
 	valid := validSocketPath(socketPath)
-	log.Infof("check socket path: %s is valid=%t", socketPath, valid)
-	return !valid && isDown(id)
-}
-
-// TODO: check the client is really shutdown
-func isDown(_ string) bool {
-	return true
+	return !valid
 }

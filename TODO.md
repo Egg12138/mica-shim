@@ -1,5 +1,17 @@
 # Micran TODO
 
+## Configurations
+
+### Micran runtime configuration
+
+### OCI configuration
+
+### sandbox configuration
+
+
+
+
+
 ## Agent Removal Plan
 
 ### Overview

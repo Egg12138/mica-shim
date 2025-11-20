@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	defs "mica-shim/definitions"
+	er "mica-shim/errors"
 	log "mica-shim/logger"
 	"mica-shim/pkg/libmica"
 	cntr "mica-shim/pkg/micantainer"
@@ -134,15 +135,15 @@ func isPauseContainer(spec *specs.Spec) bool {
 // choose by priority:
 // 1. runtime configurated
 // 2. alternatives, in defs.
-// 3. default k8s.gcr.io/pause
+// 3. default k8s.gcr.io/pause, registry.k8s.io/pause, rancher.k8s.io/pause..
 func getPausePatterns() []string {
-	return []string{"pause", "/pause", defs.PauseImage}
+	return []string{"pause", "/pause", defs.PauseImage, "registry.k8s.io/pause", "rancher.k8s.io/pause", "docker.io/pause"}
 }
 
 // Handle SCHED_CORE.
 func handleSchedCore() {
-	log.Infof(`The functions and features of SCHED_CORE can currently be partially accomplished and replaced by Pedestal (default is Xen), 
-	and micran does not need it for now. 
+	log.Debugf(`The functions and features of SCHED_CORE can currently be partially accomplished and replaced by Pedestal (default is Xen),
+	and micran does not need it for now.
 	However, in the future, we may provide a more unique way to combine the advantages of SCHED_CORE with the isolation strategy of Pedestal.`)
 }
 
@@ -156,8 +157,7 @@ func getMicadPid() (uint32, error) {
 
 	// Check if daemon is actually running before returning PID
 	if daemonState.State != libmica.DaemonRunning {
-		log.Warnf("Micad daemon is not running (state: %s)", daemonState.State)
-		return 0, err
+		return 0, fmt.Errorf("Micad daemon is not running (state: %s)", daemonState.State)
 	}
 
 	return uint32(daemonState.Pid), nil
@@ -173,15 +173,23 @@ func watchSandbox(ctx context.Context, s *shimService) {
 	}
 
 	err := <-s.monitor
-	log.Errorf("sandbox %s received an error or stop monitor", s.sandbox.SandboxID())
-	if err == nil {
-		return
-	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	log.Debugf("trying to clean up containers resource inside sandbox %s", s.sandbox.SandboxID())
+	// Check if sandbox still exists (may have been deleted already)
+	if s.sandbox == nil {
+		log.Debugf("sandbox already deleted, skipping cleanup")
+		return
+	}
+
+	sandboxID := s.sandbox.SandboxID()
+	log.Errorf("sandbox %s received an error or stop monitor", sandboxID)
+	if err == nil {
+		return
+	}
+
+	log.Debugf("trying to clean up containers resource inside sandbox %s", sandboxID)
 	err = s.sandbox.Stop(ctx, true)
 	if err != nil {
 		log.Warnf("stop sandbox failed: %v", err)
@@ -204,6 +212,10 @@ func watchSandbox(ctx context.Context, s *shimService) {
 }
 
 func (s *shimService) getContainerStatus(id string) (task.Status, error) {
+	if s.sandbox == nil {
+		log.Debugf("Sandbox is nil, cannot get status for container %s", id)
+		return task.Status_UNKNOWN, er.SandboxNotFound
+	}
 	cs, err := s.sandbox.StatusContainer(id)
 	if err != nil {
 		return task.Status_UNKNOWN, err

@@ -9,7 +9,7 @@ LDFLAGS = -pthread
 TARGET = mock_micad
 SRC = mock_micad.c
 
-.PHONY: all clean run test help ctl
+.PHONY: all clean clean-all gc run test help ctl
 
 all: $(TARGET)
 
@@ -18,6 +18,21 @@ $(TARGET): $(SRC)
 
 clean:
 	rm -f $(TARGET)
+
+clean-all: clean gc ## Clean build artifacts and leftover resources
+
+gc: ## Garbage collection - cleanup leftover resources
+	@echo "🧹 Cleaning up leftover mock_micad resources..."
+	@echo "Cleaning up client sockets..."
+	@find /tmp/mica -name "*.socket" -type s -delete 2>/dev/null || true
+	@echo "Cleaning up PTY symlinks..."
+	@find /tmp/mica -name "ttyRPMSG_*" -type l -delete 2>/dev/null || true
+	@find /dev -name "ttyRPMSG_*" -type l -delete 2>/dev/null || true
+	@echo "Cleaning up main socket..."
+	@rm -f /tmp/mica/mica-create.socket
+	@echo "Cleaning up socket directory..."
+	@rmdir /tmp/mica 2>/dev/null || true
+	@echo "✅ Garbage collection completed"
 
 test: $(TARGET)
 	@echo "Testing mock_micad..."
@@ -49,6 +64,8 @@ help:
 	@echo "  run    - Run mock_micad"
 	@echo "  ctl    - Show helper usage for mock_ctl.go"
 	@echo "  clean  - Remove build artifacts"
+	@echo "  clean-all - Clean build artifacts and leftover resources"
+	@echo "  gc     - Garbage collection - cleanup leftover resources"
 	@echo "  test   - Test mock_micad execution"
 	@echo "  help   - Show this help message"
 	@echo ""
@@ -56,5 +73,7 @@ help:
 	@echo "  make           # Build mock_micad"
 	@echo "  make run       # Run mock_micad"
 	@echo "  make test      # Test execution"
+	@echo "  make clean-all # Clean build artifacts and leftover resources"
+	@echo "  make gc        # Cleanup leftover resources (sockets, PTYs)"
 	@echo "  ./mock_micad   # Run with response mode"
 	@echo "  ./mock_micad -q # Run in quiet mode (no responses)" 

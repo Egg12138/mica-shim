@@ -1,22 +1,25 @@
 package defs
 
+// TODO: Migrate annotations.go to package annotations
 // OCI and runtime annotations.
 const (
-	// MicraAnnotationPrefix is the prefix for all micran-specific annotations.
-	MicraAnnotationPrefix = "org.openeuler.micran." // For runtime-level configuration.
+	// MicranAnnotationPrefix is the prefix for all micran-specific annotations.
+	MicranAnnotationPrefix = "org.openeuler.micrun." // For runtime-level configuration.
 	// PedPrefix is the prefix for pedestal-related configurations.
-	PedPrefix = MicraAnnotationPrefix + "ped."
+	PedPrefix = MicranAnnotationPrefix + "ped."
 	// RuntimePrefix is the prefix for runtime-related configurations.
-	RuntimePrefix = MicraAnnotationPrefix + "runtime."
+	RuntimePrefix = MicranAnnotationPrefix + "runtime."
 	// ContainerPrefix is the prefix for container-related configurations.
-	ContainerPrefix = MicraAnnotationPrefix + "container."
+	ContainerPrefix = MicranAnnotationPrefix + "container."
+	// CompatPrefix is the prefix for compatibility-related configurations.
+	CompatPrefix = MicranAnnotationPrefix + "compatibility."
 
 	// BundlePathKey is the annotation key for the OCI configuration file path.
-	BundlePathKey = MicraAnnotationPrefix + "pkg.oci.bundle_path"
+	BundlePathKey = MicranAnnotationPrefix + "pkg.oci.bundle_path"
 	// ContainerTypeKey is the annotation key for the container type.
-	ContainerTypeKey = MicraAnnotationPrefix + "pkg.oci.container_type"
+	ContainerTypeKey = MicranAnnotationPrefix + "pkg.oci.container_type"
 	// SandboxConfigPathKey is the annotation key for the sandbox configuration path.
-	SandboxConfigPathKey = MicraAnnotationPrefix + "config_path"
+	SandboxConfigPathKey = MicranAnnotationPrefix + "config_path"
 )
 
 // Pedestal configurations.
@@ -36,19 +39,17 @@ const (
 	FirmwarePath = ContainerPrefix + "firmware_path"
 	// FirmwareHash is the sha-256 hash of the firmware.
 	FirmwareHash = ContainerPrefix + "firmware_hash"
+	// Some rtos may not support in-client shutdown well, so micran add timeout autodisconnect
+	PtyAutoClose = ContainerPrefix + "pty_auto_disconnect"
+	// Default to be 30 seconds, future: read this default timeout from config file
+	PtyAutoCloseTimeout = ContainerPrefix + "pty_auto_disconnect_timeout"
 	// Pedtype specifies the pedestal type.
 	Pedtype = PedPrefix + "pedestal"
-	// Compat specifies compatibility options.
-	Compat = PedPrefix + "compatibility"
+	// PedCompat specifies compatibility options: format "^versionX" (deprecated, use CompatPrefix directly)
+	PedCompat = PedPrefix + "compatibility" // DEPRECATED: Use CompatPrefix instead
 	// NetPlaceholder is a placeholder for network configuration.
 	NetPlaceholder = PedPrefix + "net_placeholder"
-	// DefaultMaxCPU specifies the maximum number of CPUs visible in the client.
-	// For Xen, ACRN: maxcpus;
-	// For openAMP: useless, no vcpu.
-	DefaultMaxCPU = PedPrefix + "defautl_max_cpu"
-	// DefaulaMemory specifies the maximum byte size of memory assigned for the client.
-	DefaulaMemory = PedPrefix + "default_memory"
-	PedestalConf = PedPrefix + "conf"
+	PedestalConf   = PedPrefix + "conf"
 )
 
 // Container-specific runtime settings.
@@ -56,6 +57,8 @@ const (
 	// ContainerMinMemMB specifies the initial memory (MiB) assigned to the client at boot.
 	// This differs from the max memory limit (Memory/MaxMemMB) that may come from OCI.
 	ContainerMinMemMB = ContainerPrefix + "min_memory_mb"
+	// legacy PTY mode: true(default) => external console, false => use micad's rpmsg pty
+	LegacyPty = ContainerPrefix + "legacy_pty"
 )
 
 const (
@@ -72,7 +75,7 @@ const (
 const (
 	// TODO: We need a special Pause image.
 	// PauseImage is the image used for pausing a container.
-	PauseImage = "k8s.gcr.io/pause"
+	PauseImage = "registry.k8s.io/pause"
 	// SandboxVersion is the version of the sandbox.
 	SandboxVersion = 1
 )

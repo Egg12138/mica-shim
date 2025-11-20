@@ -8,11 +8,12 @@ import (
 	"mica-shim/pkg/pedestal"
 	"mica-shim/pkg/utils"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/cpuset"
+	"mica-shim/pkg/cpuset"
 )
 
 func initContainerTaskInSandbox(sandbox SandboxTraits, config *ContainerConfig) (*RTOSTask, error) {
@@ -29,22 +30,17 @@ func initContainerTaskInSandbox(sandbox SandboxTraits, config *ContainerConfig) 
 }
 
 func startClient(ctx context.Context, sandbox SandboxTraits, c *Container) error {
-	conf, err := createMicaClientConf(c)
-	if err != nil {
+	if _, err := c.ensureClientPresence(); err != nil {
 		return err
 	}
 
 	start := time.Now()
-	if err = libmica.Create(conf); err != nil {
-		log.Errorf("startClient: Create failed: %v", err)
-		return err
-	}
-	log.Infof("startClient: Create OK in %s", time.Since(start))
-
-	start = time.Now()
-	if err = libmica.Start(c.ID()); err != nil {
+	if err := libmica.Start(c.ID()); err != nil {
 		log.Errorf("startClient: Start failed: %v", err)
 		return err
+	}
+	if err := c.applyXenMemoryLimit(); err != nil {
+		return fmt.Errorf("apply memory limit for %s: %w", c.ID(), err)
 	}
 	log.Infof("startClient: Start OK in %s", time.Since(start))
 
@@ -56,8 +52,7 @@ func startClient(ctx context.Context, sandbox SandboxTraits, c *Container) error
 // TODO: Only copy values, the evaluation procedure is in the caller function
 func createMicaClientConf(container *Container) (libmica.MicaClientConf, error) {
 	config := container.config
-	pedestal := HostPedType
-	name := utils.ShortID(container.id)
+	pedType := HostPedType
 	cpus, err := container.GetClientCPU()
 	conf := libmica.MicaClientConf{}
 	if err != nil {
@@ -80,19 +75,23 @@ func createMicaClientConf(container *Container) (libmica.MicaClientConf, error) 
 	if maxMB > 0 && memMB > maxMB {
 		memMB = maxMB
 	}
+	if err := ensureFirmwarePath(config.ElfAbsPath); err != nil {
+		return libmica.MicaClientConf{}, fmt.Errorf("firmware validation failed: %w", err)
+	}
+
 	// MemoryLimitMB is already in MiB
 	conf.InitWithOpts(libmica.MicaClientConfCreateOptions{
 		CPU:         cpus,
 		CPUCapacity: cpuCap,
-		CPUWeight:   int(config.CpuShares),
+		CPUWeight:   int(pedestal.ShareToWeight(config.CpuShares)),
 		VCPUs:       vcpus,
 		MemoryMB:    memMB,
 		MaxMemMB:    maxMB,
-		Name:        name,
+		Name:        container.id,
 		Path:        config.ElfAbsPath,
-		Ped:         pedestal.String(),
+		Ped:         pedType.String(),
 		PedCfg:      config.PedestalConf,
-		Debug:       true,
+		Debug:       false,
 	})
 	return conf, nil
 }
@@ -124,19 +123,21 @@ func calculateSandboxVCPUs(s *Sandbox) (uint32, error) {
 		if cc.IsInfra {
 			continue
 		}
-		if c, ok := s.containers[cc.ID]; ok && c.state.State == StateStopped {
-			log.Debugf("skipped stopped container %s", c.ID())
-			continue
+		if c, ok := s.containers[cc.ID]; ok {
+			state := c.checkState()
+			if state == StateStopped || state == StateDown {
+				log.Debugf("skipped inactive container %s (state=%s)", c.ID(), state)
+				continue
+			}
 		}
 
-		// Primary: use configured VCPUNum if set (already validated in ContainerConfig).
 		if cc.VCPUNum > 0 {
 			total += cc.VCPUNum
 			continue
 		}
 
-		// Fallbacks for legacy/partial configs.
-		if cpu := cc.Resources.CPU; cpu != nil {
+		if cc.Resources != nil && cc.Resources.CPU != nil {
+			cpu := cc.Resources.CPU
 			if cpu.Period != nil && cpu.Quota != nil && *cpu.Period != 0 {
 				m := utils.CalculateMilliCPUs(*cpu.Quota, *cpu.Period)
 				v := utils.CalculateVCpusFromMilliCpus(m)
@@ -162,14 +163,18 @@ func calculateSandboxVCPUs(s *Sandbox) (uint32, error) {
 }
 
 func calculateSandboxMemory(s *Sandbox) uint64 {
+	// Return value is in MiB
 	memorySandbox := uint64(0)
 	for _, cc := range s.config.ContainerConfigs {
 		if cc.IsInfra {
 			continue
 		}
-		if c, ok := s.containers[cc.ID]; ok && c.state.State == StateStopped {
-			log.Debugf("skipped stopped container %s", c.ID())
-			continue
+		if c, ok := s.containers[cc.ID]; ok {
+			state := c.checkState()
+			if state == StateStopped || state == StateDown {
+				log.Debugf("skipped inactive container %s (state=%s)", c.ID(), state)
+				continue
+			}
 		}
 
 		if cc.Resources == nil {
@@ -177,17 +182,19 @@ func calculateSandboxMemory(s *Sandbox) uint64 {
 		}
 
 		if m := cc.Resources.Memory; m != nil {
-			currentLimit := int64(0)
+			// OCI memory limit is in bytes; convert to MiB for sandbox accounting
 			if m.Limit != nil && *m.Limit > 0 {
-				currentLimit = *m.Limit
-				memorySandbox += uint64(currentLimit)
-				log.Debugf("sandbox memory limit + %d MiB", currentLimit)
+				limitMiB := uint64(*m.Limit >> 20)
+				memorySandbox += limitMiB
+				log.Debugf("sandbox memory limit + %d MiB", limitMiB)
 			}
 
+			// Hugepage limits are also in bytes; convert to MiB
 			if s.config.HugePageSupport {
 				for _, lim := range cc.Resources.HugepageLimits {
-					log.Debugf("sandbox hugepage limit + %d %s", lim.Limit, lim.Pagesize)
-					memorySandbox += lim.Limit
+					hpMiB := lim.Limit >> 20
+					log.Debugf("sandbox hugepage limit + %d MiB (%s)", hpMiB, lim.Pagesize)
+					memorySandbox += hpMiB
 				}
 			}
 		}
@@ -242,70 +249,129 @@ func CpusetRangeValid(sortedCpuList []int) (bool, []int) {
 // Update resource for changed resource
 func updateContainerResource(c *Container, updated *pedestal.EssentialResource) error {
 	old := c.me.ReadResource()
-	if needUpdateCpuCap(*old.CpuCpacity, *updated.CpuCpacity) {
-		err := c.me.UpdateCPUCapacity(*updated.CpuCpacity)
-		if err != nil {
-			return fmt.Errorf("failed to update cpu capacity of %s: %v", c.id, err)
-		}
-		if *updated.CpuCpacity == 0 {
-			log.Infof("container %s's cpu capacity is unlimited", c.id)
+
+	log.Debugf("Resource update for container %s: old=%s, new=%s",
+		c.id, formatResourceForLog(old), formatResourceForLog(updated))
+
+	// Nil-safety checks for all pointer fields
+	if updated.CpuCpacity != nil {
+		if c.me.NeedUpdateCpuCap(*updated.CpuCpacity) {
+			err := c.me.UpdateCPUCapacity(*updated.CpuCpacity)
+			if err != nil {
+				return fmt.Errorf("failed to update cpu capacity of %s: %v", c.id, err)
+			}
+			if *updated.CpuCpacity == 0 {
+				log.Infof("container %s's cpu capacity is unlimited", c.id)
+			}
 		}
 	}
 
-	if needUpdateMemLimit(*old.MemoryLimitMB, *updated.MemoryLimitMB) {
-		err := c.me.UpdateMemoryLimit(*updated.MemoryLimitMB)
-		if err != nil {
-			return fmt.Errorf("failed to update max memory of %s: %v", c.id, err)
+	if updated.MemoryLimitMB != nil {
+		if c.me.NeedUpdateMemLimit(*updated.MemoryLimitMB) {
+			err := c.me.EnsureMemoryLimit(*updated.MemoryLimitMB)
+			if err != nil {
+				return fmt.Errorf("failed to update max memory of %s: %v", c.id, err)
+			}
 		}
 	}
 
-	if needUpdateCpuSet(old.ClientCpuSet, updated.ClientCpuSet) {
+	if c.me.NeedUpdateCpuSet(old.ClientCpuSet, updated.ClientCpuSet) {
 		err := c.me.UpdatePCPUConstrains(updated.ClientCpuSet)
 		if err != nil {
 			return fmt.Errorf("failed to update cpuset of vcpu: %v", err)
 		}
 	}
 
-	if needUpdateCpuShare(*old.CPUWeight, *updated.CPUWeight) {
-		err := c.me.UpdateCPUShare(*updated.CPUWeight)
-		if err != nil {
-			return fmt.Errorf("failed to set a different cpu weight for %s: %v", c.id, err)
+	if updated.CPUWeight != nil {
+		if c.me.NeedUpdateCpuShare(*updated.CPUWeight) {
+			err := c.me.UpdateCPUWeight(*updated.CPUWeight)
+			if err != nil {
+				return fmt.Errorf("failed to set a different cpu weight for %s: %v", c.id, err)
+			}
 		}
 	}
 
-	if needUpdateVCpus(*old.Vcpu, *updated.Vcpu) {
-		old, newer, err := c.me.UpdateVCPUNum(*updated.Vcpu)
-		if err != nil {
-			log.Warnf("failed to update vcpu number: %v", err)
+	if old.Vcpu != nil && updated.Vcpu != nil {
+		if c.me.NeedUpdateVCpus(*updated.Vcpu) {
+			old, newer, err := c.me.UpdateVCPUNum(*updated.Vcpu)
+			if err != nil {
+				log.Warnf("failed to update vcpu number: %v", err)
+			}
+			if old != newer {
+				log.Infof("update vcpu number from %d to %d", old, newer)
+			}
 		}
-		log.Infof("update vcpu number from %d to %d", old, newer)
 	}
 
 	return nil
 }
 
-func needUpdateCpuCap(old, updated uint32) bool {
-	if old == updated {
-		return false
+// formatResourceForLog formats EssentialResource for readable logging
+func formatResourceForLog(res *pedestal.EssentialResource) string {
+	if res == nil {
+		return "<nil>"
 	}
-	return true
+
+	var parts []string
+
+	if res.CpuCpacity != nil {
+		parts = append(parts, fmt.Sprintf("CpuCapacity=%d", *res.CpuCpacity))
+	}
+
+	if res.CPUWeight != nil {
+		parts = append(parts, fmt.Sprintf("CPUWeight=%d", *res.CPUWeight))
+	}
+
+	if res.ClientCpuSet != "" {
+		parts = append(parts, fmt.Sprintf("ClientCpuSet=%s", res.ClientCpuSet))
+	}
+
+	if res.Vcpu != nil {
+		parts = append(parts, fmt.Sprintf("Vcpu=%d", *res.Vcpu))
+	}
+
+	if res.MemoryLimitMB != nil {
+		parts = append(parts, fmt.Sprintf("MemoryLimitMB=%d", *res.MemoryLimitMB))
+	}
+
+	if res.MemoryMinMB > 0 {
+		parts = append(parts, fmt.Sprintf("MemoryMinMB=%d", res.MemoryMinMB))
+	}
+
+	if len(parts) == 0 {
+		return "<empty>"
+	}
+
+	return "{" + strings.Join(parts, ", ") + "}"
 }
 
-func needUpdateMemLimit(old, updated uint32) bool {
+func ensureFirmwarePath(firmwarePath string) error {
+	if firmwarePath == "" {
+		return fmt.Errorf("firmware path is empty")
+	}
 
-	return true
-}
+	if _, err := os.Stat(firmwarePath); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("firmware file does not exist: %s", firmwarePath)
+		}
+		return fmt.Errorf("failed to access firmware file %s: %v", firmwarePath, err)
+	}
 
-func needUpdateVCpus(old, updated uint32) bool {
+	info, err := os.Stat(firmwarePath)
+	if err != nil {
+		return fmt.Errorf("failed to stat firmware file %s: %v", firmwarePath, err)
+	}
 
-	return true
-}
+	if info.IsDir() {
+		return fmt.Errorf("firmware path is a directory, not a file: %s", firmwarePath)
+	}
 
-func needUpdateCpuSet(old, updated string) bool {
-	return true
-}
+	absPath, err := filepath.Abs(firmwarePath)
+	if err != nil {
+		log.Debugf("could not get absolute path for %s: %v", firmwarePath, err)
+		absPath = firmwarePath
+	}
 
-func needUpdateCpuShare(old, updated uint32) bool {
-
-	return true
+	log.Debugf("firmware path validated: %s", absPath)
+	return nil
 }

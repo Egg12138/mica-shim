@@ -29,6 +29,7 @@ tests/containerd_client/containerd_client
 coverage.*
 *.coverprofile
 profile.cov
+__pycache__
 
 # Dependency directories (remove the comment below to include it)
 vendor/
