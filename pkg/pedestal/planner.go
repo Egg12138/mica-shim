@@ -91,7 +91,7 @@ func linuxResourceToEssential(spec *specs.Spec, convertShares bool) *EssentialRe
 	}
 
 	if mem := spec.Linux.Resources.Memory; mem != nil && mem.Limit != nil && *mem.Limit > 0 {
-		*res.MemoryLimitMB = uint32(*mem.Limit >> 20)
+		*res.MemoryMaxMB = uint32(*mem.Limit >> 20)
 	}
 
 	return res

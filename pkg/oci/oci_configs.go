@@ -3,6 +3,7 @@ package oci
 import (
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"

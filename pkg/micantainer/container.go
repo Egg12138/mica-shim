@@ -138,11 +138,15 @@ type ContainerConfig struct {
 	// PCPUNum is the number of allocated physical CPUs.
 	// TODO: Implement for openAMP and Jailhouse cases.
 	PCPUNum int `json:"ncpu"`
+	// MaxVcpuNum is the pedestal max virtual CPUs configured for this container.
+	MaxVcpuNum uint32 `json:"max_vcpu_num"`
 
 	// MemoryLimitMB is the memory limit in MiB.
 	MemoryLimitMB uint32 `json:"memory_limit"`
 	// MemoryMinMB is the initial memory in MiB assigned at client boot.
-	MemoryMinMB         uint32  `json:"memory_min"`
+	MemoryMinMB uint32 `json:"memory_min"`
+	// MemoryThresholdMB is the pedestal maximum allocable memory in MiB.
+	MemoryThresholdMB   uint32  `json:"memory_threshold"`
 	MemoryReservationMB uint32  `json:"memory_reservation"`
 	MemorySwapMB        uint32  `json:"memory_swap"`
 	MemoryKernelMB      uint32  `json:"memory_kernel"`
@@ -816,7 +820,7 @@ func (c *Container) update(ctx context.Context, resources specs.LinuxResources) 
 
 	pedRes := ped.InitResource()
 	// Default to nil so we only update fields explicitly requested.
-	pedRes.MemoryLimitMB = nil
+	pedRes.MemoryMaxMB = nil
 	pedRes.CPUWeight = nil
 
 	if res.CPU == nil {
@@ -842,7 +846,6 @@ func (c *Container) update(ctx context.Context, resources specs.LinuxResources) 
 		period := cpu.Period
 		quota := cpu.Quota
 		cpus := cpu.Cpus
-		mems := cpu.Mems
 		shares := cpu.Shares
 
 		if period != nil && *period != 0 {
@@ -860,10 +863,6 @@ func (c *Container) update(ctx context.Context, resources specs.LinuxResources) 
 			pedRes.ClientCpuSet = cpus
 		}
 
-		if mems != "" {
-			updatedMems = mems
-		}
-
 		if shares != nil {
 			cpuSharesProvided = true
 			providedCpuShares = *shares
@@ -878,7 +877,7 @@ func (c *Container) update(ctx context.Context, resources specs.LinuxResources) 
 		updatedMemLimit = &limitBytes
 		limitMiB := uint32(limitBytes >> 20)
 		pedLimit := limitMiB
-		pedRes.MemoryLimitMB = &pedLimit
+		pedRes.MemoryMinMB = pedLimit
 	}
 
 	// CRITICAL ORDER: Apply changes to RTOS FIRST before updating container config.
@@ -1138,20 +1137,27 @@ func (c *Container) registerClientWithMicad() error {
 		return err
 	}
 
-	initialMem := c.config.MemoryMinMB
-	if initialMem == 0 {
-		initialMem = ped.InitResource().MemoryMinMB
-	}
 	limit := c.config.MemoryLimitMB
-	if limit > 0 && initialMem > limit {
-		initialMem = limit
+	initialMem := limit
+	if initialMem == 0 {
+		initialMem = c.config.MemoryMinMB
 	}
-	c.me.RecordMemoryState(initialMem, initialMem)
+	if initialMem == 0 {
+		initialMem = c.config.MemoryReservationMB
+	}
+	if initialMem == 0 {
+		initialMem = defs.DefaultMinMemMB
+	}
+	recordThreshold := limit
+	if recordThreshold == 0 {
+		recordThreshold = initialMem
+	}
+	c.me.RecordMemoryState(initialMem, recordThreshold)
 
 	return c.setContainerState(c.ctx, StateReady)
 }
 
-func (c *Container) applyXenMemoryLimit() error {
+func (c *Container) setupMemory() error {
 	if c == nil || c.config == nil || c.config.IsInfra {
 		return nil
 	}
@@ -1165,16 +1171,16 @@ func (c *Container) applyXenMemoryLimit() error {
 		return nil
 	}
 
-	if c.me.CurrentMemoryMB() == limit && c.me.MemoryThresholdMB() >= limit {
+	if c.me.CurrentMaxMem() == limit && c.me.MemoryThresholdMB() >= limit {
 		return nil
 	}
 
 	target := int(limit)
-	log.Debugf("setting mem max to %d MB", target)
-	if err := ped.XlMemMax(c.id, target); err != nil {
-		return fmt.Errorf("failed to set mem-max to %d MB for %s: %w", limit, c.id, err)
+	log.Debugf("setting mem threshold to %d MB", target)
+	if err := c.me.UpdateMemoryThreshold(limit); err != nil {
+		return fmt.Errorf("failed to set new memory threshold to %d MB for %s: %w", limit, c.id, err)
 	}
-	if err := ped.XlMemSet(c.id, target); err != nil {
+	if err := c.me.UpdateMemory(limit); err != nil {
 		return fmt.Errorf("failed to set memory to %d MB for %s: %w", limit, c.id, err)
 	}
 
@@ -1347,7 +1353,7 @@ func (c *Container) stats() (*ContainerStats, error) {
 		}
 	}
 
-	curMB := c.me.CurrentMemoryMB()
+	curMB := c.me.CurrentMaxMem()
 	thrMB := c.me.MemoryThresholdMB()
 	if thrMB == 0 {
 		thrMB = uint32(c.config.MemoryLimitMB)

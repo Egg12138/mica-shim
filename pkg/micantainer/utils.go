@@ -38,8 +38,9 @@ func startClient(ctx context.Context, sandbox SandboxTraits, c *Container) error
 		log.Errorf("startClient: Start failed: %v", err)
 		return err
 	}
-	if err := c.applyXenMemoryLimit(); err != nil {
-		return fmt.Errorf("apply memory limit for %s: %w", c.ID(), err)
+
+	if err := c.setupMemory(); err != nil {
+		return err
 	}
 	log.Infof("startClient: Start OK in %s", time.Since(start))
 
@@ -65,14 +66,13 @@ func createMicaClientConf(container *Container) (libmica.MicaClientConf, error) 
 	if vcpus <= 0 {
 		vcpus = 1
 	}
-	// memoryMB (initial) comes from config.MemoryMinMB; clamp to max limit if set.
-	maxMB := int(config.MemoryLimitMB)
-	memMB := int(config.MemoryMinMB)
-	if memMB <= 0 {
-		memMB = 32
+	// memoryMB (initial) should prefer the configured limit, falling back to the minimum (reservation) when unset.
+	memMB := int(config.MemoryLimitMB)
+	if memMB == 0 {
+		memMB = int(config.MemoryMinMB)
 	}
-	if maxMB > 0 && memMB > maxMB {
-		memMB = maxMB
+	if memMB == 0 {
+		memMB = 32
 	}
 	if err := ensureFirmwarePath(config.ElfAbsPath); err != nil {
 		return libmica.MicaClientConf{}, fmt.Errorf("firmware validation failed: %w", err)
@@ -80,17 +80,17 @@ func createMicaClientConf(container *Container) (libmica.MicaClientConf, error) 
 
 	// MemoryLimitMB is already in MiB
 	conf.InitWithOpts(libmica.MicaClientConfCreateOptions{
-		CPU:         cpus,
-		CPUCapacity: cpuCap,
-		CPUWeight:   int(pedestal.ShareToWeight(config.CpuShares)),
-		VCPUs:       vcpus,
-		MemoryMB:    memMB,
-		MaxMemMB:    maxMB,
-		Name:        container.id,
-		Path:        config.ElfAbsPath,
-		Ped:         pedType.String(),
-		PedCfg:      config.PedestalConf,
-		Debug:       false,
+		CPU:             cpus,
+		CPUCapacity:     cpuCap,
+		CPUWeight:       int(pedestal.ShareToWeight(config.CpuShares)),
+		VCPUs:           vcpus,
+		MaxVCPUs:        int(config.MaxVcpuNum),
+		MemoryMB:        memMB,
+		MemoryThreshold: int(config.MemoryThresholdMB),
+		Name:            container.id,
+		Path:            config.ElfAbsPath,
+		Ped:             pedType.String(),
+		PedCfg:          config.PedestalConf,
 	})
 	return conf, nil
 }
@@ -240,9 +240,9 @@ func updateContainerResource(c *Container, updated *pedestal.EssentialResource) 
 		}
 	}
 
-	if updated.MemoryLimitMB != nil {
-		if c.me.NeedUpdateMemLimit(*updated.MemoryLimitMB) {
-			err := c.me.EnsureMemoryLimit(*updated.MemoryLimitMB)
+	if updated.MemoryMaxMB != nil {
+		if c.me.NeedUpdateMemLimit(*updated.MemoryMaxMB) {
+			err := c.me.EnsureMemoryLimit(*updated.MemoryMaxMB)
 			if err != nil {
 				return fmt.Errorf("failed to update max memory of %s: %v", c.id, err)
 			}
@@ -304,12 +304,8 @@ func formatResourceForLog(res *pedestal.EssentialResource) string {
 		parts = append(parts, fmt.Sprintf("Vcpu=%d", *res.Vcpu))
 	}
 
-	if res.MemoryLimitMB != nil {
-		parts = append(parts, fmt.Sprintf("MemoryLimitMB=%d", *res.MemoryLimitMB))
-	}
-
-	if res.MemoryMinMB > 0 {
-		parts = append(parts, fmt.Sprintf("MemoryMinMB=%d", res.MemoryMinMB))
+	if res.MemoryMaxMB != nil {
+		parts = append(parts, fmt.Sprintf("MemoryLimitMB=%d", *res.MemoryMaxMB))
 	}
 
 	if len(parts) == 0 {

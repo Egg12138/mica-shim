@@ -113,6 +113,9 @@ func (r *ContainerConfig) ParseOCIMemoryResources(spec *specs.Spec) error {
 
 	if memory.Reservation != nil && *memory.Reservation > 0 {
 		r.MemoryReservationMB = uint32(*memory.Reservation / 1024 / 1024)
+		if r.MemoryMinMB == 0 {
+			r.MemoryMinMB = r.MemoryReservationMB
+		}
 	}
 
 	if memory.Swap != nil && *memory.Swap > 0 {

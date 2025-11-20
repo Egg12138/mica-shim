@@ -64,7 +64,7 @@ type RuntimeConfig struct {
 	MaxClinetNum       uint32
 
 	// Global resource management settings
-	MaxContainerCPUs         uint32 // Maximum CPU cores visible for containers
+	MaxContainerVCPUs        uint32 // Maximum CPU cores visible for containers
 	MaxContainerMemMB        uint32 // Maximum memory available for containers
 	MinContainerMemMB        uint32 // Minimum memory for containers
 	HugePageSupport          bool
@@ -92,6 +92,7 @@ func NewRuntimeConfig() *RuntimeConfig {
 		StaticResourceManagement: staticResource,
 		PauseImage:               defs.PauseImage,
 		MinContainerMemMB:        32,
+		MaxContainerVCPUs:        defaultMaxContainerVCPUs,
 	}
 	return &cfg
 }
@@ -115,7 +116,7 @@ func (r *RuntimeConfig) convertRawConfig(raw map[string]string) {
 	r.SetStaticResourceManagement(raw[KeyStaticResource])
 	r.SetDebug(raw[KeyDebug])
 	r.SetPauseImage(raw[KeyPauseImg])
-	r.SetMaxContainerCPUs(raw[KeyMaxContainerVCPU])
+	r.SetMaxContainerVCPUs(raw[KeyMaxContainerVCPU])
 	r.SetMaxContainerMemMB(raw[KeyMaxMemory])
 	r.SetMinContainerMemMB(raw[KeyMinMemory])
 	r.SetMiniVCPUNum(raw[KeySandboxMinVCPU])
@@ -150,12 +151,19 @@ func (r *RuntimeConfig) SetSandboxMemMB(memString string) {
 	r.SandboxMemMB = uint32(mem)
 }
 
-func (r *RuntimeConfig) SetMaxContainerCPUs(cpuString string) {
-	cpu, err := strconv.ParseUint(cpuString, 10, 32)
+func (r *RuntimeConfig) SetMaxContainerVCPUs(cpuString string) {
+	vcpu, err := strconv.ParseUint(cpuString, 10, 32)
 	if err != nil {
 		log.Debugf("failed to parse max container cpus %v into uint32", cpuString, err)
+		r.MaxContainerVCPUs = defaultMaxContainerVCPUs
+		return
 	}
-	r.MaxContainerCPUs = uint32(cpu)
+	if vcpu == 0 {
+		log.Debugf("max container cpus parsed as 0, defaulting to %d", defaultMaxContainerVCPUs)
+		r.MaxContainerVCPUs = defaultMaxContainerVCPUs
+		return
+	}
+	r.MaxContainerVCPUs = uint32(vcpu)
 }
 
 func (r *RuntimeConfig) SetMaxContainerMemMB(memString string) {
@@ -271,7 +279,7 @@ func (cfg *RuntimeConfig) ParseRuntimeConfigFromAnno(annotations map[string]stri
 		case defs.RuntimePrefix + "sandbox.memory":
 			cfg.SetSandboxMemMB(value)
 		case defs.RuntimePrefix + "max_container_cpus":
-			cfg.SetMaxContainerCPUs(value)
+			cfg.SetMaxContainerVCPUs(value)
 		case defs.RuntimePrefix + "max_container_memory":
 			cfg.SetMaxContainerMemMB(value)
 		case defs.RuntimePrefix + "cpu_scheduler_policy":
