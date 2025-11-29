@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"sync"
 
-	defs "mica-shim/definitions"
-	log "mica-shim/logger"
-	"mica-shim/pkg/utils"
+	defs "micrun/definitions"
+	log "micrun/logger"
+	"micrun/pkg/utils"
 	"os/exec"
 	"time"
 )

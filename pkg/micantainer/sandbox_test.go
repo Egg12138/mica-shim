@@ -6,7 +6,7 @@ package micantainer
 import (
 	"testing"
 
-	ped "mica-shim/pkg/pedestal"
+	ped "micrun/pkg/pedestal"
 )
 
 func TestSandboxConfigValidInfraOnly(t *testing.T) {

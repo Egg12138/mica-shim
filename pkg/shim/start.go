@@ -3,7 +3,7 @@ package shim
 import (
 	"context"
 	"fmt"
-	log "mica-shim/logger"
+	log "micrun/logger"
 
 	"github.com/containerd/containerd/api/types/task"
 )

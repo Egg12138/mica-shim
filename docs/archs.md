@@ -207,7 +207,7 @@ expanded
 
 ### Cloud-Edge Architecture Overview
 
-The following diagram shows mica-shim's role in a Kubernetes/KubeEdge environment:
+The following diagram shows micrun's role in a Kubernetes/KubeEdge environment:
 
 ```mermaid
 %%{init: {'theme':'auto', 'flowchart':{'nodeSpacing': 15, 'rankSpacing': 30, 'curve': 'basis'}}}%%
@@ -246,7 +246,7 @@ flowchart TB
 ### Key Components
 1. **Kubernetes Cluster**: Manages container deployments
 2. **Edge Nodes**: Run container workloads
-3. **mica-shim**: Converts container requests to RTOS operations
+3. **micrun**: Converts container requests to RTOS operations
 4. **Micad**: MICA daemon managing RTOS instances
 5. **RTOS**: Real-time OS instances on dedicated CPUs
 
@@ -298,7 +298,7 @@ flowchart LR
 
 ### DEMO 0.2 0623 overview
 
-mica-shim
+micrun
 ::package core
     :: shim
     :: runtime

@@ -62,7 +62,7 @@ func checkXenKos() error {
 
 func main() {
 	fmt.Println("=== Xen Kernel Module Checker ===")
-	fmt.Println("Checking required Xen kernel modules for mica-shim pedestal detection...")
+	fmt.Println("Checking required Xen kernel modules for micrun pedestal detection...")
 
 	fmt.Printf("System: ")
 	if hostname, err := os.Hostname(); err == nil {

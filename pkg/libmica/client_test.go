@@ -6,7 +6,7 @@ package libmica
 import (
 	"bytes"
 	"encoding/binary"
-	"mica-shim/pkg/pedestal"
+	"micrun/pkg/pedestal"
 	"reflect"
 	"testing"
 )

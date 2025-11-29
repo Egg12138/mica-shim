@@ -4,8 +4,8 @@ package shim
 import (
 	"context"
 	"errors"
-	er "mica-shim/errors"
-	log "mica-shim/logger"
+	er "micrun/errors"
+	log "micrun/logger"
 	"path/filepath"
 
 	"github.com/containerd/containerd/api/types/task"

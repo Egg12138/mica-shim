@@ -2,8 +2,8 @@
 package oci
 
 import (
-	log "mica-shim/logger"
-	"mica-shim/pkg/utils"
+	log "micrun/logger"
+	"micrun/pkg/utils"
 	"strconv"
 
 	ctrAnnotations "github.com/containerd/containerd/pkg/cri/annotations"

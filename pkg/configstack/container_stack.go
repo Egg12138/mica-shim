@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	log "mica-shim/logger"
-	"mica-shim/pkg/utils"
+	log "micrun/logger"
+	"micrun/pkg/utils"
 )
 
 const clientConfName = "client.conf"
@@ -19,15 +19,19 @@ type ContainerLayer struct {
 }
 
 // LoadClientLayer parses bundleRootfs/client.conf and returns overrides, if any.
-func LoadClientLayer(rootfs string) (ContainerLayer, error) {
+func LoadClientLayer(dir string) (ContainerLayer, error) {
 	var layer ContainerLayer
-	if strings.TrimSpace(rootfs) == "" {
+	if strings.TrimSpace(dir) == "" {
 		return layer, nil
 	}
 
-	clientConf := filepath.Join(rootfs, clientConfName)
+	clientConf := filepath.Join(dir, clientConfName)
 	// whitelist the [Mica] section; utils.ParseConfigINI lowercases section names.
-	fields, err := utils.ParseConfigINI(clientConf, []string{"mica"})
+	if !utils.FileExist(clientConf) {
+		return layer, nil
+	}
+
+	fields, err := utils.ParseINI(clientConf, []string{"mica"})
 	if err != nil {
 		log.Warnf("failed to parse %s: %v; continuing without overrides", clientConf, err)
 		return layer, nil

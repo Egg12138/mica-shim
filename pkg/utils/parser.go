@@ -3,7 +3,7 @@ package utils
 import (
 	"bufio"
 	"fmt"
-	log "mica-shim/logger"
+	log "micrun/logger"
 	"os"
 	"strings"
 )
@@ -21,14 +21,9 @@ func stripQuotes(s string) string {
 // filter for non-empty lines
 type sectionFilter func(string) bool
 
-// ParseConfigINI performs a faster INI parsing method by reading line by line.
+// ParseINI performs a faster INI parsing method by reading line by line.
 // with a simple lowercase section title filter
-func ParseConfigINI(configPath string, whiteList []string) (map[string]string, error) {
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		log.Debugf("ini config file %s does not exist, return an empty map", configPath)
-		return make(map[string]string), nil
-	}
-
+func ParseINI(configPath string, whiteList []string) (map[string]string, error) {
 	file, err := os.Open(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open mica config file: %v", err)
@@ -86,4 +81,9 @@ func ParseConfigINI(configPath string, whiteList []string) (map[string]string, e
 	log.Pretty("parsed ini conf: %v", parsedFields)
 
 	return parsedFields, nil
+}
+
+func ParseToml(configPath string, whiteList []string) (map[string]string, error) {
+	filtered := make(map[string]string)
+	return filtered, nil
 }

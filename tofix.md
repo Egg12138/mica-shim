@@ -28,17 +28,18 @@
 - [x] cpu request, (oci spec cpu.share)
 - [x] annotation downfall example
 - [x] k8s example
-- [ ] show cadvisor CPU Topology
+- [x] show cadvisor CPU Topology
 - [x] service::Stats 完整实现
 - [ ] k8s/cadvisor感知到整个机器的全部资源，而不是Dom0的资源
 - [ ] 并发pod管理,导致的竞争
+- [ ] 回收 shim binary 常常失败，leak
 - [x] `/dev/ttyRPMSG%d` 应该 保证和容器ID是映射的
 
 
 # flaws and features
 
 - [ ] memory 监控
-- [ ] metrics better
+- [x] metrics better
 - [ ] ==我们需要MICA monitor!!==
 - [ ] 对于 exec, 将 exec command 作为input 传入 容器
 - [ ] detach/reattach support (binaryIO)
@@ -168,7 +169,6 @@ type PedTraits interface {
 - [ ] 当前 sandbox 不太方便将多个 Domain 的vcpu统一起来，只能管理一个pcpu pool，因此没法
 在sandbox scope设置某个vcpu的亲和性，只能对每个容器的vcpu进行设置
 - [x] 加入config items allowlist
-- [x] 当前micad的实践有很糟糕的地方： 大量使用 `micad &` 来进行后台， 这样是不合适
 - [ ] 支持 sandbox API, 改用 containerd 2.X
 - [ ] mica-image-builder重构：写的一坨
 - [x] /run/containerd/s/<HASH> 有时会错误地监听 mica-create.socket...
@@ -186,3 +186,43 @@ type PedTraits interface {
 - [ ] copy 镜像文件 cached 性能问题
 - [ ] metrics 收集的信息目前基于二进制parse，性能非常差，有损失
 - [ ] 内存用量和micaExecutor中的记录需要定期校准
+- [ ] 去除 基于字符串runtime转换的 runtimeConfig parsing，直接走marshal/unmarshal
+
+# mica furthor
+
+by priority
+
+* mica status
+
+## functions
+
+1. RTOS watcher 最重要的是，要知道什么时候死掉！
+1. 状态接口
+1. 更多状态信息，规范自定
+1. 错误处理, 有意义的 `MICA_FAILURE`
+1. 讨论: 开放一套 micad server API, 可以是 restful API 或 rpc? endpoint就通过 原有的socket 如何？
+>  API: Statistics (), Status of client
+>  增设 mcs/mica/service 
+>  这样可以不用把micrun直接嵌到 micad 中，
+>  而且或许支持其他的mica前端或者调用者(或许有呢？
+1. 对 rtos shell,  当 pty detached 时传入命令
+1. 文件系统 linux2RTOS, 覆盖多数场景
+1. vif, tap
+1. pause 
+1. xen X-api introduction
+
+## risks obscure
+
+1. 启动服务的速度
+2
+
+
+- [ ] pty 支持 一些POSIX中断
+- [ ] pty 同时支持 rtos shell的 console 中断, 如zephyr ctrl+b, ctrl+a等
+1. mica config
+
+## integrated micrun
+
+component into micad
+
+*

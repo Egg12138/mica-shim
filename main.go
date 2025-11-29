@@ -2,8 +2,8 @@ package main
 
 import (
 	"io"
-	log "mica-shim/logger"
-	"mica-shim/pkg/shim"
+	log "micrun/logger"
+	"micrun/pkg/shim"
 	"os"
 
 	shimv2 "github.com/containerd/containerd/runtime/v2/shim"
@@ -14,10 +14,6 @@ import (
 var ShimName string
 
 func main() {
-	if err := log.CleanDebugFile(); err != nil {
-		log.Errorf("failed to clean debug file: %v", err)
-	}
-
 	if isBootstrapStart() {
 		// During bootstrap "start", containerd reads CombinedOutput from the shim
 		// for a strict JSON/address handshake. Any stderr/stdout noise corrupts

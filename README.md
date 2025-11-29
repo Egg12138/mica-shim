@@ -2,7 +2,7 @@
 
 <!-- code_chunk_output -->
 
-- [MICA Shim - Containerd Runtime Shim for Runtime Micran](#mica-shim---containerd-runtime-shim-for-mica)
+- [MICA Shim - Containerd Runtime Shim for Runtime Micran](#micrun---containerd-runtime-shim-for-mica)
   - [Current Progress](#current-progress)
   - [️ Roadmap](#️-roadmap)
   - [近期Issues](#近期issues)
@@ -51,7 +51,7 @@
 
 ## ️ Roadmap
 
-本项目的 Roadmap 不仅仅是 mica-shim 本身，还包括了部分 mica 侧的追加功能
+本项目的 Roadmap 不仅仅是 micrun 本身，还包括了部分 mica 侧的追加功能
 
 - [x] 能通过 isula 拉起 一个 dummy 镜像
 - [x] 自如管理 基本镜像的： OS register, OS boot, Task start

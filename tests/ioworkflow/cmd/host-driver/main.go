@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	log "mica-shim/logger"
-	libmica "mica-shim/pkg/libmica"
+	log "micrun/logger"
+	libmica "micrun/pkg/libmica"
 
 	"github.com/containerd/fifo"
 )

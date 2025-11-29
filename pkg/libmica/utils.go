@@ -2,17 +2,12 @@ package libmica
 
 import (
 	"fmt"
-	defs "mica-shim/definitions"
-	ped "mica-shim/pkg/pedestal"
+	defs "micrun/definitions"
+	ped "micrun/pkg/pedestal"
 	"path/filepath"
 	"strconv"
 	"strings"
 )
-
-func MaxMemMB() uint32 {
-	_, max := ped.MemoryMB()
-	return max
-}
 
 func MaxCPUNum() int {
 	return int(ped.MaxCPUNum())

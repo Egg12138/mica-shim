@@ -5,19 +5,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	defs "mica-shim/definitions"
-	er "mica-shim/errors"
-	log "mica-shim/logger"
-	"mica-shim/pkg/libmica"
-	ped "mica-shim/pkg/pedestal"
-	"mica-shim/pkg/utils"
+	defs "micrun/definitions"
+	er "micrun/errors"
+	log "micrun/logger"
+	"micrun/pkg/libmica"
+	ped "micrun/pkg/pedestal"
+	"micrun/pkg/utils"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 
-	"mica-shim/pkg/cpuset"
+	"micrun/pkg/cpuset"
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/opencontainers/runtime-spec/specs-go"
@@ -34,10 +33,6 @@ type SandboxStatus struct {
 	Annotations     map[string]string
 	ID              string
 	State           SandboxState
-}
-
-type SandboxStats struct {
-	Cpus int
 }
 
 type SandboxConfig struct {
@@ -162,7 +157,7 @@ type Sandbox struct {
 	sync.Mutex
 	// fs, storage, devices, volumes...
 	// monitor
-	resManager SandboxAgent
+	resManager SandboxResource
 	config     *SandboxConfig
 	containers map[string]*Container
 	id         string
@@ -198,21 +193,6 @@ func (s *Sandbox) Annotation(key string) (string, error) {
 	return value, nil
 }
 
-func (s *Sandbox) SetAnnotations(annotations map[string]string) {
-	s.annotaLock.Lock()
-	defer s.annotaLock.Unlock()
-	for k, v := range annotations {
-		s.config.Annotations[k] = v
-	}
-
-}
-
-func (s *Sandbox) AllAnnotations() map[string]string {
-	s.annotaLock.RLock()
-	defer s.annotaLock.RUnlock()
-	return s.config.Annotations
-}
-
 func (s *Sandbox) DaemonState() *libmica.MicaDaemonState {
 	state, err := libmica.DaemonState()
 	if err != nil && !errors.Is(err, er.MicadNotRunning) {
@@ -235,10 +215,6 @@ func (s *Sandbox) NetnsHolderPID() int {
 		return cfg.NetworkConfig.HolderPid
 	}
 	return 0
-}
-
-func (s *Sandbox) GetContainer(id string) ContainerTraits {
-	return s.containers[id]
 }
 
 // status of containers and sandbox itself;
@@ -429,32 +405,6 @@ func (s *Sandbox) CreateContainer(ctx context.Context, config ContainerConfig) (
 	return c, nil
 }
 
-func (s *Sandbox) Status() SandboxStatus {
-	var cStatusList []ContainerStatus
-	for _, c := range s.containers {
-		rootfs := c.config.Rootfs.Source
-		if c.config.Rootfs.Mounted {
-			rootfs = c.config.Rootfs.Target
-		}
-		s := ContainerStatus{
-			ID:          c.id,
-			State:       c.state,
-			Rootfs:      rootfs,
-			Annotations: c.config.Annotations,
-			CreatedAt:   c.taskInfo.CreateTime,
-			Pid:         c.config.Pid,
-		}
-		cStatusList = append(cStatusList, s)
-	}
-
-	return SandboxStatus{
-		ContainersState: cStatusList,
-		Annotations:     s.config.Annotations,
-		ID:              s.id,
-		State:           s.state,
-	}
-}
-
 func (s *Sandbox) removeContainer(containerID string) error {
 	log.Debugf("remove container %s", containerID)
 	if s == nil {
@@ -622,12 +572,6 @@ func (s *Sandbox) StatsContainer(ctx context.Context, id string) (ContainerStats
 	return *stats, nil
 }
 
-func (s *Sandbox) Stats(ctx context.Context) (SandboxStats, error) {
-	stats := SandboxStats{}
-	stats.Cpus = int(s.resManager.VcpuNum)
-	return stats, nil
-}
-
 func (s *Sandbox) IOStream(containerID, taskID string) (io.WriteCloser, io.Reader, io.Reader, error) {
 	if s.state.State != StateRunning {
 		return nil, nil, nil, er.SandboxDown
@@ -639,10 +583,6 @@ func (s *Sandbox) IOStream(containerID, taskID string) (io.WriteCloser, io.Reade
 	}
 
 	return c.ioStream(taskID)
-}
-
-func (s *Sandbox) GetOOMEvent(ctx context.Context) (string, error) {
-	return "", nil
 }
 
 // Not supported well
@@ -677,20 +617,6 @@ func (s *Sandbox) WaitContainerExit(ctx context.Context, containerID string) (in
 	case <-c.exitNotifier:
 		return ok0, nil
 	}
-}
-
-func (s *Sandbox) SignalTask(ctx context.Context, containerID string, signal syscall.Signal) error {
-	if s.state.State != StateRunning {
-		return er.SandboxDown
-	}
-
-	log.Debugf("sending signal %d for container %s in sandbox %s", uint32(signal), containerID, s.id)
-	c, ok := s.containers[containerID]
-	if !ok || c == nil {
-		return er.ContainerNotFound
-	}
-
-	return c.Signal(ctx, signal)
 }
 
 func (s *Sandbox) WinResize(ctx context.Context, containerID string, height, width uint32) error {

@@ -2,8 +2,8 @@ package micantainer
 
 import (
 	"fmt"
-	log "mica-shim/logger"
-	"mica-shim/pkg/netns"
+	log "micrun/logger"
+	"micrun/pkg/netns"
 
 	"github.com/containerd/errdefs"
 	"github.com/opencontainers/runtime-spec/specs-go"

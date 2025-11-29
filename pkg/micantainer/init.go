@@ -1,8 +1,8 @@
 package micantainer
 
 import (
-	log "mica-shim/logger"
-	ped "mica-shim/pkg/pedestal"
+	log "micrun/logger"
+	ped "micrun/pkg/pedestal"
 )
 
 var (

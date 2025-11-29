@@ -35,8 +35,8 @@ const (
 
 	// OSAnnotation specifies the client OS type. Corresponds to ini config keys in [Mica] section of client.conf.
 	OSAnnotation = ContainerPrefix + "os"
-	// FirmwarePath specifies the relative path to the firmware, in the bundle.
-	FirmwarePath = ContainerPrefix + "firmware_path"
+	// FirmwarePathAnno specifies the relative path to the firmware, in the bundle.
+	FirmwarePathAnno = ContainerPrefix + "firmware_path"
 	// FirmwareHash is the sha-256 hash of the firmware.
 	FirmwareHash = ContainerPrefix + "firmware_hash"
 	// Some rtos may not support in-client shutdown well, so micran add timeout autodisconnect

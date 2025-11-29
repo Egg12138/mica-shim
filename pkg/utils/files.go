@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	defs "mica-shim/definitions"
+	defs "micrun/definitions"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -15,7 +15,7 @@ import (
 	cdtypes "github.com/containerd/containerd/api/types"
 	"github.com/containerd/containerd/mount"
 
-	log "mica-shim/logger"
+	log "micrun/logger"
 )
 
 func IsRegular(path string) bool {

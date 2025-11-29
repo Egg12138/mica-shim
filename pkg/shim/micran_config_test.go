@@ -4,9 +4,9 @@
 package shim
 
 import (
-	defs "mica-shim/definitions"
-	oci "mica-shim/pkg/oci"
-	pedestal "mica-shim/pkg/pedestal"
+	defs "micrun/definitions"
+	oci "micrun/pkg/oci"
+	pedestal "micrun/pkg/pedestal"
 	"os"
 	"path/filepath"
 	"testing"

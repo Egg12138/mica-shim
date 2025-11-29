@@ -9,8 +9,8 @@ import (
 	"testing"
 	"unsafe"
 
-	libmica "mica-shim/pkg/libmica"
-	ped "mica-shim/pkg/pedestal"
+	libmica "micrun/pkg/libmica"
+	ped "micrun/pkg/pedestal"
 )
 
 // mirror of libmica.MicaClientConf for test access to cpuWeight.

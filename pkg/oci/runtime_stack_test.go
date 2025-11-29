@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	configstack "mica-shim/pkg/configstack"
+	configstack "micrun/pkg/configstack"
 )
 
 func TestRuntimeStackReplace(t *testing.T) {

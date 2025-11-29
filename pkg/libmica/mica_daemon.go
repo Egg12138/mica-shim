@@ -2,15 +2,15 @@ package libmica
 
 import (
 	"fmt"
-	er "mica-shim/errors"
-	log "mica-shim/logger"
+	er "micrun/errors"
+	log "micrun/logger"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"syscall"
 
-	defs "mica-shim/definitions"
+	defs "micrun/definitions"
 )
 
 // Constants

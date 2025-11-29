@@ -2,10 +2,11 @@ package oci
 
 import (
 	"encoding/json"
-	defs "mica-shim/definitions"
-	log "mica-shim/logger"
-	"mica-shim/pkg/pedestal"
-	"mica-shim/pkg/utils"
+	"fmt"
+	defs "micrun/definitions"
+	log "micrun/logger"
+	"micrun/pkg/pedestal"
+	"micrun/pkg/utils"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -101,8 +102,11 @@ func NewRuntimeConfig() *RuntimeConfig {
 // TODO: with expanding of micran runtime config, we will migrate gookit.ini/v2 to
 // out ParseConfigINI, ParseConfigINI requires only half memory of ini package and faster
 // for large ini file parsing
-func (r *RuntimeConfig) ParseRuntimeFromFile(configPath string) error {
-	filtered, err := utils.ParseConfigINI(configPath, runtimeConfigKeys)
+func (r *RuntimeConfig) ParseRuntimeFromINI(configPath string) error {
+	if _, err := os.Stat(configPath); err != nil {
+		return err
+	}
+	filtered, err := utils.ParseINI(configPath, runtimeConfigKeys)
 	if err != nil {
 		return err
 	}
@@ -112,6 +116,16 @@ func (r *RuntimeConfig) ParseRuntimeFromFile(configPath string) error {
 	return nil
 }
 
+// TODO: finished
+// use "github.com/BurntSushi/toml"
+func (r *RuntimeConfig) ParseRuntimeFromToml(configPath string) error {
+	if _, err := os.Stat(configPath); err != nil {
+		return err
+	}
+	return fmt.Errorf("parse micrun config from toml is not supported yet")
+}
+
+// workaround, should be replaced
 func (r *RuntimeConfig) convertRawConfig(raw map[string]string) {
 	r.SetStaticResourceManagement(raw[KeyStaticResource])
 	r.SetDebug(raw[KeyDebug])

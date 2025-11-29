@@ -2,9 +2,9 @@ package micantainer
 
 import (
 	"fmt"
-	log "mica-shim/logger"
-	"mica-shim/pkg/libmica"
-	"mica-shim/pkg/pedestal"
+	log "micrun/logger"
+	"micrun/pkg/libmica"
+	"micrun/pkg/pedestal"
 
 	"github.com/opencontainers/runtime-spec/specs-go"
 )

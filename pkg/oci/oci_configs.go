@@ -9,12 +9,11 @@ import (
 	"strconv"
 	"strings"
 
-	defs "mica-shim/definitions"
-	log "mica-shim/logger"
-	"mica-shim/pkg/configstack"
-	cntr "mica-shim/pkg/micantainer"
-	"mica-shim/pkg/pedestal"
-	"mica-shim/pkg/utils"
+	defs "micrun/definitions"
+	log "micrun/logger"
+	cntr "micrun/pkg/micantainer"
+	"micrun/pkg/pedestal"
+	"micrun/pkg/utils"
 
 	ctrAnnotations "github.com/containerd/containerd/pkg/cri/annotations"
 	podmanAnnotations "github.com/containers/podman/v4/pkg/annotations"
@@ -85,142 +84,64 @@ func bundleRootfs(bundle string) string {
 	return filepath.Join(bundle, "rootfs")
 }
 
-func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerType, detach bool, defaultFirmwarePath string, runtimeConfig *RuntimeConfig) (*cntr.ContainerConfig, error) {
-	baseRootfs := bundleRootfs(bundle)
-
-	clientLayer, clientConfErr := configstack.LoadClientLayer(baseRootfs)
-	if clientConfErr != nil {
-		log.Warnf("failed to load client.conf for %s: %v", id, clientConfErr)
-	}
-
-	getAnnotation := func(key string) (string, bool) {
-		if ocispec.Annotations == nil {
-			return "", false
-		}
-		if raw, ok := ocispec.Annotations[key]; ok {
-			trimmed := strings.TrimSpace(raw)
-			if trimmed != "" {
-				return trimmed, true
-			}
-		}
-		return "", false
-	}
-
+// extPedConfig extracts and validates pedestal configuration from annotations.
+// Returns pedestal type, config path, or error if validation fails.
+// This includes checking pedestal type compatibility and resolving Xen image paths.
+func extPedConfig(getAnnotation func(string) (string, bool), baseRootfs, id string) (pedestal.PedType, string, error) {
 	pedtype := cntr.HostPedType
-	if pedAnnotation, ok := getAnnotation(defs.Pedtype); ok {
-		parsedType := pedestal.ParsePedType(pedAnnotation)
-		if parsedType != pedestal.Unsupported {
-			pedtype = parsedType
-			log.Debugf("found pedestal type annotation: %s", pedAnnotation)
-		} else {
-			log.Warnf("unknown pedestal type '%s', using default", pedAnnotation)
+	// if pedType is not specified, use host ped type, skip matching
+	if pedAnnoation, ok := getAnnotation(defs.Pedtype); ok {
+		if pedAnnoation != pedtype.String() {
+			log.Errorf("pedestal type mismatch, host pedestal is %s, while image container %s requires pedestal %s ", pedtype.String(), id, pedAnnoation)
+			return pedtype, "", fmt.Errorf("hypervisor type mismatched: %s ~ %s", pedtype.String(), pedAnnoation)
 		}
-	} else if clientLayer.PedestalType != "" {
-		parsedType := pedestal.ParsePedType(clientLayer.PedestalType)
-		if parsedType != pedestal.Unsupported {
-			pedtype = parsedType
-			log.Debugf("client.conf overrides pedestal type: %s", clientLayer.PedestalType)
-		} else {
-			log.Warnf("unknown pedestal type '%s' in client.conf, using default", clientLayer.PedestalType)
-		}
-	}
-
-	// resolve a container bundle file's path (absolute inside container or relative) to a host path under baseRootfs.
-	// p = "/absolute-path-to-rootfs" => "$baseRootfs/relative-path-to-rootfs"
-	// p = "relateive-path-to-rootfs" => "$baseRootfs/relative-path-to-rootfs"
-	// p = "" => ""
-	bundleContentPathToHost := func(p string) string {
-		trimmed := strings.TrimSpace(p)
-		if trimmed == "" {
-			return ""
-		}
-		if filepath.IsAbs(trimmed) {
-			return filepath.Join(baseRootfs, strings.TrimPrefix(trimmed, string(filepath.Separator)))
-		}
-		return filepath.Join(baseRootfs, trimmed)
-	}
-
-	// resolveBundleFilePath now only does path conversion without file existence check
-	// File existence will be validated after bundle mounting
-	resolveBundleFilePath := func(p string) string {
-		rp := bundleContentPathToHost(p)
-		if rp == "" {
-			return ""
-		}
-		if abs, err := utils.ResolvePath(rp); err == nil {
-			log.Debugf("resolved path (to be validated later): %s -> %s", p, abs)
-			if utils.FileExist(abs) {
-				return abs
-			}
-		}
-		return ""
 	}
 
 	var pedconf string
 	if cfg, ok := getAnnotation(defs.PedestalConf); ok {
 		pedconf = cfg
 		log.Debugf("pedestal config path from annotation: %s", pedconf)
-	} else if clientLayer.PedestalConf != "" {
-		pedconf = clientLayer.PedestalConf
-		log.Debugf("pedestal config path from client.conf: %s", pedconf)
 	}
+
 	if pedtype == pedestal.Xen {
-		if pedconf == "" {
-			pedconf = pedestal.XenDefaultPedConf()
-			log.Debugf("using default xen binary image path for xen <image.bin>: %s", pedconf)
-		}
-		resolvedPed := resolveBundleFilePath(pedconf)
-		if resolvedPed == "" {
-			log.Debugf("file not found for: %s, use default path as fallback", pedconf)
-			fallback := resolveBundleFilePath(defs.DefaultXenBin)
-			if fallback != "" {
-				resolvedPed = fallback
-				log.Debugf("pedestal config missing for %q, falling back to %s", pedconf, fallback)
-			} else {
-				normalized := bundleContentPathToHost(pedconf)
-				pedconf = normalized
-				log.Warnf("xen pedestal config not found at %s (nor default %s)", normalized, bundleContentPathToHost(defs.DefaultXenBin))
-			}
-		}
-		if resolvedPed != "" {
-			pedconf = resolvedPed
-		}
+		// Resolve Xen pedestal image path with annotation > default fallback
+		pedconf = inBundlePath(baseRootfs, pedconf, defs.DefaultXenBin)
+		log.Debugf("Resolved Xen pedestal config path: %s", pedconf)
 	}
 
-	osName := "zephyr" // default
-	if osAnnotation, ok := getAnnotation(defs.OSAnnotation); ok {
-		osName = osAnnotation
+	return pedtype, pedconf, nil
+}
+
+// extOSInfo extracts OS name from annotations.
+func extOSInfo(getAnnotation func(string) (string, bool)) string {
+	var osName string
+	if osAnno, ok := getAnnotation(defs.OSAnnotation); ok {
+		osName = osAnno
 		log.Debugf("found OS annotation: %s", osName)
-	} else if clientLayer.OS != "" {
-		osName = clientLayer.OS
-		log.Debugf("client.conf overrides OS: %s", osName)
+	} else {
+		log.Warnf("unable to know the RTOS type ")
 	}
+	return osName
+}
 
-	resolveFirmwarePath := func(p string) (string, error) {
-		trimmed := strings.TrimSpace(p)
-		if trimmed == "" {
-			return "", nil
-		}
-		hostPath := resolveBundleFilePath(trimmed)
-		if hostPath != "" {
-			log.Debugf("resolved firmware path (to be validated later): %s -> %s", trimmed, hostPath)
-			return hostPath, nil
-		}
-		log.Debugf("firmware path %s converted, will try defaults after mounting", trimmed)
-		return "", nil
+// extFirmwareAnno extracts firmware path from annotations.
+func extFirmwareAnno(getAnnotation func(string) (string, bool), baseRootfs string) string {
+	var annotationFirmware string
+	if fw, ok := getAnnotation(defs.FirmwarePathAnno); ok && fw != "" {
+		annotationFirmware = inBundlePath(baseRootfs, fw, defs.DefaultFirmwareName)
+		log.Debugf("using firmware from annotation: %s", annotationFirmware)
 	}
+	return annotationFirmware
+}
 
-	annotationFirmware := ""
-	if fw, ok := getAnnotation(defs.FirmwarePath); ok {
-		annotationFirmware = fw
-	}
-
-	hasMicranAnnotation := false
+// detectType determines container type based on annotations and spec.
+func detectType(getAnnotation func(string) (string, bool), Type cntr.ContainerType, ocispec specs.Spec, annotationFirmware string) bool {
+	hasMicrunAnn := false
 	log.Pretty("spec annotations=%v", ocispec.Annotations)
 	if ocispec.Annotations != nil {
 		for key := range ocispec.Annotations {
 			if strings.HasPrefix(key, defs.MicranAnnotationPrefix) {
-				hasMicranAnnotation = true
+				hasMicrunAnn = true
 				break
 			}
 		}
@@ -241,64 +162,46 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 
 	isCRISandbox := Type == cntr.PodSandbox
 	log.Debugf("isCRISandbox?%v, hasCRIInfraAnnotation?%v, hasMicranAnnotation?%v, annotationFirmware=%s",
-		isCRISandbox, hasCRIInfraAnnotation, hasMicranAnnotation, annotationFirmware)
+		isCRISandbox, hasCRIInfraAnnotation, hasMicrunAnn, annotationFirmware)
 
-	isInfra := hasCRIInfraAnnotation
-	// if isCRISandbox && !hasCRIInfraAnnotation {
-	// 	log.Debugf("container %s missing infra annotation; treating it as micran workload", id)
-	// }
+	return hasCRIInfraAnnotation
+}
 
-	// Note: TravelDir moved to after bundle mounting to properly check files in mounted rootfs
-	// This avoids checking paths before the container filesystem is available
-
-	// Resolve firmware path priority: annotation > runtime default > discovery
+// resolveElfPath resolves firmware ELF file path with precedence: annotation > runtime default > discovery.
+func resolveElfPath(baseRootfs string, isInfra bool, annotationFirmware string) (string, error) {
 	var elfPath string
-	if !isInfra {
-		switch {
-		case annotationFirmware != "":
-			if resolved, err := resolveFirmwarePath(annotationFirmware); err != nil {
-				return nil, fmt.Errorf("failed to resolve firmware path from annotation: %w", err)
-			} else {
-				elfPath = resolved
-			}
-		case strings.TrimSpace(clientLayer.FirmwarePath) != "":
-			if resolved, err := resolveFirmwarePath(clientLayer.FirmwarePath); err != nil {
-				return nil, fmt.Errorf("failed to resolve firmware path from client.conf: %w", err)
-			} else {
-				elfPath = resolved
-			}
-		case strings.TrimSpace(defaultFirmwarePath) != "":
-			if resolved, err := resolveFirmwarePath(defaultFirmwarePath); err != nil {
-				return nil, fmt.Errorf("failed to resolve firmware path from runtime config: %w", err)
-			} else {
-				elfPath = resolved
-			}
-		default:
-			// No explicit firmware path provided; fall back to common defaults.
-		}
-
+	if !isInfra && annotationFirmware != "" {
+		elfPath = getBundleImageFile(baseRootfs, annotationFirmware)
 		if elfPath == "" {
-			defaultElfPath := resolveBundleFilePath(defs.DefaultFirmwareName)
-			if defaultElfPath != "" {
-				elfPath = defaultElfPath
-				log.Debugf("using default elf path: %s", elfPath)
-			} else {
-				elfFiles, _ := filepath.Glob(filepath.Join(baseRootfs, "*.elf"))
-				if len(elfFiles) > 0 {
-					elfPath = elfFiles[0]
-					log.Debugf("found elf file: %s", elfPath)
-				} else {
-					return nil, fmt.Errorf("no elf file found in container rootfs and no firmware path provided via annotation or runtime configuration")
-				}
-			}
+			return "", fmt.Errorf("firmware file not found: %s", annotationFirmware)
 		}
 	}
 
+	if elfPath == "" {
+		defaultElfPath := getBundleImageFile(baseRootfs, defs.DefaultFirmwareName)
+		if defaultElfPath != "" {
+			elfPath = defaultElfPath
+			log.Debugf("using default elf path: %s", elfPath)
+		} else {
+			elfFiles, _ := filepath.Glob(filepath.Join(baseRootfs, "*.elf"))
+			if len(elfFiles) > 0 {
+				elfPath = elfFiles[0]
+				log.Debugf("found elf file: %s", elfPath)
+			} else {
+				return "", fmt.Errorf("no elf file found in container rootfs and no firmware path provided via annotation or runtime configuration")
+			}
+		}
+	}
+	return elfPath, nil
+}
+
+// prepCache prepares container cache directory and copies firmware/pedestal files to safe location.
+func prepCache(id, baseRootfs, pedconf, elfPath string) (string, string, error) {
 	// Create a dedicated directory for the container to cache firmware, image, etc.
 	// This avoids race conditions with the bundle being unmounted by containerd.
 	containerCacheDir := filepath.Join(defs.DefaultMicaContainersRoot, id)
 	if err := os.MkdirAll(containerCacheDir, defs.DirMode); err != nil {
-		return nil, fmt.Errorf("failed to create container cache directory %s: %w", containerCacheDir, err)
+		return "", "", fmt.Errorf("failed to create container cache directory %s: %w", containerCacheDir, err)
 	}
 
 	// copyToCache copies a file to the container's cache directory if it's a valid file.
@@ -311,7 +214,10 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 		// we pass it along as-is and let the consumer (micad) deal with it. This is to avoid
 		// breaking cases where the path might not be a simple file.
 		stat, err := os.Stat(sourcePath)
-		if err != nil || !stat.Mode().IsRegular() {
+		if err != nil {
+			return sourcePath, nil
+		}
+		if !stat.Mode().IsRegular() {
 			return sourcePath, nil
 		}
 
@@ -338,9 +244,50 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 
 	var err error
 	if pedconf, err = copyToCache(pedconf); err != nil {
-		return nil, err
+		return "", "", err
 	}
 	if elfPath, err = copyToCache(elfPath); err != nil {
+		return "", "", err
+	}
+	return pedconf, elfPath, nil
+}
+
+// container bundle rootfs is already mounted
+// hence we can check bundle contents for container configuration
+func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerType, detach bool, defaultFirmwarePath string, runtimeConfig *RuntimeConfig) (*cntr.ContainerConfig, error) {
+	baseRootfs := bundleRootfs(bundle)
+
+	getAnnotation := func(key string) (string, bool) {
+		if ocispec.Annotations == nil {
+			return "", false
+		}
+		if raw, ok := ocispec.Annotations[key]; ok {
+			trimmed := strings.TrimSpace(raw)
+			if trimmed != "" {
+				return trimmed, true
+			}
+		}
+		return "", false
+	}
+
+	pedtype, pedconf, err := extPedConfig(getAnnotation, baseRootfs, id)
+	if err != nil {
+		return nil, err
+	}
+
+	osName := extOSInfo(getAnnotation)
+
+	annotationFirmware := extFirmwareAnno(getAnnotation, baseRootfs)
+
+	isInfra := detectType(getAnnotation, Type, ocispec, annotationFirmware)
+
+	elfPath, err := resolveElfPath(baseRootfs, isInfra, annotationFirmware)
+	if err != nil {
+		return nil, err
+	}
+
+	pedconf, elfPath, err = prepCache(id, baseRootfs, pedconf, elfPath)
+	if err != nil {
 		return nil, err
 	}
 
@@ -349,7 +296,7 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 		// Container ID
 		ID: id,
 		// OCI and bundle info
-		ElfAbsPath:   elfPath,
+		ImageAbsPath: elfPath,
 		PedestalType: pedtype,
 		PedestalConf: pedconf,
 		OS:           osName,
@@ -473,8 +420,8 @@ func SandboxConfig(ocispec *specs.Spec, rc RuntimeConfig, bundle, sbContainerID 
 	if sandboxConfig.Annotations == nil {
 		sandboxConfig.Annotations = make(map[string]string)
 	}
-	if containerConfig.ElfAbsPath != "" {
-		sandboxConfig.Annotations[defs.FirmwarePath] = containerConfig.ElfAbsPath
+	if containerConfig.ImageAbsPath != "" {
+		sandboxConfig.Annotations[defs.FirmwarePathAnno] = containerConfig.ImageAbsPath
 	}
 	return sandboxConfig, nil
 }
@@ -686,4 +633,48 @@ func GetContainerSpec(annotations map[string]string) (specs.Spec, error) {
 	log.Debugf("annotations[%s] not found, cannot find container spec",
 		defs.BundlePathKey)
 	return specs.Spec{}, fmt.Errorf("Could not find container spec")
+}
+
+// getBundleImageFile now does path conversion and simple file existence check
+func getBundleImageFile(dir, p string) string {
+	rp := bundleFilePath(dir, p)
+	if rp == "" {
+		return ""
+	}
+	if abs, err := utils.ResolvePath(rp); err == nil {
+		log.Debugf("resolved path (to be validated later): %s -> %s", p, abs)
+		if utils.FileExist(abs) {
+			return abs
+		}
+	}
+	return ""
+}
+
+// inBundlePath selects a path from annotation with fallback to default value.
+// This function implements simple precedence: annotationValue > defaultValue.
+// It returns the selected path as-is without converting it to a host path.
+// Path conversion to host filesystem is done later by getBundleImageFile.
+//
+// The baseRootfs parameter is unused but preserved for API consistency and future extensibility.
+func inBundlePath(baseRootfs, annotationValue, defaultValue string) string {
+	value := annotationValue
+	if value == "" {
+		value = defaultValue
+	}
+	return value
+}
+
+// resolve a container bundle file's path (absolute inside container or relative) to a host path under baseRootfs.
+// p = "/absolute-path-to-rootfs" => "$baseRootfs/relative-path-to-rootfs"
+// p = "relateive-path-to-rootfs" => "$baseRootfs/relative-path-to-rootfs"
+// p = "" => ""
+func bundleFilePath(dir, p string) string {
+	trimmed := strings.TrimSpace(p)
+	if trimmed == "" {
+		return ""
+	}
+	if filepath.IsAbs(trimmed) {
+		return filepath.Join(dir, strings.TrimPrefix(trimmed, string(filepath.Separator)))
+	}
+	return filepath.Join(dir, trimmed)
 }

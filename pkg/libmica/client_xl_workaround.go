@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	log "mica-shim/logger"
-	"mica-shim/pkg/pedestal"
+	log "micrun/logger"
+	"micrun/pkg/pedestal"
 )
 
 func handleMicaUpdateWithXl(id string, opts ...string) error {

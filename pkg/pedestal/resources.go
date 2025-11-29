@@ -1,7 +1,7 @@
 package pedestal
 
 import (
-	defs "mica-shim/definitions"
+	defs "micrun/definitions"
 	"runtime"
 	"sync"
 	"sync/atomic"

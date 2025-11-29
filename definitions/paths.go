@@ -20,9 +20,10 @@ const (
 	SandboxDataDir = "/run/micran/sandbox"
 
 	// Micrun configuration (INI today, easy to switch to TOML later).
-	MicrunConfDir     = "/etc/micrun"
-	MicrunConfDropin  = MicrunConfDir + "/conf.d"
+	MicrunConfDir    = "/etc/mica/micrun"
+	MicrunConfDropin = MicrunConfDir + "/conf.d"
+	// specify
 	MicrunConfEnv     = "MICRUN_CONF_FILE"
 	MicrunConfDirEnv  = "MICRUN_CONF_DIR"
-	DefaultMicrunConf = "micrun.ini"
+	DefaultMicrunConf = "micrun.conf"
 )

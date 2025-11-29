@@ -21,14 +21,14 @@ import (
 	"github.com/hashicorp/go-multierror"
 	"github.com/opencontainers/runtime-spec/specs-go"
 
-	defs "mica-shim/definitions"
-	er "mica-shim/errors"
-	log "mica-shim/logger"
-	"mica-shim/pkg/cpuset"
-	"mica-shim/pkg/libmica"
-	"mica-shim/pkg/netns"
-	ped "mica-shim/pkg/pedestal"
-	utils "mica-shim/pkg/utils"
+	defs "micrun/definitions"
+	er "micrun/errors"
+	log "micrun/logger"
+	"micrun/pkg/cpuset"
+	"micrun/pkg/libmica"
+	"micrun/pkg/netns"
+	ped "micrun/pkg/pedestal"
+	utils "micrun/pkg/utils"
 )
 
 // ContainerStats holds statistics for a container.
@@ -119,13 +119,14 @@ type ContainerConfig struct {
 	Annotations    map[string]string
 	Resources      *specs.LinuxResources
 
-	// ElfAbsPath is the absolute path of the <os>.elf in the host.
-	ElfAbsPath   string      `json:"elf_abs_path"`
+	// ImageAbsPath is the absolute path of the <RTOS> image in the host required by mica
+	ImageAbsPath string      `json:"image_abs_path"`
 	PedestalType ped.PedType `json:"pedestal_type"`
-	PedestalConf string      `json:"pedestal_conf"`
-	OS           string      `json:"os"`
+	// pedestalconf in xen is the abspath for xen guest image
+	PedestalConf string `json:"pedestal_conf"`
+	OS           string `json:"os"`
 
-	// CpuLimit is the CPU limit in cores (cpuqupta / cpuperiod).
+	// CpuLimit is the CPU limit in cores (cpuqupta / cpuperiod), related to Cpu capacity
 	CpuLimit  uint32 `json:"cpu_limit"`
 	CpuQuota  int64  `json:"cpu_quota"`
 	CpuPeriod uint64 `json:"cpu_period"`
@@ -1440,7 +1441,7 @@ func (c *Container) winresize(height, width uint32) error {
 
 // firmware is the elf file of rtos
 func (c *Container) GetFirmwarePath() string {
-	return c.config.ElfAbsPath
+	return c.config.ImageAbsPath
 }
 
 func (c *Container) GetPedestalConf() string {

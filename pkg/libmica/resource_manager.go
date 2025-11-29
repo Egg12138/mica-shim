@@ -2,8 +2,8 @@ package libmica
 
 import (
 	"fmt"
-	log "mica-shim/logger"
-	"mica-shim/pkg/pedestal"
+	log "micrun/logger"
+	"micrun/pkg/pedestal"
 	"strconv"
 	"strings"
 )

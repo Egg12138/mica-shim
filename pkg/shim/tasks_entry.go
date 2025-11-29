@@ -3,9 +3,9 @@ package shim
 import (
 	"context"
 	"fmt"
-	er "mica-shim/errors"
-	log "mica-shim/logger"
-	utils "mica-shim/pkg/utils"
+	er "micrun/errors"
+	log "micrun/logger"
+	utils "micrun/pkg/utils"
 	"os"
 	"sync"
 	"syscall"

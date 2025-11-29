@@ -5,10 +5,10 @@ package libmica
 import (
 	"encoding/binary"
 	"fmt"
-	defs "mica-shim/definitions"
-	er "mica-shim/errors"
-	log "mica-shim/logger"
-	"mica-shim/pkg/pedestal"
+	defs "micrun/definitions"
+	er "micrun/errors"
+	log "micrun/logger"
+	"micrun/pkg/pedestal"
 	"path/filepath"
 	"strings"
 )

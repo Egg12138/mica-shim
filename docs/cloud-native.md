@@ -1,6 +1,6 @@
 # MIca in CLoud-native
 
-runtime: micantainer(mica-shim)
+runtime: micantainer(micrun)
 
 ## join k8s with micran
 

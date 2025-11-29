@@ -3,7 +3,7 @@ package utils
 import (
 	"bufio"
 	"fmt"
-	log "mica-shim/logger"
+	log "micrun/logger"
 	"os"
 	"os/exec"
 	"path/filepath"

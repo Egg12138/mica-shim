@@ -1,8 +1,8 @@
 package pedestal
 
 import (
-	log "mica-shim/logger"
-	"mica-shim/pkg/cpuset"
+	log "micrun/logger"
+	"micrun/pkg/cpuset"
 
 	"github.com/opencontainers/runtime-spec/specs-go"
 )

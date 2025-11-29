@@ -15,9 +15,9 @@ import (
 
 	"github.com/shirou/gopsutil/v3/mem"
 
-	er "mica-shim/errors"
-	log "mica-shim/logger"
-	"mica-shim/pkg/cpuset"
+	er "micrun/errors"
+	log "micrun/logger"
+	"micrun/pkg/cpuset"
 )
 
 const DefaultCgroupShare = 1024

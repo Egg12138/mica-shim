@@ -4,14 +4,14 @@ package shim
 import (
 	"context"
 	"fmt"
-	defs "mica-shim/definitions"
-	log "mica-shim/logger"
-	"mica-shim/pkg/configstack"
-	cntr "mica-shim/pkg/micantainer"
-	"mica-shim/pkg/netns"
-	"mica-shim/pkg/oci"
-	"mica-shim/pkg/pedestal"
-	"mica-shim/pkg/utils"
+	defs "micrun/definitions"
+	log "micrun/logger"
+	"micrun/pkg/configstack"
+	cntr "micrun/pkg/micantainer"
+	"micrun/pkg/netns"
+	"micrun/pkg/oci"
+	"micrun/pkg/pedestal"
+	"micrun/pkg/utils"
 	"os"
 	"path/filepath"
 
@@ -26,6 +26,9 @@ import (
 )
 
 // create is the internal implementation for the Create RPC. It handles sandbox and container creation.
+// there is no "Sandbox" inside a OCI image
+// rootfsPath is <bundle>/rootfs, whatever containerType is.
+// typically, bundle = /var/lib/containerd/io.containerd.runtime.v2.task/<namespace>/<containerd_id>, mounted from r.Rootfs by runtime
 func create(ctx context.Context, s *shimService, r *taskAPI.CreateTaskRequest) (_ *container, err error) {
 	err = setupMicranStateDir()
 	if err != nil {
@@ -58,76 +61,8 @@ func create(ctx context.Context, s *shimService, r *taskAPI.CreateTaskRequest) (
 		return nil, err
 	}
 
-	// Create container based on its type.
-	switch containerType {
-	case cntr.PodSandbox, cntr.SingleContainer:
-		if s.sandbox != nil {
-			return nil, fmt.Errorf("cannot create an existing sandbox: %s", s.sandbox.SandboxID())
-		}
-
-		s.config = runtimeConfig
-		if containerType == cntr.PodSandbox {
-			s.config.SandboxCPUs, s.config.SandboxMemMB = oci.CalculateSandboxSizing(ociSpec)
-		} else {
-			s.config.SandboxCPUs, s.config.SandboxMemMB = oci.CalculateContainerSizing(ociSpec)
-		}
-
-		if containerType != cntr.PodSandbox {
-			utils.TravelDir(r.Rootfs[0].GetSource())
-		}
-		if err := mountRootfs(rootfsPath, r.Rootfs); err != nil {
-			return nil, err
-		}
-		rootfs.Mounted = true
-
-		defer func() {
-			if err != nil && rootfs.Mounted {
-				if errUmnt := mount.UnmountAll(rootfsPath, 0); errUmnt != nil {
-					log.Warnf("failed to clean up rootfs mount: %v", errUmnt)
-				}
-			}
-		}()
-
-		// After mounting rootfs, show the actual mounted content for debugging
-		if containerType != cntr.PodSandbox {
-			log.Debug("rootfs mounted for single container, showing rootfs contents:")
-			utils.TravelDir(rootfsPath)
-		}
-
-		sandbox, err := createSandbox(ctx, ociSpec, runtimeConfig, rootfs, r.ID, bundlePath, disableOutput)
-		if err != nil {
-			return nil, err
-		}
-
-		s.sandbox = sandbox
-
-	case cntr.PodContainer:
-		if s.sandbox == nil {
-			return nil, fmt.Errorf("cannot start the pod container, since the sandbox is not created")
-		}
-
-		if err = mountRootfs(rootfsPath, r.Rootfs); err != nil {
-			return nil, err
-		}
-		rootfs.Mounted = true
-
-		defer func() {
-			if err != nil && rootfs.Mounted {
-				if errUmnt := mount.UnmountAll(rootfsPath, 0); errUmnt != nil {
-					log.Warnf("Failed to cleanup rootfs mount: %v.", errUmnt)
-				}
-			}
-		}()
-
-		log.Debug("rootfs mounted for pod container, showing rootfs contents: ")
-		utils.TravelDir(rootfsPath)
-
-		err = createContainerInSandbox(ctx, s.sandbox, *ociSpec, rootfs, r.ID, bundlePath, s.config, disableOutput)
-		if err != nil {
-			return nil, err
-		}
-	default:
-		return nil, fmt.Errorf("unsupported container type: %v", containerType)
+	if err := handleContainerTypeCreation(ctx, s, containerType, r, ociSpec, runtimeConfig, bundlePath, rootfsPath, disableOutput, &rootfs); err != nil {
+		return nil, err
 	}
 
 	container, err := newContainer(s, r, containerType, ociSpec, rootfs.Mounted)
@@ -142,6 +77,91 @@ func create(ctx context.Context, s *shimService, r *taskAPI.CreateTaskRequest) (
 	}
 
 	return container, nil
+}
+
+func handleContainerTypeCreation(ctx context.Context, s *shimService, containerType cntr.ContainerType,
+	r *taskAPI.CreateTaskRequest, ociSpec *specs.Spec, runtimeConfig *oci.RuntimeConfig,
+	bundlePath, rootfsPath string, disableOutput bool, rootfs *cntr.RootFs) error {
+	switch containerType {
+	case cntr.PodSandbox, cntr.SingleContainer:
+		return createSandboxContainer(ctx, s, containerType, r, ociSpec, runtimeConfig, bundlePath, rootfsPath, disableOutput, rootfs)
+	case cntr.PodContainer:
+		return createPodContainer(ctx, s, r, ociSpec, bundlePath, rootfsPath, disableOutput, rootfs)
+	default:
+		return fmt.Errorf("unsupported container type: %v", containerType)
+	}
+}
+
+func createSandboxContainer(ctx context.Context, s *shimService, containerType cntr.ContainerType,
+	r *taskAPI.CreateTaskRequest, ociSpec *specs.Spec, runtimeConfig *oci.RuntimeConfig,
+	bundlePath, rootfsPath string, disableOutput bool, rootfs *cntr.RootFs) (err error) {
+	if s.sandbox != nil {
+		return fmt.Errorf("cannot create an existing sandbox: %s", s.sandbox.SandboxID())
+	}
+
+	s.config = runtimeConfig
+	if containerType == cntr.PodSandbox {
+		s.config.SandboxCPUs, s.config.SandboxMemMB = oci.CalculateSandboxSizing(ociSpec)
+	} else {
+		s.config.SandboxCPUs, s.config.SandboxMemMB = oci.CalculateContainerSizing(ociSpec)
+	}
+
+	if containerType != cntr.PodSandbox {
+		log.Debug("rootfs mounted for single container, showing rootfs contents:")
+		utils.TravelDir(r.Rootfs[0].GetSource())
+	}
+
+	if errC := mountRootfs(rootfsPath, r.Rootfs); errC != nil {
+		return errC
+	}
+	rootfs.Mounted = true
+
+	defer func() {
+		if err != nil && rootfs.Mounted {
+			if errUmnt := mount.UnmountAll(rootfsPath, 0); errUmnt != nil {
+				log.Warnf("failed to clean up rootfs mount: %v", errUmnt)
+			}
+		}
+	}()
+
+	if containerType != cntr.PodSandbox {
+		log.Debug("rootfs mounted for single container, showing rootfs contents:")
+		utils.TravelDir(rootfsPath)
+	}
+
+	var sandbox cntr.SandboxTraits
+	sandbox, err = createSandbox(ctx, ociSpec, runtimeConfig, *rootfs, r.ID, bundlePath, disableOutput)
+	if err != nil {
+		return err
+	}
+
+	s.sandbox = sandbox
+	return nil
+}
+
+func createPodContainer(ctx context.Context, s *shimService, r *taskAPI.CreateTaskRequest,
+	ociSpec *specs.Spec, bundlePath, rootfsPath string,
+	disableOutput bool, rootfs *cntr.RootFs) (err error) {
+	if s.sandbox == nil {
+		return fmt.Errorf("cannot start the pod container, since the sandbox is not created")
+	}
+
+	if errC := mountRootfs(rootfsPath, r.Rootfs); errC != nil {
+		return errC
+	}
+	rootfs.Mounted = true
+
+	defer func() {
+		if err != nil && rootfs.Mounted {
+			if errUmnt := mount.UnmountAll(rootfsPath, 0); errUmnt != nil {
+				log.Warnf("Failed to cleanup rootfs mount: %v.", errUmnt)
+			}
+		}
+	}()
+
+	log.Debug("rootfs mounted for pod container, showing rootfs contents: ")
+
+	return createPodContainerInSandbox(ctx, s.sandbox, *ociSpec, *rootfs, r.ID, bundlePath, s.config, disableOutput)
 }
 
 // loadRuntimeConfig loads the runtime configuration from annotations, CRI options, or environment variables.
@@ -235,7 +255,7 @@ func getConfigPathFromOptions(options typeurl.Any) (string, error) {
 // BUG: Implement actual config file loading.
 func loadConfigFromFile(configPath string) (*oci.RuntimeConfig, error) {
 	cfg := oci.NewRuntimeConfig()
-	if err := cfg.ParseRuntimeFromFile(configPath); err != nil {
+	if err := cfg.ParseRuntimeFromINI(configPath); err != nil {
 		return nil, err
 	}
 	return cfg, nil
@@ -283,7 +303,7 @@ func createSandbox(ctx context.Context, ocispec *specs.Spec,
 		sandboxConfig.ContainerConfigs[containerId].Rootfs = rootfs
 	}
 
-	if err := setupNS(sandboxConfig.ID, &sandboxConfig.NetworkConfig); err != nil {
+	if err := setupNetNS(sandboxConfig.ID, &sandboxConfig.NetworkConfig); err != nil {
 		return nil, err
 	}
 
@@ -311,9 +331,6 @@ func createSandbox(ctx context.Context, ocispec *specs.Spec,
 
 	log.Debugf("Sandbox <%s> created.", sandbox.SandboxID())
 	containers := sandbox.GetAllContainers()
-	for _, c := range containers {
-		log.Debugf("Detect inside sandbox <%s>: container %s.", c.ID(), sandbox.SandboxID())
-	}
 	if len(containers) != 1 {
 		return nil, fmt.Errorf("container list from sandbox is wrong, expecting only one container, got %d", len(containers))
 	}
@@ -321,14 +338,14 @@ func createSandbox(ctx context.Context, ocispec *specs.Spec,
 	return sandbox, nil
 }
 
-// createContainerInSandbox creates a container within an existing sandbox.
-func createContainerInSandbox(ctx context.Context, sandbox cntr.SandboxTraits,
+// createPodContainerInSandbox creates a container within an existing sandbox.
+func createPodContainerInSandbox(ctx context.Context, sandbox cntr.SandboxTraits,
 	ocispec specs.Spec, rootfs cntr.RootFs,
 	containerID, bundlePath string, runtimeConfig *oci.RuntimeConfig, disableOutput bool) error {
 
 	var defaultFirmware string
 	if sandbox != nil {
-		if fw, err := sandbox.Annotation(defs.FirmwarePath); err == nil {
+		if fw, err := sandbox.Annotation(defs.FirmwarePathAnno); err == nil {
 			defaultFirmware = fw
 		}
 	}
@@ -364,7 +381,7 @@ func cleanupNetNS(sandboxID string, netcfg *cntr.NetworkConfig) error {
 	return nil
 }
 
-func setupNS(sandboxID string, netcfg *cntr.NetworkConfig) error {
+func setupNetNS(sandboxID string, netcfg *cntr.NetworkConfig) error {
 	if netcfg == nil {
 		return fmt.Errorf("setup netns: nil network config")
 	}
@@ -396,26 +413,26 @@ func validateFirmwareForContainer(config *cntr.ContainerConfig) error {
 		return nil
 	}
 
-	if config.ElfAbsPath == "" {
+	if config.ImageAbsPath == "" {
 		return fmt.Errorf("firmware path is empty in container config")
 	}
 
-	if _, err := os.Stat(config.ElfAbsPath); err != nil {
+	if _, err := os.Stat(config.ImageAbsPath); err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("firmware file does not exist: %s", config.ElfAbsPath)
+			return fmt.Errorf("firmware file does not exist: %s", config.ImageAbsPath)
 		}
-		return fmt.Errorf("failed to access firmware file %s: %v", config.ElfAbsPath, err)
+		return fmt.Errorf("failed to access firmware file %s: %v", config.ImageAbsPath, err)
 	}
 
-	info, err := os.Stat(config.ElfAbsPath)
+	info, err := os.Stat(config.ImageAbsPath)
 	if err != nil {
-		return fmt.Errorf("failed to stat firmware file %s: %v", config.ElfAbsPath, err)
+		return fmt.Errorf("failed to stat firmware file %s: %v", config.ImageAbsPath, err)
 	}
 
 	if info.IsDir() {
-		return fmt.Errorf("firmware path is a directory, not a file: %s", config.ElfAbsPath)
+		return fmt.Errorf("firmware path is a directory, not a file: %s", config.ImageAbsPath)
 	}
 
-	log.Debugf("firmware path validated for container: %s", config.ElfAbsPath)
+	log.Debugf("firmware path validated for container: %s", config.ImageAbsPath)
 	return nil
 }

@@ -3,8 +3,8 @@ package configstack
 import (
 	"errors"
 	"fmt"
-	defs "mica-shim/definitions"
-	"mica-shim/pkg/utils"
+	defs "micrun/definitions"
+	"micrun/pkg/utils"
 	"os"
 	"path/filepath"
 	"sort"
@@ -26,11 +26,12 @@ type MicrunConfigFile struct {
 
 var (
 	defaultDropinSearch = []string{defs.MicrunConfDropin}
-	defaultConfigFiles  = []string{filepath.Join(defs.MicrunConfDir, defs.DefaultMicrunConf)}
+	defaultConfigFile   = filepath.Join(defs.MicrunConfDir, defs.DefaultMicrunConf)
 )
 
+// priority env::file > env::dropin_dir > default::dropin_dir > default config file
 func DiscoverMicrunConfigFiles() ([]MicrunConfigFile, error) {
-	if override := FirstNonEmptyEnv(defs.MicrunConfEnv); override != "" {
+	if override := os.Getenv(defs.MicrunConfEnv); override != "" {
 		f, err := makeConfigFile(override)
 		if err != nil {
 			return nil, err
@@ -38,8 +39,8 @@ func DiscoverMicrunConfigFiles() ([]MicrunConfigFile, error) {
 		return []MicrunConfigFile{f}, nil
 	}
 
-	if dir := FirstNonEmptyEnv(defs.MicrunConfDirEnv); dir != "" {
-		files, err := listMicrunConfigDir(dir)
+	if dirByEnv := os.Getenv(defs.MicrunConfDirEnv); dirByEnv != "" {
+		files, err := listMicrunConfigDir(dirByEnv)
 		if err != nil {
 			return nil, err
 		}
@@ -63,18 +64,18 @@ func DiscoverMicrunConfigFiles() ([]MicrunConfigFile, error) {
 		return aggregated, nil
 	}
 
-	for _, candidate := range defaultConfigFiles {
-		f, err := makeConfigFile(candidate)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		return []MicrunConfigFile{f}, nil
+	if !utils.FileExist(defaultConfigFile) {
+		return nil, nil
 	}
 
-	return nil, nil
+	f, err := makeConfigFile(defaultConfigFile)
+	if errors.Is(err, os.ErrNotExist) {
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return []MicrunConfigFile{f}, nil
 }
 
 func FirstNonEmptyEnv(keys ...string) string {
@@ -92,7 +93,7 @@ func makeConfigFile(path string) (MicrunConfigFile, error) {
 	}
 	format := detectConfigFormat(path)
 	if format == FormatUnknown {
-		return MicrunConfigFile{}, fmt.Errorf("unsupported micrun config format: %s", path)
+		return MicrunConfigFile{}, fmt.Errorf("unsupported micrun config extension: %s, should be .ini, .conf or .toml for toml", path)
 	}
 	return MicrunConfigFile{Path: path, Format: format}, nil
 }
@@ -127,7 +128,7 @@ func listMicrunConfigDir(dir string) ([]MicrunConfigFile, error) {
 
 func detectConfigFormat(path string) ConfigFormat {
 	switch strings.ToLower(filepath.Ext(path)) {
-	case ".ini":
+	case ".ini", ".conf":
 		return FormatINI
 	case ".toml":
 		return FormatTOML

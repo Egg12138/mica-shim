@@ -3,8 +3,8 @@ package oci
 import (
 	"fmt"
 
-	log "mica-shim/logger"
-	configstack "mica-shim/pkg/configstack"
+	log "micrun/logger"
+	configstack "micrun/pkg/configstack"
 )
 
 // RuntimeStack applies micrun config layers in order (defaults, files, annotations).
@@ -61,8 +61,11 @@ func applyMicrunConfigFile(cfg *RuntimeConfig, file configstack.MicrunConfigFile
 	switch file.Format {
 	case configstack.FormatINI:
 		log.Debugf("loading micrun config: %s", file.Path)
-		return cfg.ParseRuntimeFromFile(file.Path)
+		return cfg.ParseRuntimeFromINI(file.Path)
+	case configstack.FormatTOML:
+		log.Debugf("loading micrun config: %s", file.Path)
+		return cfg.ParseRuntimeFromToml(file.Path)
 	default:
-		return fmt.Errorf("config format %v not supported yet", file.Format)
+		return fmt.Errorf("config format %v not supported", file.Format)
 	}
 }

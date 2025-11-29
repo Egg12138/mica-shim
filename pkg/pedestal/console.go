@@ -2,7 +2,7 @@ package pedestal
 
 import (
 	"fmt"
-	log "mica-shim/logger"
+	log "micrun/logger"
 	"os"
 )
 

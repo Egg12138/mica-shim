@@ -2,19 +2,19 @@ package micantainer
 
 import (
 	"context"
-	er "mica-shim/errors"
-	log "mica-shim/logger"
-	"mica-shim/pkg/libmica"
+	er "micrun/errors"
+	log "micrun/logger"
+	"micrun/pkg/libmica"
 	"time"
 
-	"mica-shim/pkg/cpuset"
+	"micrun/pkg/cpuset"
 )
 
 const (
 	maxHostnameLength = 64
 )
 
-type SandboxAgent struct {
+type SandboxResource struct {
 	// total vcpu number of sanbox
 	VcpuNum uint32
 
@@ -31,29 +31,29 @@ type SandboxAgent struct {
 }
 
 // nolint:golint
-func NewAgent() *SandboxAgent {
-	return &SandboxAgent{
+func NewAgent() *SandboxResource {
+	return &SandboxResource{
 		ContainerVcpus:   make(map[string][]int),
 		ContainerCpuSets: make(map[string]cpuset.CPUSet),
 	}
 }
 
 // init initializes the Noop agent, i.e. it does nothing.
-func (n *SandboxAgent) init(sandbox *Sandbox) (bool, error) {
+func (n *SandboxResource) init(sandbox *Sandbox) (bool, error) {
 	return false, nil
 }
 
-func (n *SandboxAgent) longLiveConn() bool {
+func (n *SandboxResource) longLiveConn() bool {
 	return false
 }
 
 // disconnect is the Noop agent connection closer. It does nothing.
-func (n *SandboxAgent) disconnect() error {
+func (n *SandboxResource) disconnect() error {
 	return nil
 }
 
 // stopClients is the Noop agent Sandbox stopping implementation. It does nothing.
-func (n *SandboxAgent) stopClients(ctx context.Context, sandbox *Sandbox) error {
+func (n *SandboxResource) stopClients(ctx context.Context, sandbox *Sandbox) error {
 	log.Infof("stopping client os in sandbox %s", sandbox.id)
 	for _, c := range sandbox.containers {
 		if err := c.stop(ctx, true); err != nil {
@@ -66,12 +66,12 @@ func (n *SandboxAgent) stopClients(ctx context.Context, sandbox *Sandbox) error 
 
 // createSandbox creates a new sandbox by initializing MICA daemon
 // TODO: crutial network setup
-func (n *SandboxAgent) createSandbox(sandbox *Sandbox) error {
+func (n *SandboxResource) createSandbox(sandbox *Sandbox) error {
 	return nil
 }
 
 // startSandbox starts the sandbox by booting RTOS clients
-func (n *SandboxAgent) startSandbox(sandbox *Sandbox) error {
+func (n *SandboxResource) startSandbox(sandbox *Sandbox) error {
 	// Start all containers in the sandbox
 	for _, container := range sandbox.containers {
 		if err := n.startContainer(sandbox, container); err != nil {
@@ -82,7 +82,7 @@ func (n *SandboxAgent) startSandbox(sandbox *Sandbox) error {
 }
 
 // createContainer creates a new container in the sandbox
-func (n *SandboxAgent) createContainer(sandbox *Sandbox, c *Container) (*RTOSTask, error) {
+func (n *SandboxResource) createContainer(sandbox *Sandbox, c *Container) (*RTOSTask, error) {
 	// Create RTOS task through MICA daemon
 
 	// task, err := libmica.(c.id, c.config.FirmwarePath, c.config.PedConfig.PedType)
@@ -100,7 +100,7 @@ func (n *SandboxAgent) createContainer(sandbox *Sandbox, c *Container) (*RTOSTas
 }
 
 // startContainer starts a specific container
-func (n *SandboxAgent) startContainer(sandbox *Sandbox, c *Container) error {
+func (n *SandboxResource) startContainer(sandbox *Sandbox, c *Container) error {
 	// Start the RTOS task
 	if err := libmica.Start(c.id); err != nil {
 		return err
@@ -110,7 +110,7 @@ func (n *SandboxAgent) startContainer(sandbox *Sandbox, c *Container) error {
 
 // closeContainerStdin is the Noop agent process stdin closer. It does nothing.
 // nolint
-func (n *SandboxAgent) closeContainerStdin(c *Container) error {
+func (n *SandboxResource) closeContainerStdin(c *Container) error {
 	if c == nil || c.config == nil {
 		return er.EmptyContainerID
 	}
@@ -126,22 +126,22 @@ func (n *SandboxAgent) closeContainerStdin(c *Container) error {
 }
 
 // it is a temporary solution that merge stdout, stderr into ont output stream
-func (n *SandboxAgent) readOut(c *Container, taskID string, data []byte) (int, error) {
+func (n *SandboxResource) readOut(c *Container, taskID string, data []byte) (int, error) {
 	return 0, nil
 }
 
 // readTaskStdout is the Noop agent process stdout reader. It does nothing.
-func (n *SandboxAgent) readTaskStdout(c *Container, taskID string, data []byte) (int, error) {
+func (n *SandboxResource) readTaskStdout(c *Container, taskID string, data []byte) (int, error) {
 	return n.readOut(c, taskID, data)
 }
 
-func (n *SandboxAgent) resizeVCPUs(newNum uint32) (uint32, uint32) {
+func (n *SandboxResource) resizeVCPUs(newNum uint32) (uint32, uint32) {
 	old := n.VcpuNum
 	n.VcpuNum = newNum
 	return old, n.VcpuNum
 }
 
-func (n *SandboxAgent) resizeMemory(newMemMB uint64) (uint64, uint64) {
+func (n *SandboxResource) resizeMemory(newMemMB uint64) (uint64, uint64) {
 	// Convert MiB to bytes
 	newMem := newMemMB << 20
 	old := n.MemoryPoolBytes
@@ -153,20 +153,20 @@ func (n *SandboxAgent) resizeMemory(newMemMB uint64) (uint64, uint64) {
 	return old, newMem
 }
 
-func (n *SandboxAgent) getDNS(s *Sandbox) ([]string, error) {
+func (n *SandboxResource) getDNS(s *Sandbox) ([]string, error) {
 	ret := make([]string, 0)
 	return ret, nil
 }
 
-func (n *SandboxAgent) getTotalMemoryMB() uint64 {
+func (n *SandboxResource) getTotalMemoryMB() uint64 {
 	return n.MemoryPoolBytes >> 20
 }
 
 // try to reorder resources dom0 can do, it cannot, just okay
-func (n *SandboxAgent) Cleanup() {
+func (n *SandboxResource) Cleanup() {
 }
 
-func (n *SandboxAgent) ContainerVcpuSet(cid string) ([]int, error) {
+func (n *SandboxResource) ContainerVcpuSet(cid string) ([]int, error) {
 	list, ok := n.ContainerVcpus[cid]
 	if !ok {
 		return []int{}, er.ContainerNotFound
@@ -175,6 +175,6 @@ func (n *SandboxAgent) ContainerVcpuSet(cid string) ([]int, error) {
 	return list, nil
 }
 
-func (n *SandboxAgent) setNewPCpuList(cpulist []int) {
+func (n *SandboxResource) setNewPCpuList(cpulist []int) {
 	n.PcpuPool = cpulist
 }

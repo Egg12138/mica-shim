@@ -9,6 +9,7 @@ import (
 )
 
 const (
+	// TODO: need a more reasonable timeout for event sending
 	timeOut              = 5 * time.Second
 	ttrpcAddrEnv         = "TTRPC_ADDRESS"
 	contdShimEnvShedCore = "SCHED_CORE"

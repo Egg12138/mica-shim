@@ -8,7 +8,7 @@ import (
 	"os"
 	"syscall"
 
-	log "mica-shim/logger"
+	log "micrun/logger"
 
 	"github.com/containerd/fifo"
 )

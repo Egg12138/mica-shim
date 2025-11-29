@@ -12,9 +12,9 @@ import (
 
 	"github.com/pkg/errors"
 
-	log "mica-shim/logger"
-	cntr "mica-shim/pkg/micantainer"
-	"mica-shim/pkg/oci"
+	log "micrun/logger"
+	cntr "micrun/pkg/micantainer"
+	"micrun/pkg/oci"
 
 	"github.com/containerd/containerd/api/events"
 	taskAPI "github.com/containerd/containerd/api/runtime/task/v2"
@@ -203,13 +203,6 @@ func (s *shimService) Cleanup(ctx context.Context) (*taskAPI.DeleteResponse, err
 		log.Debugf("unknown container type to be cleaned up: %s", ctype)
 	}
 
-	s.send(&events.TaskDelete{
-		ContainerID: s.id,
-		Pid:         shimPid,
-		ExitStatus:  128 + uint32(unix.SIGKILL),
-		ExitedAt:    timestamppb.New(time.Now()),
-	})
-
 	return &taskAPI.DeleteResponse{
 		ExitedAt:   timestamppb.New(time.Now()),
 		ExitStatus: 128 + uint32(unix.SIGKILL),
@@ -319,7 +312,7 @@ func (s *shimService) StartShim(ctx context.Context, opts shimv2.StartOpts) (_ s
 
 	sock, err := socket.File()
 	if err != nil {
-		return "", fmt.Errorf("failed to get shim socket file descriptor: %w", err)
+		return "", err
 	}
 
 	cmd.ExtraFiles = append(cmd.ExtraFiles, sock)
@@ -327,7 +320,6 @@ func (s *shimService) StartShim(ctx context.Context, opts shimv2.StartOpts) (_ s
 	runtime.LockOSThread()
 	if os.Getenv("SCHED_CORE") != "" {
 		log.Debugf("enable sched_core features")
-		handleSchedCore()
 	}
 
 	if err := cmd.Start(); err != nil {

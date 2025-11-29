@@ -5,9 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	er "mica-shim/errors"
-	log "mica-shim/logger"
-	cntr "mica-shim/pkg/micantainer"
+	er "micrun/errors"
+	log "micrun/logger"
+	cntr "micrun/pkg/micantainer"
 
 	cgroupsv1 "github.com/containerd/cgroups/stats/v1"
 	cgroupsv2 "github.com/containerd/cgroups/v2/stats"

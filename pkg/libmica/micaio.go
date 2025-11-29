@@ -10,8 +10,8 @@ import (
 	"syscall"
 	"time"
 
-	log "mica-shim/logger"
-	ioutils "mica-shim/pkg/io"
+	log "micrun/logger"
+	ioutils "micrun/pkg/io"
 )
 
 // Constants

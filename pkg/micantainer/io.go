@@ -7,11 +7,11 @@ import (
 	"path/filepath"
 	"time"
 
-	defs "mica-shim/definitions"
-	er "mica-shim/errors"
-	log "mica-shim/logger"
-	"mica-shim/pkg/libmica"
-	ped "mica-shim/pkg/pedestal"
+	defs "micrun/definitions"
+	er "micrun/errors"
+	log "micrun/logger"
+	"micrun/pkg/libmica"
+	ped "micrun/pkg/pedestal"
 )
 
 type iostream struct {

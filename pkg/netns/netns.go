@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	log "mica-shim/logger"
+	log "micrun/logger"
 
 	"golang.org/x/sys/unix"
 )

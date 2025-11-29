@@ -6,7 +6,7 @@ package oci
 import (
 	"testing"
 
-	"mica-shim/pkg/pedestal"
+	"micrun/pkg/pedestal"
 )
 
 func TestRuntimeConfigSetExclusiveDom0CPU(t *testing.T) {

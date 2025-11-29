@@ -3,16 +3,16 @@ package micantainer
 import (
 	"context"
 	"fmt"
-	log "mica-shim/logger"
-	"mica-shim/pkg/libmica"
-	"mica-shim/pkg/pedestal"
-	"mica-shim/pkg/utils"
+	log "micrun/logger"
+	"micrun/pkg/libmica"
+	"micrun/pkg/pedestal"
+	"micrun/pkg/utils"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"mica-shim/pkg/cpuset"
+	"micrun/pkg/cpuset"
 )
 
 func initContainerTaskInSandbox(sandbox SandboxTraits, config *ContainerConfig) (*RTOSTask, error) {
@@ -74,7 +74,7 @@ func createMicaClientConf(container *Container) (libmica.MicaClientConf, error) 
 	if memMB == 0 {
 		memMB = 32
 	}
-	if err := ensureFirmwarePath(config.ElfAbsPath); err != nil {
+	if err := ensureFirmwarePath(config.ImageAbsPath); err != nil {
 		return libmica.MicaClientConf{}, fmt.Errorf("firmware validation failed: %w", err)
 	}
 
@@ -88,7 +88,7 @@ func createMicaClientConf(container *Container) (libmica.MicaClientConf, error) 
 		MemoryMB:        memMB,
 		MemoryThreshold: int(config.MemoryThresholdMB),
 		Name:            container.id,
-		Path:            config.ElfAbsPath,
+		Path:            config.ImageAbsPath,
 		Ped:             pedType.String(),
 		PedCfg:          config.PedestalConf,
 	})

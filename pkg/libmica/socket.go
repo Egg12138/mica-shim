@@ -4,8 +4,8 @@ package libmica
 import (
 	"errors"
 	"fmt"
-	defs "mica-shim/definitions"
-	log "mica-shim/logger"
+	defs "micrun/definitions"
+	log "micrun/logger"
 	"net"
 	"os"
 	"strings"

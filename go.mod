@@ -1,4 +1,4 @@
-module mica-shim
+module micrun
 
 go 1.22.0
 
@@ -6,7 +6,6 @@ require (
 	github.com/containerd/cgroups v1.1.0
 	github.com/containerd/containerd v1.7.27
 	github.com/containerd/containerd/api v1.8.0
-	github.com/containerd/cri-containerd v1.19.0
 	github.com/containerd/errdefs v0.3.0
 	github.com/containerd/fifo v1.1.0
 	github.com/containerd/typeurl/v2 v2.1.1

@@ -1,6 +1,9 @@
 //go:build debug
 // +build debug
 
+// a dirty implementation of logger package
+// need to be streamed gracefully
+
 package log
 
 import (
