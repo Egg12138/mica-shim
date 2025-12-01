@@ -120,9 +120,9 @@ func BenchmarkParseConfigINI(b *testing.B) {
 				b.ReportAllocs()
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					_, err := ParseConfigINI(iniPath, nil)
+					_, err := ParseINI(iniPath, nil)
 					if err != nil {
-						b.Fatalf("ParseConfigINI failed: %v", err)
+						b.Fatalf("ParseINI failed: %v", err)
 					}
 				}
 			})
@@ -134,9 +134,9 @@ func BenchmarkParseConfigINI(b *testing.B) {
 					b.ReportAllocs()
 					b.ResetTimer()
 					for i := 0; i < b.N; i++ {
-						_, err := ParseConfigINI(iniPath, whiteList)
+						_, err := ParseINI(iniPath, whiteList)
 						if err != nil {
-							b.Fatalf("ParseConfigINI with whitelist failed: %v", err)
+							b.Fatalf("ParseINI with whitelist failed: %v", err)
 						}
 					}
 				})

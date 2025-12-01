@@ -9,6 +9,8 @@ import (
 	"strings"
 )
 
+var clientNotExistFn = defaultClientNotExist
+
 func MaxCPUNum() int {
 	return int(ped.MaxCPUNum())
 }
@@ -236,6 +238,10 @@ func success(res string) bool {
 }
 
 func ClientNotExist(id string) bool {
+	return clientNotExistFn(id)
+}
+
+func defaultClientNotExist(id string) bool {
 	socketPath := filepath.Join(defs.MicaStateDir, id+".socket")
 	valid := validSocketPath(socketPath)
 	return !valid

@@ -43,7 +43,7 @@ func TestApplyMicrunFiles(t *testing.T) {
 		t.Fatalf("failed to write config: %v", err)
 	}
 	stack.ApplyMicrunFiles([]configstack.MicrunConfigFile{{Path: conf, Format: configstack.FormatINI}})
-	if stack.Config().MaxContainerCPUs != 2 {
-		t.Fatalf("expected MaxContainerCPUs=2, got %d", stack.Config().MaxContainerCPUs)
+	if stack.Config().MaxContainerVCPUs != 2 {
+		t.Fatalf("expected MaxContainerVCPUs=2, got %d", stack.Config().MaxContainerVCPUs)
 	}
 }

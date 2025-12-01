@@ -66,9 +66,11 @@ type RuntimeConfig struct {
 	MaxClinetNum       uint32
 
 	// Global resource management settings
-	MaxContainerVCPUs        uint32 // Maximum CPU cores visible for containers
-	MaxContainerMemMB        uint32 // Maximum memory available for containers
-	MinContainerMemMB        uint32 // Minimum memory for containers
+	MaxContainerVCPUs uint32 // Maximum CPU cores visible for containers
+	// NOTICE: MaxContainerMemMB is the initial memory threshold, not the init max available memory of RTOS
+	MaxContainerMemMB uint32
+	// Reservation memory for containers
+	MinContainerMemMB        uint32
 	HugePageSupport          bool
 	StaticResourceManagement bool
 

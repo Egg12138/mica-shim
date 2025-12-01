@@ -308,9 +308,9 @@ func TestMicaExecutor_ReadResource(t *testing.T) {
 				CpuCpacity:    func() *uint32 { v := uint32(50); return &v }(), // From records.cpuCapacity
 				Vcpu:          func() *uint32 { v := uint32(4); return &v }(),
 				CPUWeight:     func() *uint32 { v := uint32(1024); return &v }(),
-				MemoryLimitMB: func() *uint32 { v := uint32(256); return &v }(),
+				MemoryMaxMB: func() *uint32 { v := uint32(256); return &v }(),
 				ClientCpuSet:  "0-3,5",
-				MemoryMinMB:   32,
+				MemoryMinMB:   0,
 			},
 		},
 		{
@@ -331,7 +331,7 @@ func TestMicaExecutor_ReadResource(t *testing.T) {
 				CpuCpacity:   func() *uint32 { v := uint32(0); return &v }(),
 				Vcpu:         func() *uint32 { v := uint32(1); return &v }(), // default from InitResource
 				ClientCpuSet: "",
-				MemoryMinMB:  32,
+				MemoryMinMB:  0,
 			},
 		},
 		{
@@ -352,9 +352,9 @@ func TestMicaExecutor_ReadResource(t *testing.T) {
 				CpuCpacity:    func() *uint32 { v := uint32(75); return &v }(), // From records.cpuCapacity
 				Vcpu:          func() *uint32 { v := uint32(2); return &v }(),
 				CPUWeight:     nil, // not set because cpuWeight is 0
-				MemoryLimitMB: nil, // not set because memory is 0
+				MemoryMaxMB: nil, // not set because memory is 0
 				ClientCpuSet:  "1,2",
-				MemoryMinMB:   32,
+				MemoryMinMB:   0,
 			},
 		},
 		{
@@ -375,9 +375,9 @@ func TestMicaExecutor_ReadResource(t *testing.T) {
 				CpuCpacity:    func() *uint32 { v := uint32(25); return &v }(), // From records.cpuCapacity
 				Vcpu:          func() *uint32 { v := uint32(1); return &v }(),
 				CPUWeight:     func() *uint32 { v := uint32(512); return &v }(),
-				MemoryLimitMB: func() *uint32 { v := uint32(128); return &v }(),
+				MemoryMaxMB: func() *uint32 { v := uint32(128); return &v }(),
 				ClientCpuSet:  "0-7", // null bytes trimmed
-				MemoryMinMB:   32,
+				MemoryMinMB:   0,
 			},
 		},
 	}
@@ -431,13 +431,13 @@ func TestMicaExecutor_ReadResource(t *testing.T) {
 				t.Errorf("ReadResource().CPUWeight = %v, want %v", *got.CPUWeight, *tt.want.CPUWeight)
 			}
 
-			// Compare MemoryLimitMB
-			if got.MemoryLimitMB == nil || tt.want.MemoryLimitMB == nil {
-				if got.MemoryLimitMB != tt.want.MemoryLimitMB {
-					t.Errorf("ReadResource().MemoryLimitMB = %v, want %v", got.MemoryLimitMB, tt.want.MemoryLimitMB)
+			// Compare MemoryMaxMB
+			if got.MemoryMaxMB == nil || tt.want.MemoryMaxMB == nil {
+				if got.MemoryMaxMB != tt.want.MemoryMaxMB {
+					t.Errorf("ReadResource().MemoryMaxMB = %v, want %v", got.MemoryMaxMB, tt.want.MemoryMaxMB)
 				}
-			} else if *got.MemoryLimitMB != *tt.want.MemoryLimitMB {
-				t.Errorf("ReadResource().MemoryLimitMB = %v, want %v", *got.MemoryLimitMB, *tt.want.MemoryLimitMB)
+			} else if *got.MemoryMaxMB != *tt.want.MemoryMaxMB {
+				t.Errorf("ReadResource().MemoryMaxMB = %v, want %v", *got.MemoryMaxMB, *tt.want.MemoryMaxMB)
 			}
 
 			// Compare ClientCpuSet
@@ -462,16 +462,16 @@ func TestMicaExecutor_MemoryTracking(t *testing.T) {
 	exec := &MicaExecutor{Id: "mem-test"}
 
 	exec.RecordMemoryState(64, 64)
-	if got := exec.CurrentMemoryMB(); got != 64 {
-		t.Fatalf("CurrentMemoryMB() = %d, want 64", got)
+	if got := exec.records.memoryMB; got != 64 {
+		t.Fatalf("records.memoryMB = %d, want 64", got)
 	}
 	if got := exec.MemoryThresholdMB(); got != 64 {
 		t.Fatalf("MemoryThresholdMB() = %d, want 64", got)
 	}
 
 	exec.RecordMemoryState(32, 128)
-	if got := exec.CurrentMemoryMB(); got != 32 {
-		t.Fatalf("CurrentMemoryMB() after update = %d, want 32", got)
+	if got := exec.records.memoryMB; got != 32 {
+		t.Fatalf("records.memoryMB after update = %d, want 32", got)
 	}
 	if got := exec.MemoryThresholdMB(); got != 128 {
 		t.Fatalf("MemoryThresholdMB() after update = %d, want 128", got)
@@ -778,7 +778,7 @@ func TestMicaClientConfPackIncludesMaxFields(t *testing.T) {
 		offset += createMsgIntFieldSize
 	}
 
-	wantInts := []uint32{uint32(opts.VCPUs), uint32(opts.MaxVCPUs), uint32(opts.CPUWeight), uint32(opts.CPUCapacity), uint32(opts.MemoryMB), uint32(opts.PedPreAllocMaxMem)}
+	wantInts := []uint32{uint32(opts.VCPUs), uint32(opts.MaxVCPUs), uint32(opts.CPUWeight), uint32(opts.CPUCapacity), uint32(opts.MemoryMB), uint32(opts.MemoryThreshold)}
 	if !reflect.DeepEqual(gotInts, wantInts) {
 		t.Fatalf("packed ints = %v, want %v", gotInts, wantInts)
 	}

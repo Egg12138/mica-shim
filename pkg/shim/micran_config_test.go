@@ -5,6 +5,7 @@ package shim
 
 import (
 	defs "micrun/definitions"
+	configstack "micrun/pkg/configstack"
 	oci "micrun/pkg/oci"
 	pedestal "micrun/pkg/pedestal"
 	"os"
@@ -20,15 +21,15 @@ func TestDiscoverMicrunConfigFilesEnvOverride(t *testing.T) {
 
 	dir := t.TempDir()
 	override := filepath.Join(dir, "override.ini")
-	require.NoError(t, os.WriteFile(override, []byte(""), 0644))
+	require.NoError(t, os.WriteFile(override, []byte(""), 0o644))
 
 	t.Setenv(defs.MicrunConfEnv, override)
 
-	files, err := discoverMicrunConfigFiles()
+	files, err := configstack.DiscoverMicrunConfigFiles()
 	require.NoError(t, err)
 	require.Len(t, files, 1)
 	require.Equal(t, override, files[0].Path)
-	require.Equal(t, formatINI, files[0].Format)
+	require.Equal(t, configstack.FormatINI, files[0].Format)
 }
 
 func TestDiscoverMicrunConfigFilesDirOrdered(t *testing.T) {
@@ -37,13 +38,13 @@ func TestDiscoverMicrunConfigFilesDirOrdered(t *testing.T) {
 	dir := t.TempDir()
 	b := filepath.Join(dir, "b.ini")
 	a := filepath.Join(dir, "a.ini")
-	require.NoError(t, os.WriteFile(b, []byte(""), 0644))
-	require.NoError(t, os.WriteFile(a, []byte(""), 0644))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "ignore.txt"), []byte(""), 0644))
+	require.NoError(t, os.WriteFile(b, []byte(""), 0o644))
+	require.NoError(t, os.WriteFile(a, []byte(""), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "ignore.txt"), []byte(""), 0o644))
 
 	t.Setenv(defs.MicrunConfDirEnv, dir)
 
-	files, err := discoverMicrunConfigFiles()
+	files, err := configstack.DiscoverMicrunConfigFiles()
 	require.NoError(t, err)
 	require.Len(t, files, 2)
 	require.Equal(t, a, files[0].Path)
@@ -56,18 +57,14 @@ func TestDiscoverMicrunConfigFilesDefaultFallback(t *testing.T) {
 
 	dir := t.TempDir()
 	fallback := filepath.Join(dir, "micrun.ini")
-	require.NoError(t, os.WriteFile(fallback, []byte(""), 0644))
+	require.NoError(t, os.WriteFile(fallback, []byte(""), 0o644))
 
-	origDropins := defaultDropinSearch
-	origFiles := defaultConfigFiles
-	defaultDropinSearch = nil
-	defaultConfigFiles = []string{fallback}
-	defer func() {
-		defaultDropinSearch = origDropins
-		defaultConfigFiles = origFiles
-	}()
+	restoreDropins := configstack.OverrideDefaultDropinSearch(nil)
+	defer restoreDropins()
+	restoreDefault := configstack.OverrideDefaultConfigFile(fallback)
+	defer restoreDefault()
 
-	files, err := discoverMicrunConfigFiles()
+	files, err := configstack.DiscoverMicrunConfigFiles()
 	require.NoError(t, err)
 	require.Len(t, files, 1)
 	require.Equal(t, fallback, files[0].Path)
@@ -103,16 +100,18 @@ exclusive_dom0_cpu = true
 [firmware_path]
 firmware_path = /opt/fw/firmware.elf
 `
-	require.NoError(t, os.WriteFile(configPath, []byte(content), 0644))
+	require.NoError(t, os.WriteFile(configPath, []byte(content), 0o644))
 
 	cfg := oci.NewRuntimeConfig()
 	cfg.StaticResourceManagement = true // ensure change is visible
-	applyMicrunConfigFiles(cfg, []micrunConfigFile{{Path: configPath, Format: formatINI}})
+	stack := oci.NewRuntimeStack()
+	stack.Replace(cfg)
+	stack.ApplyMicrunFiles([]configstack.MicrunConfigFile{{Path: configPath, Format: configstack.FormatINI}})
 
 	require.False(t, cfg.StaticResourceManagement, "static_resource should be false")
 	require.True(t, cfg.Debug, "debug should be true")
 	require.Equal(t, "registry.test/pause:2.0", cfg.PauseImage)
-	require.Equal(t, uint32(6), cfg.MaxContainerCPUs)
+	require.Equal(t, uint32(6), cfg.MaxContainerVCPUs)
 	require.Equal(t, uint32(3), cfg.MiniVCPUNum)
 	require.True(t, cfg.HugePageSupport)
 	require.True(t, cfg.ExclusiveDom0CPU)

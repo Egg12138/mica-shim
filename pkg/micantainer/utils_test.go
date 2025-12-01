@@ -7,7 +7,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"unsafe"
 
@@ -20,17 +19,20 @@ import (
 // mirror of libmica.MicaClientConf for test access to cpuWeight.
 // keep in sync with the real definition.
 type micaClientConfMirror struct {
-	name      [libmica.MaxNameLen]byte
-	path      [libmica.MaxFirmwarePathLen]byte
-	ped       [libmica.MaxNameLen]byte
-	pedcfg    [libmica.MaxFirmwarePathLen]byte
-	debug     bool
-	cpuStr    [libmica.MaxCPUStringLen]byte
-	vcpuNum   int
-	cpuWeight int
-	cpuCap    int
-	memoryMB  int
-	network   [libmica.MaxConfigStrLen]byte
+	name              [libmica.MaxNameLen]byte
+	path              [libmica.MaxFirmwarePathLen]byte
+	ped               [libmica.MaxNameLen]byte
+	pedcfg            [libmica.MaxFirmwarePathLen]byte
+	debug             bool
+	cpuStr            [libmica.MaxCPUStringLen]byte
+	vcpuNum           int
+	maxVcpuNum        int
+	cpuWeight         int
+	cpuCapacity       int
+	memoryMB          int
+	memoryThresholdMB int
+	iomem             [libmica.MaxConfigStrLen]byte
+	network           [libmica.MaxConfigStrLen]byte
 }
 
 func cpuWeightFromConf(conf libmica.MicaClientConf) int {
@@ -163,6 +165,13 @@ func TestCreateMicaClientConfFallsBackToMinWhenLimitUnset(t *testing.T) {
 func TestContainerUpdatePropagatesResourceValuesToExecutor(t *testing.T) {
 	t.Parallel()
 
+	restoreClientCheck := libmica.OverrideClientNotExistForTest(func(string) bool { return false })
+	defer restoreClientCheck()
+	restoreMicaCtl := libmica.OverrideMicaCtlForTest(func(libmica.MicaCommand, string, ...string) error {
+		return nil
+	})
+	defer restoreMicaCtl()
+
 	quota := int64(200000)
 	period := uint64(100000)
 	shares := uint64(2048)
@@ -174,8 +183,6 @@ func TestContainerUpdatePropagatesResourceValuesToExecutor(t *testing.T) {
 			InfraOnly: true,
 		},
 	}
-
-	exec := &fakeResourceExecutor{}
 
 	container := &Container{
 		id: "resource-update",
@@ -205,104 +212,19 @@ func TestContainerUpdatePropagatesResourceValuesToExecutor(t *testing.T) {
 		t.Fatalf("container.update returned error: %v", err)
 	}
 
+	res := container.me.ReadResource()
+
 	expectedWeight := pedestal.ShareToWeight(shares)
-	if exec.cpuWeight != expectedWeight {
-		t.Fatalf("expected cpu weight %d, got %d", expectedWeight, exec.cpuWeight)
+	if res.CPUWeight == nil || *res.CPUWeight != expectedWeight {
+		t.Fatalf("expected cpu weight %d, got %v", expectedWeight, res.CPUWeight)
 	}
 
-	if exec.cpuSet != "0-1" {
-		t.Fatalf("expected cpuset %q, got %q", "0-1", exec.cpuSet)
+	if res.ClientCpuSet != "0-1" {
+		t.Fatalf("expected cpuset %q, got %q", "0-1", res.ClientCpuSet)
 	}
 
 	expectedMemMB := uint32(memLimit >> 20)
-	if exec.memLimitMB != expectedMemMB {
-		t.Fatalf("expected memory limit %d MiB, got %d MiB", expectedMemMB, exec.memLimitMB)
+	if res.MemoryMaxMB == nil || *res.MemoryMaxMB != expectedMemMB {
+		t.Fatalf("expected memory limit %d MiB, got %v", expectedMemMB, res.MemoryMaxMB)
 	}
-}
-
-type fakeResourceExecutor struct {
-	cpuCapacity uint32
-	memLimitMB  uint32
-	cpuSet      string
-	cpuWeight   uint32
-	vcpu        uint32
-}
-
-func (f *fakeResourceExecutor) ReadResource() *pedestal.EssentialResource {
-	res := pedestal.InitResource()
-	if f.cpuCapacity > 0 {
-		res.CpuCpacity = copyUint32(f.cpuCapacity)
-	}
-
-	if f.cpuWeight > 0 {
-		weight := f.cpuWeight
-		res.CPUWeight = &weight
-	} else {
-		res.CPUWeight = nil
-	}
-
-	if f.memLimitMB > 0 {
-		res.MemoryMaxMB = copyUint32(f.memLimitMB)
-	} else {
-		res.MemoryMaxMB = nil
-	}
-
-	if f.vcpu > 0 {
-		vcpu := f.vcpu
-		res.Vcpu = &vcpu
-	}
-
-	res.ClientCpuSet = strings.TrimSpace(f.cpuSet)
-
-	return res
-}
-
-func (f *fakeResourceExecutor) NeedUpdateCpuCap(target uint32) bool {
-	return f.cpuCapacity != target
-}
-
-func (f *fakeResourceExecutor) UpdateCPUCapacity(cap uint32) error {
-	f.cpuCapacity = cap
-	return nil
-}
-
-func (f *fakeResourceExecutor) NeedUpdateMemLimit(target uint32) bool {
-	return f.memLimitMB != target
-}
-
-func (f *fakeResourceExecutor) EnsureMemoryLimit(target uint32) error {
-	f.memLimitMB = target
-	return nil
-}
-
-func (f *fakeResourceExecutor) NeedUpdateCpuSet(old, new string) bool {
-	current := strings.TrimSpace(f.cpuSet)
-	if current != "" {
-		return current != strings.TrimSpace(new)
-	}
-	return strings.TrimSpace(old) != strings.TrimSpace(new)
-}
-
-func (f *fakeResourceExecutor) UpdatePCPUConstrains(cpus string) error {
-	f.cpuSet = cpus
-	return nil
-}
-
-func (f *fakeResourceExecutor) NeedUpdateCpuShare(target uint32) bool {
-	return f.cpuWeight != target
-}
-
-func (f *fakeResourceExecutor) UpdateCPUWeight(weight uint32) error {
-	f.cpuWeight = weight
-	return nil
-}
-
-func (f *fakeResourceExecutor) NeedUpdateVCpus(target uint32) bool {
-	return f.vcpu != target
-}
-
-func (f *fakeResourceExecutor) UpdateVCPUNum(new uint32) (uint32, uint32, error) {
-	old := f.vcpu
-	f.vcpu = new
-	return old, new, nil
 }

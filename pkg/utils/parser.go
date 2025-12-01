@@ -83,6 +83,7 @@ func ParseINI(configPath string, whiteList []string) (map[string]string, error) 
 	return parsedFields, nil
 }
 
+// TODO: finish it
 func ParseToml(configPath string, whiteList []string) (map[string]string, error) {
 	filtered := make(map[string]string)
 	return filtered, nil

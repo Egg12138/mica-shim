@@ -80,6 +80,8 @@ const (
 	fallbackMaxMemoryMB = defs.DefaultMinMemMB * 2
 )
 
+type micaCtlFunc func(MicaCommand, string, ...string) error
+
 type MicaExecutor struct {
 	records           MicaClientConf
 	Id                string
@@ -349,7 +351,7 @@ func CreateMicaClient(conf MicaClientConf) error {
 }
 
 // TODO: consider better way to parse variable parameters
-func micaCtl(cmd MicaCommand, id string, opts ...string) error {
+func micaCtlImpl(cmd MicaCommand, id string, opts ...string) error {
 	if !validSocketPath(defs.MicaCreatSocketPath) {
 		return er.MicadNotRunning
 	}
@@ -384,6 +386,12 @@ func micaCtl(cmd MicaCommand, id string, opts ...string) error {
 	s := newMicaSocket(clientSocketPath)
 	msg := string(cmd)
 	return s.handleMsg([]byte(msg))
+}
+
+var micaCtlFn micaCtlFunc = micaCtlImpl
+
+func micaCtl(cmd MicaCommand, id string, opts ...string) error {
+	return micaCtlFn(cmd, id, opts...)
 }
 
 func Start(id string) error {

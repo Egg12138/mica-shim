@@ -510,7 +510,9 @@ func resolveMaxVcpu(annotations map[string]string, runtimeCfg *RuntimeConfig) ui
 	return defaultMaxContainerVCPUs
 }
 
+// rename -> calculateClientMemThreshold
 func calculatePedMaxMemory(config *cntr.ContainerConfig, runtimeCfg *RuntimeConfig) uint32 {
+	// current RTOS max memory, <= memory threshold
 	maxMem := config.MemoryLimitMiB()
 	if maxMem == 0 {
 		maxMem = config.MemoryReservationMiB()
@@ -521,12 +523,9 @@ func calculatePedMaxMemory(config *cntr.ContainerConfig, runtimeCfg *RuntimeConf
 	if maxMem == 0 {
 		maxMem = defs.DefaultMinMemMB
 	}
-	if runtimeCfg != nil && runtimeCfg.MaxContainerMemMB > 0 && maxMem > runtimeCfg.MaxContainerMemMB {
-		maxMem = runtimeCfg.MaxContainerMemMB
-	}
 
 	if maxMem > math.MaxUint32/2 {
-		return math.MaxUint32
+		return math.MaxUint32 - 1
 	}
 
 	doubled := maxMem * 2
