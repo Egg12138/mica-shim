@@ -37,6 +37,7 @@ const defaultMaxContainerVCPUs = 8
 const defaultContainerInitMemMiB = 32
 
 var (
+	HostPedType       = pedestal.GetHostPed()
 	thredsholdMemHigh = pedestal.MemHighThreshold()
 	thredsholdMemLow  = pedestal.MemLowThreshold()
 	runtimeConfigKeys = []string{

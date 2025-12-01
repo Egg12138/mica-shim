@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -112,8 +113,8 @@ func extPedConfig(getAnnotation func(string) (string, bool), baseRootfs, id stri
 	return pedtype, pedconf, nil
 }
 
-// extOSInfo extracts OS name from annotations.
-func extOSInfo(getAnnotation func(string) (string, bool)) string {
+// getOSInfo extracts OS name from annotations.
+func getOSInfo(getAnnotation func(string) (string, bool)) string {
 	var osName string
 	if osAnno, ok := getAnnotation(defs.OSAnnotation); ok {
 		osName = osAnno
@@ -124,8 +125,8 @@ func extOSInfo(getAnnotation func(string) (string, bool)) string {
 	return osName
 }
 
-// extFirmwareAnno extracts firmware path from annotations.
-func extFirmwareAnno(getAnnotation func(string) (string, bool), baseRootfs string) string {
+// getFirmwareAnno extracts firmware path from annotations.
+func getFirmwareAnno(getAnnotation func(string) (string, bool), baseRootfs string) string {
 	var annotationFirmware string
 	if fw, ok := getAnnotation(defs.FirmwarePathAnno); ok && fw != "" {
 		annotationFirmware = inBundlePath(baseRootfs, fw, defs.DefaultFirmwareName)
@@ -134,69 +135,65 @@ func extFirmwareAnno(getAnnotation func(string) (string, bool), baseRootfs strin
 	return annotationFirmware
 }
 
-// detectType determines container type based on annotations and spec.
-func detectType(getAnnotation func(string) (string, bool), Type cntr.ContainerType, ocispec specs.Spec, annotationFirmware string) bool {
+// checkInfra determines container type based on annotations and spec.
+func checkInfra(ct cntr.ContainerType, ocispec specs.Spec) bool {
 	hasMicrunAnn := false
-	log.Pretty("spec annotations=%v", ocispec.Annotations)
-	if ocispec.Annotations != nil {
-		for key := range ocispec.Annotations {
-			if strings.HasPrefix(key, defs.MicranAnnotationPrefix) {
-				hasMicrunAnn = true
-				break
-			}
-		}
-	}
-
 	hasCRIInfraAnnotation := false
+
 	if ocispec.Annotations != nil {
-		for _, key := range CRIContainerTypeKeyList {
-			if v, ok := ocispec.Annotations[key]; ok {
-				// just v == "sandbox"?
-				if v == ctrAnnotations.ContainerTypeSandbox || v == podmanAnnotations.ContainerTypeSandbox {
-					hasCRIInfraAnnotation = true
-					break
-				}
-			}
-		}
+		hasMicrunAnn = utils.MapCheck(
+			ocispec.Annotations,
+			func(k, v string) bool {
+				return strings.HasPrefix(k, defs.MicranAnnotationPrefix)
+			})
+		hasCRIInfraAnnotation = utils.MapCheck(
+			ocispec.Annotations,
+			func(k, v string) bool {
+				return slices.Contains(CRIContainerTypeKeyList, k) &&
+					(v == ctrAnnotations.ContainerTypeSandbox || v == podmanAnnotations.ContainerTypeSandbox)
+			})
 	}
 
-	isCRISandbox := Type == cntr.PodSandbox
-	log.Debugf("isCRISandbox?%v, hasCRIInfraAnnotation?%v, hasMicranAnnotation?%v, annotationFirmware=%s",
-		isCRISandbox, hasCRIInfraAnnotation, hasMicrunAnn, annotationFirmware)
+	isCRISandbox := ct == cntr.PodSandbox
+	log.Debugf("isCRISandbox?%v, hasCRIInfraAnnotation?%v, hasMicranAnnotation?%v",
+		isCRISandbox, hasCRIInfraAnnotation, hasMicrunAnn)
 
 	return hasCRIInfraAnnotation
 }
 
-// resolveElfPath resolves firmware ELF file path with precedence: annotation > runtime default > discovery.
-func resolveElfPath(baseRootfs string, isInfra bool, annotationFirmware string) (string, error) {
-	var elfPath string
-	if !isInfra && annotationFirmware != "" {
-		elfPath = getBundleImageFile(baseRootfs, annotationFirmware)
-		if elfPath == "" {
+// resolveFirmwarePath resolves firmware ELF file path with precedence: annotation > runtime default > runtime discovery.
+// return a proper RTOS image path
+func resolveFirmwarePath(baseRootfs string, annotationFirmware string) (string, error) {
+	var fwPath string
+	if annotationFirmware != "" {
+		fwPath = getBundleImageFile(baseRootfs, annotationFirmware)
+		if fwPath == "" {
 			return "", fmt.Errorf("firmware file not found: %s", annotationFirmware)
 		}
 	}
 
-	if elfPath == "" {
-		defaultElfPath := getBundleImageFile(baseRootfs, defs.DefaultFirmwareName)
-		if defaultElfPath != "" {
-			elfPath = defaultElfPath
-			log.Debugf("using default elf path: %s", elfPath)
+	if fwPath == "" {
+		defaultPath := getBundleImageFile(baseRootfs, defs.DefaultFirmwareName)
+		if defaultPath != "" {
+			fwPath = defaultPath
+			log.Debugf("using default elf path: %s", fwPath)
 		} else {
-			elfFiles, _ := filepath.Glob(filepath.Join(baseRootfs, "*.elf"))
-			if len(elfFiles) > 0 {
-				elfPath = elfFiles[0]
-				log.Debugf("found elf file: %s", elfPath)
+			pattern := "*.elf"
+			candidates, _ := filepath.Glob(filepath.Join(baseRootfs, pattern))
+			if len(candidates) > 0 {
+				fwPath = candidates[0]
+				log.Debugf("found RTOS image file: %s", fwPath)
 			} else {
-				return "", fmt.Errorf("no elf file found in container rootfs and no firmware path provided via annotation or runtime configuration")
+				return "", fmt.Errorf("no RTOS image file found in container rootfs and no firmware path provided via annotation or runtime configuration")
 			}
 		}
 	}
-	return elfPath, nil
+	return fwPath, nil
 }
 
 // prepCache prepares container cache directory and copies firmware/pedestal files to safe location.
-func prepCache(id, baseRootfs, pedconf, elfPath string) (string, string, error) {
+// TODO: in micrun config, toggle container cached ability
+func prepCache(id, pedconf, elfPath string) (string, string, error) {
 	// Create a dedicated directory for the container to cache firmware, image, etc.
 	// This avoids race conditions with the bundle being unmounted by containerd.
 	containerCacheDir := filepath.Join(defs.DefaultMicaContainersRoot, id)
@@ -243,7 +240,7 @@ func prepCache(id, baseRootfs, pedconf, elfPath string) (string, string, error) 
 	}
 
 	var err error
-	if pedconf, err = copyToCache(pedconf); err != nil {
+	if pedconf, err = copyToCache(pedconf); err != nil && HostPedType == pedestal.Xen {
 		return "", "", err
 	}
 	if elfPath, err = copyToCache(elfPath); err != nil {
@@ -254,7 +251,7 @@ func prepCache(id, baseRootfs, pedconf, elfPath string) (string, string, error) 
 
 // container bundle rootfs is already mounted
 // hence we can check bundle contents for container configuration
-func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerType, detach bool, defaultFirmwarePath string, runtimeConfig *RuntimeConfig) (*cntr.ContainerConfig, error) {
+func ContainerConfig(id, bundle string, ocispec specs.Spec, ct cntr.ContainerType, detach bool, defaultFirmwarePath string, runtimeConfig *RuntimeConfig) (*cntr.ContainerConfig, error) {
 	baseRootfs := bundleRootfs(bundle)
 
 	getAnnotation := func(key string) (string, bool) {
@@ -275,18 +272,19 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, Type cntr.ContainerT
 		return nil, err
 	}
 
-	osName := extOSInfo(getAnnotation)
+	osName := getOSInfo(getAnnotation)
 
-	annotationFirmware := extFirmwareAnno(getAnnotation, baseRootfs)
-
-	isInfra := detectType(getAnnotation, Type, ocispec, annotationFirmware)
-
-	elfPath, err := resolveElfPath(baseRootfs, isInfra, annotationFirmware)
-	if err != nil {
-		return nil, err
+	isInfra := checkInfra(ct, ocispec)
+	var elfPath string
+	if !isInfra {
+		annotationFirmware := getFirmwareAnno(getAnnotation, baseRootfs)
+		elfPath, err = resolveFirmwarePath(baseRootfs, annotationFirmware)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	pedconf, elfPath, err = prepCache(id, baseRootfs, pedconf, elfPath)
+	pedconf, elfPath, err = prepCache(id, pedconf, elfPath)
 	if err != nil {
 		return nil, err
 	}
