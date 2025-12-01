@@ -11,15 +11,6 @@ import (
 
 // ******* container configs ops *******
 
-// stripQuotes removes surrounding quotes from a string if both start and end quotes match
-func stripQuotes(s string) string {
-	if len(s) >= 2 {
-		if (s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'') {
-			return s[1 : len(s)-1]
-		}
-	}
-	return s
-}
 
 
 
@@ -111,24 +102,6 @@ func (r *ContainerConfig) ParseOCIResources(spec *specs.Spec) error {
 	return nil
 }
 
-func cloneLinuxResources(src *specs.LinuxResources) *specs.LinuxResources {
-	if src == nil {
-		return &specs.LinuxResources{}
-	}
-
-	res := &specs.LinuxResources{}
-	if src.CPU != nil {
-		res.CPU = cloneLinuxCPU(src.CPU)
-	}
-	if src.Memory != nil {
-		res.Memory = cloneLinuxMemory(src.Memory)
-	}
-	if len(src.HugepageLimits) > 0 {
-		res.HugepageLimits = make([]specs.LinuxHugepageLimit, len(src.HugepageLimits))
-		copy(res.HugepageLimits, src.HugepageLimits)
-	}
-	return res
-}
 
 func cloneLinuxCPU(src *specs.LinuxCPU) *specs.LinuxCPU {
 	if src == nil {
@@ -156,7 +129,6 @@ func cloneLinuxMemory(src *specs.LinuxMemory) *specs.LinuxMemory {
 		Limit:            copyInt64(src.Limit),
 		Reservation:      copyInt64(src.Reservation),
 		Swap:             copyInt64(src.Swap),
-		Kernel:           copyInt64(src.Kernel),
 		Swappiness:       copyUint64(src.Swappiness),
 		DisableOOMKiller: copyBool(src.DisableOOMKiller),
 	}

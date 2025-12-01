@@ -30,7 +30,7 @@ type micaClientConfMirror struct {
 	cpuWeight int
 	cpuCap    int
 	memoryMB  int
-	network   [libmica.MaxNetworkLen]byte
+	network   [libmica.MaxConfigStrLen]byte
 }
 
 func cpuWeightFromConf(conf libmica.MicaClientConf) int {
@@ -85,7 +85,7 @@ func TestCreateMicaClientConfUsesShareToWeight(t *testing.T) {
 							Shares: &shares,
 						},
 					},
-					ElfAbsPath:   fwPath,
+					ImageAbsPath: fwPath,
 					PedestalConf: "image.bin",
 				},
 			}
@@ -116,7 +116,7 @@ func TestCreateMicaClientConfUsesMemoryLimit(t *testing.T) {
 					Limit: &limitBytes,
 				},
 			},
-			ElfAbsPath:   fwPath,
+			ImageAbsPath: fwPath,
 			PedestalConf: "image.bin",
 		},
 	}
@@ -146,7 +146,7 @@ func TestCreateMicaClientConfFallsBackToMinWhenLimitUnset(t *testing.T) {
 					Reservation: &reservationBytes,
 				},
 			},
-			ElfAbsPath:   fwPath,
+			ImageAbsPath: fwPath,
 			PedestalConf: "image.bin",
 		},
 	}

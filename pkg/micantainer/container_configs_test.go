@@ -33,11 +33,8 @@ func TestContainerConfigSkipResourceParsingForInfra(t *testing.T) {
 		IsInfra: true,
 	}
 
-	if err := cfg.ParseOCICPUResources(&spec); err != nil {
-		t.Fatalf("ParseOCICPUResources returned error: %v", err)
-	}
-	if err := cfg.ParseOCIMemoryResources(&spec); err != nil {
-		t.Fatalf("ParseOCIMemoryResources returned error: %v", err)
+	if err := cfg.ParseOCIResources(&spec); err != nil {
+		t.Fatalf("ParseOCIResources returned error: %v", err)
 	}
 
 	if cfg.Resources != nil {
@@ -60,8 +57,8 @@ func TestParseOCIMemoryReservationSetsMinimum(t *testing.T) {
 	}
 
 	cfg := ContainerConfig{}
-	if err := cfg.ParseOCIMemoryResources(&spec); err != nil {
-		t.Fatalf("ParseOCIMemoryResources returned error: %v", err)
+	if err := cfg.ParseOCIResources(&spec); err != nil {
+		t.Fatalf("ParseOCIResources returned error: %v", err)
 	}
 
 	if cfg.Resources == nil || cfg.Resources.Memory == nil || cfg.Resources.Memory.Reservation == nil {

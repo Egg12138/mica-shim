@@ -601,7 +601,7 @@ func GetContainerSpec(annotations map[string]string) (specs.Spec, error) {
 
 	log.Debugf("annotations[%s] not found, cannot find container spec",
 		defs.BundlePathKey)
-	return specs.Spec{}, fmt.Errorf("Could not find container spec")
+	return specs.Spec{}, fmt.Errorf("could not find container spec")
 }
 
 // getBundleImageFile now does path conversion and simple file existence check
@@ -625,7 +625,7 @@ func getBundleImageFile(dir, p string) string {
 // Path conversion to host filesystem is done later by getBundleImageFile.
 //
 // The baseRootfs parameter is unused but preserved for API consistency and future extensibility.
-func inBundlePath(baseRootfs, annotationValue, defaultValue string) string {
+func inBundlePath(_ string, annotationValue, defaultValue string) string {
 	value := annotationValue
 	if value == "" {
 		value = defaultValue
