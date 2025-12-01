@@ -4,13 +4,17 @@
 package micantainer
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"unsafe"
 
 	libmica "micrun/pkg/libmica"
-	ped "micrun/pkg/pedestal"
+	pedestal "micrun/pkg/pedestal"
+
+	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
 // mirror of libmica.MicaClientConf for test access to cpuWeight.
@@ -39,7 +43,7 @@ func memoryMBFromConf(conf libmica.MicaClientConf) int {
 
 func TestCreateMicaClientConfUsesShareToWeight(t *testing.T) {
 	oldPed := HostPedType
-	HostPedType = ped.Xen
+	HostPedType = pedestal.Xen
 	defer func() { HostPedType = oldPed }()
 
 	tests := []struct {
@@ -50,17 +54,17 @@ func TestCreateMicaClientConfUsesShareToWeight(t *testing.T) {
 		{
 			name:       "zero share defaults",
 			shares:     0,
-			wantWeight: int(ped.ShareToWeight(0)),
+			wantWeight: int(pedestal.ShareToWeight(0)),
 		},
 		{
 			name:       "normal share scaled",
 			shares:     2048,
-			wantWeight: int(ped.ShareToWeight(2048)),
+			wantWeight: int(pedestal.ShareToWeight(2048)),
 		},
 		{
 			name:       "tiny share clamps to one",
 			shares:     1,
-			wantWeight: int(ped.ShareToWeight(1)),
+			wantWeight: int(pedestal.ShareToWeight(1)),
 		},
 	}
 
@@ -72,10 +76,15 @@ func TestCreateMicaClientConfUsesShareToWeight(t *testing.T) {
 				t.Fatalf("failed to create firmware fixture: %v", err)
 			}
 
+			shares := tt.shares
 			container := &Container{
 				id: tt.name,
 				config: &ContainerConfig{
-					CpuShares:    tt.shares,
+					Resources: &specs.LinuxResources{
+						CPU: &specs.LinuxCPU{
+							Shares: &shares,
+						},
+					},
 					ElfAbsPath:   fwPath,
 					PedestalConf: "image.bin",
 				},
@@ -98,13 +107,17 @@ func TestCreateMicaClientConfUsesMemoryLimit(t *testing.T) {
 		t.Fatalf("failed to create firmware fixture: %v", err)
 	}
 
+	limitBytes := int64(128 * 1024 * 1024)
 	container := &Container{
 		id: "memory-limit",
 		config: &ContainerConfig{
-			MemoryLimitMB: 128,
-			MemoryMinMB:   64,
-			ElfAbsPath:    fwPath,
-			PedestalConf:  "image.bin",
+			Resources: &specs.LinuxResources{
+				Memory: &specs.LinuxMemory{
+					Limit: &limitBytes,
+				},
+			},
+			ElfAbsPath:   fwPath,
+			PedestalConf: "image.bin",
 		},
 	}
 
@@ -124,13 +137,17 @@ func TestCreateMicaClientConfFallsBackToMinWhenLimitUnset(t *testing.T) {
 		t.Fatalf("failed to create firmware fixture: %v", err)
 	}
 
+	reservationBytes := int64(64 * 1024 * 1024)
 	container := &Container{
 		id: "memory-min",
 		config: &ContainerConfig{
-			MemoryLimitMB: 0,
-			MemoryMinMB:   64,
-			ElfAbsPath:    fwPath,
-			PedestalConf:  "image.bin",
+			Resources: &specs.LinuxResources{
+				Memory: &specs.LinuxMemory{
+					Reservation: &reservationBytes,
+				},
+			},
+			ElfAbsPath:   fwPath,
+			PedestalConf: "image.bin",
 		},
 	}
 
@@ -141,4 +158,151 @@ func TestCreateMicaClientConfFallsBackToMinWhenLimitUnset(t *testing.T) {
 	if got := memoryMBFromConf(conf); got != 64 {
 		t.Fatalf("MemoryMB fallback = %d, want %d", got, 64)
 	}
+}
+
+func TestContainerUpdatePropagatesResourceValuesToExecutor(t *testing.T) {
+	t.Parallel()
+
+	quota := int64(200000)
+	period := uint64(100000)
+	shares := uint64(2048)
+	memLimit := int64(512 * 1024 * 1024)
+
+	sandbox := &Sandbox{
+		state: SandboxState{State: StateRunning},
+		config: &SandboxConfig{
+			InfraOnly: true,
+		},
+	}
+
+	exec := &fakeResourceExecutor{}
+
+	container := &Container{
+		id: "resource-update",
+		config: &ContainerConfig{
+			Resources: &specs.LinuxResources{
+				CPU:    &specs.LinuxCPU{},
+				Memory: &specs.LinuxMemory{},
+			},
+		},
+		state:   ContainerState{State: StateRunning},
+		sandbox: sandbox,
+	}
+
+	resources := specs.LinuxResources{
+		CPU: &specs.LinuxCPU{
+			Quota:  &quota,
+			Period: &period,
+			Shares: &shares,
+			Cpus:   "0-1",
+		},
+		Memory: &specs.LinuxMemory{
+			Limit: &memLimit,
+		},
+	}
+
+	if err := container.update(context.Background(), resources); err != nil {
+		t.Fatalf("container.update returned error: %v", err)
+	}
+
+	expectedWeight := pedestal.ShareToWeight(shares)
+	if exec.cpuWeight != expectedWeight {
+		t.Fatalf("expected cpu weight %d, got %d", expectedWeight, exec.cpuWeight)
+	}
+
+	if exec.cpuSet != "0-1" {
+		t.Fatalf("expected cpuset %q, got %q", "0-1", exec.cpuSet)
+	}
+
+	expectedMemMB := uint32(memLimit >> 20)
+	if exec.memLimitMB != expectedMemMB {
+		t.Fatalf("expected memory limit %d MiB, got %d MiB", expectedMemMB, exec.memLimitMB)
+	}
+}
+
+type fakeResourceExecutor struct {
+	cpuCapacity uint32
+	memLimitMB  uint32
+	cpuSet      string
+	cpuWeight   uint32
+	vcpu        uint32
+}
+
+func (f *fakeResourceExecutor) ReadResource() *pedestal.EssentialResource {
+	res := pedestal.InitResource()
+	if f.cpuCapacity > 0 {
+		res.CpuCpacity = copyUint32(f.cpuCapacity)
+	}
+
+	if f.cpuWeight > 0 {
+		weight := f.cpuWeight
+		res.CPUWeight = &weight
+	} else {
+		res.CPUWeight = nil
+	}
+
+	if f.memLimitMB > 0 {
+		res.MemoryMaxMB = copyUint32(f.memLimitMB)
+	} else {
+		res.MemoryMaxMB = nil
+	}
+
+	if f.vcpu > 0 {
+		vcpu := f.vcpu
+		res.Vcpu = &vcpu
+	}
+
+	res.ClientCpuSet = strings.TrimSpace(f.cpuSet)
+
+	return res
+}
+
+func (f *fakeResourceExecutor) NeedUpdateCpuCap(target uint32) bool {
+	return f.cpuCapacity != target
+}
+
+func (f *fakeResourceExecutor) UpdateCPUCapacity(cap uint32) error {
+	f.cpuCapacity = cap
+	return nil
+}
+
+func (f *fakeResourceExecutor) NeedUpdateMemLimit(target uint32) bool {
+	return f.memLimitMB != target
+}
+
+func (f *fakeResourceExecutor) EnsureMemoryLimit(target uint32) error {
+	f.memLimitMB = target
+	return nil
+}
+
+func (f *fakeResourceExecutor) NeedUpdateCpuSet(old, new string) bool {
+	current := strings.TrimSpace(f.cpuSet)
+	if current != "" {
+		return current != strings.TrimSpace(new)
+	}
+	return strings.TrimSpace(old) != strings.TrimSpace(new)
+}
+
+func (f *fakeResourceExecutor) UpdatePCPUConstrains(cpus string) error {
+	f.cpuSet = cpus
+	return nil
+}
+
+func (f *fakeResourceExecutor) NeedUpdateCpuShare(target uint32) bool {
+	return f.cpuWeight != target
+}
+
+func (f *fakeResourceExecutor) UpdateCPUWeight(weight uint32) error {
+	f.cpuWeight = weight
+	return nil
+}
+
+func (f *fakeResourceExecutor) NeedUpdateVCpus(target uint32) bool {
+	return f.vcpu != target
+}
+
+func (f *fakeResourceExecutor) UpdateVCPUNum(new uint32) (uint32, uint32, error) {
+	old := f.vcpu
+	f.vcpu = new
+	return old, new, nil
 }

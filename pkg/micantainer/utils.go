@@ -58,7 +58,7 @@ func createMicaClientConf(container *Container) (libmica.MicaClientConf, error) 
 	if err != nil {
 		return conf, fmt.Errorf("failed to get client cpu: %w", err)
 	}
-	cpuCap := int(config.CpuLimit)
+	cpuCap := int(config.cpuCapacity())
 	// Pre-calculate effective values for clarity.
 	// Use VCPUNum prepared in ContainerConfig; it already reflects cpuset policy
 	// or defaults to 1 when not specified.
@@ -67,9 +67,9 @@ func createMicaClientConf(container *Container) (libmica.MicaClientConf, error) 
 		vcpus = 1
 	}
 	// memoryMB (initial) should prefer the configured limit, falling back to the minimum (reservation) when unset.
-	memMB := int(config.MemoryLimitMB)
+	memMB := int(config.memoryLimitMB())
 	if memMB == 0 {
-		memMB = int(config.MemoryMinMB)
+		memMB = int(config.memoryReservationMB())
 	}
 	if memMB == 0 {
 		memMB = 32
@@ -78,11 +78,11 @@ func createMicaClientConf(container *Container) (libmica.MicaClientConf, error) 
 		return libmica.MicaClientConf{}, fmt.Errorf("firmware validation failed: %w", err)
 	}
 
-	// MemoryLimitMB is already in MiB
+	// Memory limit is already expressed in MiB
 	conf.InitWithOpts(libmica.MicaClientConfCreateOptions{
 		CPU:             cpus,
 		CPUCapacity:     cpuCap,
-		CPUWeight:       int(pedestal.ShareToWeight(config.CpuShares)),
+		CPUWeight:       int(pedestal.ShareToWeight(config.cpuShares())),
 		VCPUs:           vcpus,
 		MaxVCPUs:        int(config.MaxVcpuNum),
 		MemoryMB:        memMB,
@@ -222,15 +222,19 @@ func CpusetRangeValid(sortedCpuList []int) (bool, []int) {
 
 // Update resource for changed resource
 func updateContainerResource(c *Container, updated *pedestal.EssentialResource) error {
-	old := c.me.ReadResource()
+	if c == nil {
+		return fmt.Errorf("missing container reference when updating resources")
+	}
+	exec := &c.me
+	old := exec.ReadResource()
 
 	log.Debugf("Resource update for container %s: old=%s, new=%s",
 		c.id, formatResourceForLog(old), formatResourceForLog(updated))
 
 	// Nil-safety checks for all pointer fields
 	if updated.CpuCpacity != nil {
-		if c.me.NeedUpdateCpuCap(*updated.CpuCpacity) {
-			err := c.me.UpdateCPUCapacity(*updated.CpuCpacity)
+		if exec.NeedUpdateCpuCap(*updated.CpuCpacity) {
+			err := exec.UpdateCPUCapacity(*updated.CpuCpacity)
 			if err != nil {
 				return fmt.Errorf("failed to update cpu capacity of %s: %v", c.id, err)
 			}
@@ -241,24 +245,24 @@ func updateContainerResource(c *Container, updated *pedestal.EssentialResource) 
 	}
 
 	if updated.MemoryMaxMB != nil {
-		if c.me.NeedUpdateMemLimit(*updated.MemoryMaxMB) {
-			err := c.me.EnsureMemoryLimit(*updated.MemoryMaxMB)
+		if exec.NeedUpdateMemLimit(*updated.MemoryMaxMB) {
+			err := exec.EnsureMemoryLimit(*updated.MemoryMaxMB)
 			if err != nil {
 				return fmt.Errorf("failed to update max memory of %s: %v", c.id, err)
 			}
 		}
 	}
 
-	if c.me.NeedUpdateCpuSet(old.ClientCpuSet, updated.ClientCpuSet) {
-		err := c.me.UpdatePCPUConstrains(updated.ClientCpuSet)
+	if exec.NeedUpdateCpuSet(old.ClientCpuSet, updated.ClientCpuSet) {
+		err := exec.UpdatePCPUConstrains(updated.ClientCpuSet)
 		if err != nil {
 			return fmt.Errorf("failed to update cpuset of vcpu: %v", err)
 		}
 	}
 
 	if updated.CPUWeight != nil {
-		if c.me.NeedUpdateCpuShare(*updated.CPUWeight) {
-			err := c.me.UpdateCPUWeight(*updated.CPUWeight)
+		if exec.NeedUpdateCpuShare(*updated.CPUWeight) {
+			err := exec.UpdateCPUWeight(*updated.CPUWeight)
 			if err != nil {
 				return fmt.Errorf("failed to set a different cpu weight for %s: %v", c.id, err)
 			}
@@ -266,8 +270,8 @@ func updateContainerResource(c *Container, updated *pedestal.EssentialResource) 
 	}
 
 	if old.Vcpu != nil && updated.Vcpu != nil {
-		if c.me.NeedUpdateVCpus(*updated.Vcpu) {
-			old, newer, err := c.me.UpdateVCPUNum(*updated.Vcpu)
+		if exec.NeedUpdateVCpus(*updated.Vcpu) {
+			old, newer, err := exec.UpdateVCPUNum(*updated.Vcpu)
 			if err != nil {
 				log.Warnf("failed to update vcpu number: %v", err)
 			}
@@ -344,4 +348,9 @@ func ensureFirmwarePath(firmwarePath string) error {
 
 	log.Debugf("firmware path validated: %s", absPath)
 	return nil
+}
+
+func copyUint32(v uint32) *uint32 {
+	val := v
+	return &val
 }

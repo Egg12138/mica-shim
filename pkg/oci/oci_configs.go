@@ -299,29 +299,11 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, ct cntr.ContainerTyp
 		PedestalConf: pedconf,
 		OS:           osName,
 		PCPUNum:      1,
-		CpuLimit:     0,
-		CpusetCpus:   "",
-		CpuShares:    0,
-		CpuQuota:     0,
-		CpuPeriod:    0,
-
-		// Memory defaults
-		MemoryLimitMB:       0,
-		MemoryMinMB:         0,
-		MemoryReservationMB: 0,
-		MemorySwapMB:        0,
-		MemoryKernelMB:      0,
-		MemorySwappinessMB:  nil,
-		OomKillDisable:      false,
+		Resources:    &specs.LinuxResources{},
 	}
 	config.IsInfra = isInfra
 
-	// TODO: remove the duplicated parsing
-	if err := config.ParseOCICPUResources(&ocispec); err != nil {
-		return nil, err
-	}
-
-	if err := config.ParseOCIMemoryResources(&ocispec); err != nil {
+	if err := config.ParseOCIResources(&ocispec); err != nil {
 		return nil, err
 	}
 
@@ -329,7 +311,7 @@ func ContainerConfig(id, bundle string, ocispec specs.Spec, ct cntr.ContainerTyp
 	// will be applied in SandboxConfig (with RuntimeConfig) or later at send time.
 	if v, ok := ocispec.Annotations[defs.ContainerMinMemMB]; ok && v != "" {
 		if mb, err := strconv.ParseUint(v, 10, 32); err == nil {
-			config.MemoryMinMB = uint32(mb)
+			config.SetMemoryReservationMB(uint32(mb))
 		} else {
 			log.Debugf("invalid %s: %s", defs.ContainerMinMemMB, v)
 		}
@@ -432,28 +414,31 @@ func formatCPULimit(config *cntr.ContainerConfig) string {
 
 	parts := []string{}
 
-	if config.CpuLimit > 0 {
-		parts = append(parts, fmt.Sprintf("limit=%d cores", config.CpuLimit))
+	if limit := config.CPUCapacity(); limit > 0 {
+		parts = append(parts, fmt.Sprintf("limit=%d cores", limit))
 	}
 
-	if config.CpuQuota > 0 && config.CpuPeriod > 0 {
-		ratio := float64(config.CpuQuota) / float64(config.CpuPeriod)
-		parts = append(parts, fmt.Sprintf("quota=%.2f cores", ratio))
-	}
-
-	if config.CpuShares > 0 {
-		parts = append(parts, fmt.Sprintf("shares=%d", config.CpuShares))
-	}
-
-	if config.CpusetCpus != "" {
-		parts = append(parts, fmt.Sprintf("cpuset=%s", config.CpusetCpus))
+	cpu := config.Resources
+	if cpu != nil && cpu.CPU != nil {
+		if cpu.CPU.Quota != nil && cpu.CPU.Period != nil && *cpu.CPU.Period != 0 {
+			if *cpu.CPU.Quota > 0 {
+				ratio := float64(*cpu.CPU.Quota) / float64(*cpu.CPU.Period)
+				parts = append(parts, fmt.Sprintf("quota=%.2f cores", ratio))
+			}
+		}
+		if shares := config.CPUShares(); shares > 0 {
+			parts = append(parts, fmt.Sprintf("shares=%d", shares))
+		}
+		if cpuset := config.CPUSet(); cpuset != "" {
+			parts = append(parts, fmt.Sprintf("cpuset=%s", cpuset))
+		}
 	}
 
 	if len(parts) == 0 {
 		return "unlimited"
 	}
-
 	return strings.Join(parts, ", ")
+
 }
 
 // formatMemoryLimit formats memory limit information into human readable string
@@ -464,28 +449,12 @@ func formatMemoryLimit(config *cntr.ContainerConfig) string {
 
 	parts := []string{}
 
-	if config.MemoryLimitMB > 0 {
-		parts = append(parts, fmt.Sprintf("limit=%s", formatBytes(int64(config.MemoryLimitMB)*1024*1024)))
+	if limit := config.MemoryLimitMiB(); limit > 0 {
+		parts = append(parts, fmt.Sprintf("limit=%s", formatBytes(int64(limit)*1024*1024)))
 	}
 
-	if config.MemoryReservationMB > 0 {
-		parts = append(parts, fmt.Sprintf("reservation=%s", formatBytes(int64(config.MemoryReservationMB)*1024*1024)))
-	}
-
-	if config.MemorySwapMB > 0 {
-		parts = append(parts, fmt.Sprintf("swap=%s", formatBytes(int64(config.MemorySwapMB)*1024*1024)))
-	}
-
-	if config.MemoryKernelMB > 0 {
-		parts = append(parts, fmt.Sprintf("kernel=%s", formatBytes(int64(config.MemoryKernelMB)*1024*1024)))
-	}
-
-	if config.MemorySwappinessMB != nil {
-		parts = append(parts, fmt.Sprintf("swappiness=%d", *config.MemorySwappinessMB))
-	}
-
-	if config.OomKillDisable {
-		parts = append(parts, "oom-kill=disabled")
+	if reservation := config.MemoryReservationMiB(); reservation > 0 {
+		parts = append(parts, fmt.Sprintf("reservation=%s", formatBytes(int64(reservation)*1024*1024)))
 	}
 
 	if len(parts) == 0 {
@@ -505,16 +474,18 @@ func applyContainerRuntimeDefaults(config *cntr.ContainerConfig, annotations map
 		runtimeCfg = NewRuntimeConfig()
 	}
 
-	if config.MemoryMinMB == 0 {
+	if config.MemoryReservationMiB() == 0 {
 		if runtimeCfg.MinContainerMemMB > 0 {
-			config.MemoryMinMB = runtimeCfg.MinContainerMemMB
+			config.SetMemoryReservationMB(runtimeCfg.MinContainerMemMB)
 		} else {
-			config.MemoryMinMB = defs.DefaultMinMemMB
+			config.SetMemoryReservationMB(defs.DefaultMinMemMB)
 		}
 	}
 
-	if config.MemoryLimitMB > 0 && config.MemoryMinMB > config.MemoryLimitMB {
-		config.MemoryMinMB = config.MemoryLimitMB
+	if limit := config.MemoryLimitMiB(); limit > 0 {
+		if reservation := config.MemoryReservationMiB(); reservation > limit {
+			config.SetMemoryReservationMB(limit)
+		}
 	}
 
 	config.MaxVcpuNum = resolveMaxVcpu(annotations, runtimeCfg)
@@ -540,9 +511,9 @@ func resolveMaxVcpu(annotations map[string]string, runtimeCfg *RuntimeConfig) ui
 }
 
 func calculatePedMaxMemory(config *cntr.ContainerConfig, runtimeCfg *RuntimeConfig) uint32 {
-	maxMem := config.MemoryLimitMB
+	maxMem := config.MemoryLimitMiB()
 	if maxMem == 0 {
-		maxMem = config.MemoryMinMB
+		maxMem = config.MemoryReservationMiB()
 	}
 	if maxMem == 0 && runtimeCfg != nil && runtimeCfg.MinContainerMemMB > 0 {
 		maxMem = runtimeCfg.MinContainerMemMB

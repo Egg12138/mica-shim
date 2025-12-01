@@ -21,117 +21,169 @@ func stripQuotes(s string) string {
 	return s
 }
 
-// parseOCICPUResources parses CPU resource limits from OCI spec
-func (r *ContainerConfig) ParseOCICPUResources(spec *specs.Spec) error {
+
+
+// ParseOCIResources parses both CPU and Memory resource limits from OCI spec in a single pass
+func (r *ContainerConfig) ParseOCIResources(spec *specs.Spec) error {
 	if r.IsInfra {
 		return nil
 	}
-	if spec.Linux == nil || spec.Linux.Resources == nil || spec.Linux.Resources.CPU == nil {
-		return nil
-	}
+
+	r.ensureResources()
 
 	essentialRes := pedestal.PlanEssentialResources(spec)
-	r.CpuLimit = *essentialRes.CpuCpacity
-	// Only copy CPU period/quota/shares when explicitly specified and non-zero
-	if cpu := spec.Linux.Resources.CPU; cpu != nil {
-		if cpu.Period != nil && *cpu.Period > 0 {
-			r.CpuPeriod = *cpu.Period
-		}
-		if cpu.Quota != nil && *cpu.Quota > 0 {
-			r.CpuQuota = *cpu.Quota
-		}
-		if cpu.Shares != nil && *cpu.Shares > 0 {
-			r.CpuShares = *cpu.Shares
-		}
-	}
-	// Copy vCPU and cpuset only when meaningful
-	if essentialRes.Vcpu != nil && *essentialRes.Vcpu > 0 {
-		r.VCPUNum = *essentialRes.Vcpu
-	}
-	if essentialRes.ClientCpuSet != "" {
-		r.CpusetCpus = essentialRes.ClientCpuSet
-	}
 
-	// Validate cpuset ranges against host max CPUs; adjust if needed.
-	if r.CpusetCpus != "" {
-		cpus, err := libmica.ParseCPUString(r.CpusetCpus)
-		if err == nil {
-			if ok, out := CpusetRangeValid(cpus); !ok {
-				// Filter out-of-range CPUs and rebuild cpuset string.
-				valid := make([]int, 0, len(cpus))
-				bad := map[int]struct{}{}
-				for _, x := range out {
-					bad[x] = struct{}{}
-				}
-				for _, x := range cpus {
-					if _, miss := bad[x]; !miss {
-						valid = append(valid, x)
+	if spec.Linux != nil && spec.Linux.Resources != nil && spec.Linux.Resources.CPU != nil {
+		r.Resources.CPU = cloneLinuxCPU(spec.Linux.Resources.CPU)
+
+		if essentialRes.Vcpu != nil && *essentialRes.Vcpu > 0 {
+			r.VCPUNum = *essentialRes.Vcpu
+		}
+		if essentialRes.ClientCpuSet != "" {
+			if cpu := r.Resources.CPU; cpu != nil {
+				cpu.Cpus = essentialRes.ClientCpuSet
+			}
+		}
+
+		// TODO: need to reuse cpuset package function
+		if cpu := r.Resources.CPU; cpu != nil && cpu.Cpus != "" {
+			cpus, err := libmica.ParseCPUString(cpu.Cpus)
+			if err == nil {
+				if ok, out := CpusetRangeValid(cpus); !ok {
+					valid := make([]int, 0, len(cpus))
+					bad := map[int]struct{}{}
+					for _, x := range out {
+						bad[x] = struct{}{}
 					}
-				}
-				if len(valid) > 0 {
-					r.CpusetCpus = pedestal.ParseCPUArr(valid)
-					r.VCPUNum = uint32(len(valid))
-				} else {
-					// All invalid; clear cpuset and keep a sane default for VCPUs.
-					r.CpusetCpus = ""
-					r.VCPUNum = 1
+					for _, x := range cpus {
+						if _, miss := bad[x]; !miss {
+							valid = append(valid, x)
+						}
+					}
+					if len(valid) > 0 {
+						cpu.Cpus = pedestal.ParseCPUArr(valid)
+						r.VCPUNum = uint32(len(valid))
+					} else {
+						// All invalid; clear cpuset and keep a sane default for VCPUs.
+						cpu.Cpus = ""
+						r.VCPUNum = 1
+					}
 				}
 			}
 		}
+
+		cpu := r.Resources.CPU
+		var periodVal uint64
+		var quotaVal int64
+		var sharesVal uint64
+		var cpusetVal string
+		if cpu != nil {
+			if cpu.Period != nil {
+				periodVal = *cpu.Period
+			}
+			if cpu.Quota != nil {
+				quotaVal = *cpu.Quota
+			}
+			if cpu.Shares != nil {
+				sharesVal = *cpu.Shares
+			}
+			cpusetVal = cpu.Cpus
+		}
+		log.Debugf(`
+			EssentialResource:
+			CpuCapacity = %d
+			CpuPeriod = %d
+			CpuQuota = %d
+			CpuShares = %d
+			VCPUNum = %d
+			CpusetCpus = %s
+			MemoryLimit = %d
+		}
+		`, r.cpuCapacity(), periodVal, quotaVal, sharesVal, r.VCPUNum, cpusetVal, r.memoryLimitMB())
 	}
-	// Memory limit is parsed in ParseOCIMemoryResources; ignore defaults/unspecified here
-	log.Debugf(`
-		EssentialResource:
-		CpuLimit = %d
-		CpuPeriod = %d
-		CpuQuota = %d
-		CpuShares = %d
-		VPUNum = %d
-		CpusetCpus = %s
-		MemoryLimit = %d
+
+	if spec.Linux != nil && spec.Linux.Resources != nil && spec.Linux.Resources.Memory != nil {
+		r.Resources.Memory = cloneLinuxMemory(spec.Linux.Resources.Memory)
+	} else {
+		log.Warn("No Memory resources specified in OCI spec")
 	}
-	`, r.CpuLimit, r.CpuPeriod, r.CpuQuota, r.CpuShares, r.VCPUNum, r.CpusetCpus, r.MemoryLimitMB)
 
 	return nil
 }
 
-// parseOCIMemoryResources parses Memory resource limits from OCI spec
-func (r *ContainerConfig) ParseOCIMemoryResources(spec *specs.Spec) error {
-	if r.IsInfra {
+func cloneLinuxResources(src *specs.LinuxResources) *specs.LinuxResources {
+	if src == nil {
+		return &specs.LinuxResources{}
+	}
+
+	res := &specs.LinuxResources{}
+	if src.CPU != nil {
+		res.CPU = cloneLinuxCPU(src.CPU)
+	}
+	if src.Memory != nil {
+		res.Memory = cloneLinuxMemory(src.Memory)
+	}
+	if len(src.HugepageLimits) > 0 {
+		res.HugepageLimits = make([]specs.LinuxHugepageLimit, len(src.HugepageLimits))
+		copy(res.HugepageLimits, src.HugepageLimits)
+	}
+	return res
+}
+
+func cloneLinuxCPU(src *specs.LinuxCPU) *specs.LinuxCPU {
+	if src == nil {
+		return &specs.LinuxCPU{}
+	}
+	return &specs.LinuxCPU{
+		Shares:          copyUint64(src.Shares),
+		Quota:           copyInt64(src.Quota),
+		Burst:           copyUint64(src.Burst),
+		Period:          copyUint64(src.Period),
+		RealtimeRuntime: copyInt64(src.RealtimeRuntime),
+		RealtimePeriod:  copyUint64(src.RealtimePeriod),
+		Cpus:            src.Cpus,
+		Mems:            src.Mems,
+		Idle:            copyInt64(src.Idle),
+	}
+}
+
+func cloneLinuxMemory(src *specs.LinuxMemory) *specs.LinuxMemory {
+	if src == nil {
+		return &specs.LinuxMemory{}
+	}
+
+	return &specs.LinuxMemory{
+		Limit:            copyInt64(src.Limit),
+		Reservation:      copyInt64(src.Reservation),
+		Swap:             copyInt64(src.Swap),
+		Kernel:           copyInt64(src.Kernel),
+		Swappiness:       copyUint64(src.Swappiness),
+		DisableOOMKiller: copyBool(src.DisableOOMKiller),
+	}
+}
+
+func copyInt64(src *int64) *int64 {
+	if src == nil {
 		return nil
 	}
-	if spec.Linux == nil || spec.Linux.Resources == nil || spec.Linux.Resources.Memory == nil {
-		log.Warn("No Memory resources specified in OCI spec")
+	val := *src
+	return &val
+}
+
+func copyUint64(src *uint64) *uint64 {
+	if src == nil {
 		return nil
 	}
+	val := *src
+	return &val
+}
 
-	memory := spec.Linux.Resources.Memory
-
-	if memory.Limit != nil && *memory.Limit > 0 {
-		r.MemoryLimitMB = uint32(*memory.Limit / 1024 / 1024)
+func copyBool(src *bool) *bool {
+	if src == nil {
+		return nil
 	}
-
-	if memory.Reservation != nil && *memory.Reservation > 0 {
-		r.MemoryReservationMB = uint32(*memory.Reservation / 1024 / 1024)
-		if r.MemoryMinMB == 0 {
-			r.MemoryMinMB = r.MemoryReservationMB
-		}
-	}
-
-	if memory.Swap != nil && *memory.Swap > 0 {
-		r.MemorySwapMB = uint32(*memory.Swap / 1024 / 1024)
-	}
-
-	if memory.Swappiness != nil && *memory.Swappiness > 0 {
-		swappiness := uint32(*memory.Swappiness)
-		r.MemorySwappinessMB = &swappiness
-	}
-
-	if memory.DisableOOMKiller != nil {
-		r.OomKillDisable = *memory.DisableOOMKiller
-	}
-
-	return nil
+	val := *src
+	return &val
 }
 
 // validateResourceLimits validates container resource limits against system constraints
@@ -140,23 +192,23 @@ func ValidateResourceLimits(config *ContainerConfig) error {
 		return nil
 	}
 	// Validate CPU limits
-	if config.CpuLimit > 0 {
+	if cpuLimit := config.cpuCapacity(); cpuLimit > 0 {
 		systemCPUs := libmica.MaxClientCPUNum()
-		if int(config.CpuLimit) > systemCPUs {
-			return fmt.Errorf("container CPU limit %d exceeds system CPU count %d", config.CpuLimit, systemCPUs)
+		if int(cpuLimit) > systemCPUs {
+			return fmt.Errorf("container CPU limit %d exceeds system CPU count %d", cpuLimit, systemCPUs)
 		}
 	}
 
 	// Validate memory limits
-	if config.MemoryLimitMB > 0 {
+	if limit := config.memoryLimitMB(); limit > 0 {
 		mem := pedestal.HostMemoryMiB()
 		hostMemMB := mem.TotalMB
 		if hostMemMB == 0 {
 			log.Warn("Failed to detect host memory, using fallback value: 2 GiB")
 			hostMemMB = 2 * 1024 // Fallback to 2GiB when detection fails.
 		}
-		if config.MemoryLimitMB > hostMemMB {
-			return fmt.Errorf("container memory limit %d MiB exceeds system memory %d MiB", config.MemoryLimitMB, hostMemMB)
+		if limit > hostMemMB {
+			return fmt.Errorf("container memory limit %d MiB exceeds system memory %d MiB", limit, hostMemMB)
 		}
 	}
 

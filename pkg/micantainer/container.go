@@ -126,15 +126,7 @@ type ContainerConfig struct {
 	PedestalConf string `json:"pedestal_conf"`
 	OS           string `json:"os"`
 
-	// CpuLimit is the CPU limit in cores (cpuqupta / cpuperiod), related to Cpu capacity
-	CpuLimit  uint32 `json:"cpu_limit"`
-	CpuQuota  int64  `json:"cpu_quota"`
-	CpuPeriod uint64 `json:"cpu_period"`
-	// CpusetCpus is the set of physical CPUs the client is allowed to use (e.g., "1,3-5").
-	CpusetCpus string `json:"cpuset_cpus"`
-	// CpuShares is the relative weight of the container for CPU time.
-	CpuShares uint64 `json:"cpu_shares"`
-	// VCPUNum is the number of virtual CPUs. Equals CpuLimit if not pinning; otherwise, equals the size of the cpuset.
+	// VCPUNum is the number of virtual CPUs. Matches the configured CPU capacity when not pinning; otherwise, equals the size of the cpuset.
 	VCPUNum uint32 `json:"vcpu_num"`
 	// PCPUNum is the number of allocated physical CPUs.
 	// TODO: Implement for openAMP and Jailhouse cases.
@@ -142,17 +134,8 @@ type ContainerConfig struct {
 	// MaxVcpuNum is the pedestal max virtual CPUs configured for this container.
 	MaxVcpuNum uint32 `json:"max_vcpu_num"`
 
-	// MemoryLimitMB is the memory limit in MiB.
-	MemoryLimitMB uint32 `json:"memory_limit"`
-	// MemoryMinMB is the initial memory in MiB assigned at client boot.
-	MemoryMinMB uint32 `json:"memory_min"`
 	// MemoryThresholdMB is the pedestal maximum allocable memory in MiB.
-	MemoryThresholdMB   uint32  `json:"memory_threshold"`
-	MemoryReservationMB uint32  `json:"memory_reservation"`
-	MemorySwapMB        uint32  `json:"memory_swap"`
-	MemoryKernelMB      uint32  `json:"memory_kernel"`
-	MemorySwappinessMB  *uint32 `json:"memory_swappiness"`
-	OomKillDisable      bool    `json:"oom_kill_disable"`
+	MemoryThresholdMB uint32 `json:"memory_threshold"`
 
 	// LegacyPty specifies whether to use legacy PTY mode (true) or micad's rpmsg PTY (false)
 	LegacyPty bool `json:"legacy_pty"`
@@ -877,8 +860,8 @@ func (c *Container) update(ctx context.Context, resources specs.LinuxResources) 
 		limitBytes := *mem.Limit
 		updatedMemLimit = &limitBytes
 		limitMiB := uint32(limitBytes >> 20)
-		pedLimit := limitMiB
-		pedRes.MemoryMinMB = pedLimit
+		pedRes.MemoryMinMB = limitMiB
+		pedRes.MemoryMaxMB = copyUint32(limitMiB)
 	}
 
 	// CRITICAL ORDER: Apply changes to RTOS FIRST before updating container config.
@@ -913,10 +896,6 @@ func (c *Container) update(ctx context.Context, resources specs.LinuxResources) 
 	if updatedMemLimit != nil {
 		if res.Memory.Limit == nil || *res.Memory.Limit != *updatedMemLimit {
 			res.Memory.Limit = updatedMemLimit
-			newLimitMB := uint32(*updatedMemLimit >> 20)
-			if c.config.MemoryLimitMB != newLimitMB {
-				c.config.MemoryLimitMB = newLimitMB
-			}
 		}
 	}
 	if cpuSharesProvided {
@@ -924,9 +903,6 @@ func (c *Container) update(ctx context.Context, resources specs.LinuxResources) 
 		if res.CPU.Shares == nil || *res.CPU.Shares != providedCpuShares {
 			shareCopy := providedCpuShares
 			res.CPU.Shares = &shareCopy
-		}
-		if c.config.CpuShares != providedCpuShares {
-			c.config.CpuShares = providedCpuShares
 		}
 	}
 
@@ -953,7 +929,7 @@ func (c *Container) GetPid() int {
 }
 
 func (c *Container) GetMemoryLimit() uint64 {
-	return uint64(c.config.MemoryLimitMB)
+	return uint64(c.config.memoryLimitMB())
 }
 
 func (c *Container) Sandbox() SandboxTraits {
@@ -1138,13 +1114,10 @@ func (c *Container) registerClientWithMicad() error {
 		return err
 	}
 
-	limit := c.config.MemoryLimitMB
+	limit := c.config.memoryLimitMB()
 	initialMem := limit
 	if initialMem == 0 {
-		initialMem = c.config.MemoryMinMB
-	}
-	if initialMem == 0 {
-		initialMem = c.config.MemoryReservationMB
+		initialMem = c.config.memoryReservationMB()
 	}
 	if initialMem == 0 {
 		initialMem = defs.DefaultMinMemMB
@@ -1167,7 +1140,7 @@ func (c *Container) setupMemory() error {
 		return nil
 	}
 
-	limit := c.config.MemoryLimitMB
+	limit := c.config.memoryLimitMB()
 	if limit == 0 {
 		return nil
 	}
@@ -1201,11 +1174,30 @@ func (cfg *ContainerConfig) getContainerCPULimit() int {
 	}
 
 	if cfg != nil {
+		cpu := cfg.cpuSpec()
+		var (
+			periodVal uint64
+			quotaVal  int64
+			sharesVal uint64
+			cpusetVal string
+		)
+		if cpu != nil {
+			if cpu.Period != nil {
+				periodVal = *cpu.Period
+			}
+			if cpu.Quota != nil {
+				quotaVal = *cpu.Quota
+			}
+			if cpu.Shares != nil {
+				sharesVal = *cpu.Shares
+			}
+			cpusetVal = cpu.Cpus
+		}
 		log.Debugf("container cpu config: limit=%d period=%d quota=%d shares=%d cpuset=%s",
-			cfg.CpuLimit, cfg.CpuPeriod, cfg.CpuQuota, cfg.CpuShares, cfg.CpusetCpus)
-	}
-	if cfg != nil && cfg.CpuLimit > 0 {
-		return min(int(cfg.CpuLimit), int(num2CapRatio*systemCPUs))
+			cfg.cpuCapacity(), periodVal, quotaVal, sharesVal, cpusetVal)
+		if limit := cfg.cpuCapacity(); limit > 0 {
+			return min(int(limit), int(num2CapRatio*systemCPUs))
+		}
 	}
 
 	// As a fallback, use all available CPUs, but reserve one for the host.
@@ -1221,7 +1213,7 @@ func (c *Container) GetClientCPU() (string, error) {
 	if c.cpuUnset() {
 		return "", nil
 	}
-	return c.config.CpusetCpus, nil
+	return c.config.cpuMask(), nil
 }
 
 // SaveState persists the container's state to disk at two locations for redundancy.
@@ -1357,7 +1349,7 @@ func (c *Container) stats() (*ContainerStats, error) {
 	curMB := c.me.CurrentMaxMem()
 	thrMB := c.me.MemoryThresholdMB()
 	if thrMB == 0 {
-		thrMB = uint32(c.config.MemoryLimitMB)
+		thrMB = c.config.memoryLimitMB()
 	}
 	usageBytes := uint64(curMB) << 20
 	limitBytes := uint64(thrMB) << 20
@@ -1409,7 +1401,9 @@ func (c *Container) setVcpuAffinity(cpuSet cpuset.CPUSet) error {
 	ret := result.ErrorOrNil()
 	if ret == nil {
 		c.config.VCPUNum = uint32(cpuSet.Size())
-		c.config.CpusetCpus = cpuSet.String()
+		if cpu := c.config.ensureCPU(); cpu != nil {
+			cpu.Cpus = cpuSet.String()
+		}
 		c.config.PCPUNum = int(c.config.VCPUNum)
 	}
 	return ret
@@ -1453,7 +1447,7 @@ func (c *Container) GetOS() string {
 }
 
 func (c *Container) cpuUnset() bool {
-	return c.config.CpusetCpus == ""
+	return c.config.cpuMask() == ""
 }
 
 func (c *Container) GetPedGuestBootBin() string {

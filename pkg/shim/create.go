@@ -413,26 +413,31 @@ func validateFirmwareForContainer(config *cntr.ContainerConfig) error {
 		return nil
 	}
 
-	if config.ImageAbsPath == "" {
-		return fmt.Errorf("firmware path is empty in container config")
-	}
-
-	if _, err := os.Stat(config.ImageAbsPath); err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("firmware file does not exist: %s", config.ImageAbsPath)
+	// TODO: use multierr
+	var err error
+	if cntr.HostPedType == pedestal.Xen {
+		if err = validate(config.PedestalConf); err != nil {
+			log.Errorf("xen image file validation failed %v", err)
 		}
-		return fmt.Errorf("failed to access firmware file %s: %v", config.ImageAbsPath, err)
 	}
-
-	info, err := os.Stat(config.ImageAbsPath)
+	err = validate(config.ImageAbsPath)
 	if err != nil {
-		return fmt.Errorf("failed to stat firmware file %s: %v", config.ImageAbsPath, err)
+		return fmt.Errorf("failed to validate contaienr image files: %v", err)
 	}
 
-	if info.IsDir() {
-		return fmt.Errorf("firmware path is a directory, not a file: %s", config.ImageAbsPath)
+	return nil
+}
+
+func validate(p string) error {
+	if p == "" {
+		return fmt.Errorf("image path is empty")
 	}
 
-	log.Debugf("firmware path validated for container: %s", config.ImageAbsPath)
+	if !utils.FileExist(p) {
+		return fmt.Errorf("file not exist: %s", p)
+	}
+	if !utils.IsRegular(p) {
+		return fmt.Errorf("image file type is not expected: %s", p)
+	}
 	return nil
 }

@@ -40,12 +40,8 @@ func TestContainerConfigSkipResourceParsingForInfra(t *testing.T) {
 		t.Fatalf("ParseOCIMemoryResources returned error: %v", err)
 	}
 
-	if cfg.CpuLimit != 0 || cfg.CpuQuota != 0 || cfg.CpuPeriod != 0 {
-		t.Fatalf("expected CPU fields to remain zero for infra container, got %+v", cfg)
-	}
-
-	if cfg.MemoryLimitMB != 0 {
-		t.Fatalf("expected memory limit to remain zero for infra container, got %d", cfg.MemoryLimitMB)
+	if cfg.Resources != nil {
+		t.Fatalf("expected resources to remain nil for infra container, got %+v", cfg.Resources)
 	}
 }
 
@@ -68,10 +64,10 @@ func TestParseOCIMemoryReservationSetsMinimum(t *testing.T) {
 		t.Fatalf("ParseOCIMemoryResources returned error: %v", err)
 	}
 
-	if cfg.MemoryReservationMB != uint32(reservation/1024/1024) {
-		t.Fatalf("MemoryReservationMB = %d, want %d", cfg.MemoryReservationMB, reservation/1024/1024)
+	if cfg.Resources == nil || cfg.Resources.Memory == nil || cfg.Resources.Memory.Reservation == nil {
+		t.Fatalf("reservation not set in resources: %+v", cfg.Resources)
 	}
-	if cfg.MemoryMinMB != cfg.MemoryReservationMB {
-		t.Fatalf("MemoryMinMB = %d, want %d", cfg.MemoryMinMB, cfg.MemoryReservationMB)
+	if got := *cfg.Resources.Memory.Reservation; got != reservation {
+		t.Fatalf("memory reservation = %d, want %d", got, reservation)
 	}
 }
