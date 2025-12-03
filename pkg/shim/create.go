@@ -26,9 +26,60 @@ import (
 )
 
 // create is the internal implementation for the Create RPC. It handles sandbox and container creation.
-// there is no "Sandbox" inside a OCI image
-// rootfsPath is <bundle>/rootfs, whatever containerType is.
-// typically, bundle = /var/lib/containerd/io.containerd.runtime.v2.task/<namespace>/<containerd_id>, mounted from r.Rootfs by runtime
+//
+// This function orchestrates the entire container/sandbox creation flow, translating containerd requests
+// into mica runtime operations. The process involves: **file paths are shown for example**
+//
+//  1. State Directory Setup: Ensures /tmp/micran (MicranContainerStateDir) exists for runtime state.
+//     This directory stores runtime metadata and facilitates communication with mica daemon.
+//
+//  2. Rootfs Processing: Extracts filesystem mount information from the request.
+//     Typically r.Rootfs contains one mount point with source like:
+//     "/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/123/fs"
+//     micrun needs to mount it into container directory at "<bundle>/rootfs", see below:
+//
+//  3. OCI Spec Loading: Loads the OCI runtime specification from config.json in the <bundle> directory.
+//     Bundle path structure: "/var/lib/containerd/io.containerd.runtime.v2.task/<namespace>/<container_id>"
+//     Example: "/var/lib/containerd/io.containerd.runtime.v2.task/default/test"
+//
+//  4. Container Type Detection: Determines if this is a PodSandbox (pause container),
+//     SingleContainer (ctr/nerdctl created container), or PodContainer (container within a pod, where a sandbox is created).
+//     This detection is based on OCI image annotations and CRI configurations.
+//
+//  5. Runtime Configuration: Loads runtime config from multiple sources with precedence:
+//     Micrun shim model is 1:1:1 (Shim : Container : RTOS), so runtime config is for per-shim, not traditional *daemon* level.
+//     Hence we support customize per-shim config via annotations or CRI options, not only files
+//     - Annotations (highest priority, e.g., "org.openeuler.mica.pedestal=xen")
+//     - CRI Options from containerd
+//     - Environment variables (defs.MicrunConfEnv)
+//     - Default config files in standard locations
+//
+//  6. Rootfs Mounting: Mounts the container's root filesystem to "<bundle>/rootfs".
+//     For non-sandbox containers, traverses and logs the rootfs contents for debugging.
+//
+// 7. Sandbox/Container Creation: Based on container type:
+//
+//   - PodSandbox/SingleContainer: Creates new sandbox (calls createSandboxContainer)
+//
+//   - PodContainer: Adds container to existing sandbox (calls createPodContainer)
+//
+//     8. Network Namespace Setup: For sandboxes, creates a network namespace managed by nerdctl.
+//     The namespace path is stored in annotations as "nerdctl/network-namespace".
+//     Network namespace holder PID is tracked for proper lifecycle management.
+//
+//     9. Container Object Creation: Instantiates the container object with proper typing and,
+//     for sandboxes, stores the netns holder PID for state queries.
+//
+// Typical variable values:
+//   - r.ID: "test" (containerd-assigned unique ID)
+//   - r.Bundle: "/run/containerd/io.containerd.runtime.v2.task/default/test"
+//   - rootfsPath: "/run/containerd/io.containerd.runtime.v2.task/default/test/rootfs"
+//   - containerType: cntr.PodSandbox (for pause), cntr.SingleContainer (ctr create), or cntr.PodContainer
+//   - Runtime config source: annotation like "org.openeuler.micrun.pedestal=xen"
+//
+// Returns a container object representing the created sandbox or container, or an error
+// if any step in the creation process fails. The function ensures proper cleanup of
+// partially created resources on error.
 func create(ctx context.Context, s *shimService, r *taskAPI.CreateTaskRequest) (_ *container, err error) {
 	err = setupMicranStateDir()
 	if err != nil {
@@ -404,7 +455,6 @@ func setupNetNS(sandboxID string, netcfg *cntr.NetworkConfig) error {
 
 func validateFirmwareForContainer(config *cntr.ContainerConfig) error {
 	if config.IsInfra {
-		log.Debugf("skipping firmware validation for infra container")
 		return nil
 	}
 
@@ -424,15 +474,6 @@ func validateFirmwareForContainer(config *cntr.ContainerConfig) error {
 }
 
 func validate(p string) error {
-	if p == "" {
-		return fmt.Errorf("image path is empty")
-	}
-
-	if !utils.FileExist(p) {
-		return fmt.Errorf("file not exist: %s", p)
-	}
-	if !utils.IsRegular(p) {
-		return fmt.Errorf("image file type is not expected: %s", p)
-	}
-	return nil
+	_, err := utils.EnsureRegularFilePath(p)
+	return err
 }
