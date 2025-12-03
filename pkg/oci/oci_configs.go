@@ -384,14 +384,11 @@ func SandboxConfig(ocispec *specs.Spec, rc RuntimeConfig, bundle, sbContainerID 
 		Annotations: map[string]string{
 			defs.BundlePathKey: bundle,
 		},
-		SandboxResources: cntr.SandboxResourceSizing{
-			WorkloadCPUs:  rc.SandboxCPUs,
-			WorkloadMemMB: rc.SandboxMemMB,
-		},
 
 		StaticResourceMgmt: staticResMngt,
 		HugePageSupport:    hugePage,
-		EnableVCPUsPining:  false,
+		EnableVCPUsPinning: false,
+		SharedCPUPool:      false,
 		InfraOnly:          containerConfig.IsInfra,
 	}
 
@@ -565,7 +562,15 @@ func applySandboxAnnotations(ocispec specs.Spec, cfg *cntr.SandboxConfig) {
 		// allowlist: only handle known, safe sandbox-level toggles
 		case defs.RuntimePrefix + "enable_vcpus_pinning":
 			if b, err := strconv.ParseBool(value); err == nil {
-				cfg.EnableVCPUsPining = b
+				cfg.EnableVCPUsPinning = b
+			} else {
+				log.Debugf("invalid bool for %s: %s", key, value)
+			}
+			cfg.Annotations[key] = value
+
+		case defs.RuntimePrefix + "shared_cpu_pool":
+			if b, err := strconv.ParseBool(value); err == nil {
+				cfg.SharedCPUPool = b
 			} else {
 				log.Debugf("invalid bool for %s: %s", key, value)
 			}

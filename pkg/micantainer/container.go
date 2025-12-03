@@ -655,6 +655,7 @@ func (c *Container) doStop(force bool) error {
 }
 
 // stop stops the container.
+// for semantic continuation, register client at micad even if client is not here
 func (c *Container) stop(ctx context.Context, force bool) error {
 	if _, err := c.ensureClientPresence(); err != nil {
 		return err
@@ -1078,14 +1079,17 @@ func (c *Container) checkState() StateString {
 	return c.state.State
 }
 
+// register client when container is missing and the container is not a infra container
 func (c *Container) ensureClientPresence() (StateString, error) {
 	state := c.checkState()
 	if state != StateDown {
 		return state, nil
 	}
 
-	if err := c.registerClientWithMicad(); err != nil {
-		return StateDown, err
+	if c.clientShouldExist() && !libmica.ClientNotExist(c.id) {
+		if err := c.registerClient(); err != nil {
+			return StateDown, err
+		}
 	}
 
 	state = c.checkState()
@@ -1096,14 +1100,14 @@ func (c *Container) ensureClientPresence() (StateString, error) {
 	return state, nil
 }
 
-func (c *Container) registerClientWithMicad() error {
+func (c *Container) clientShouldExist() bool {
 	if c == nil || c.config == nil || c.config.IsInfra {
-		return nil
+		return false
 	}
+	return true
+}
 
-	if !libmica.ClientNotExist(c.id) {
-		return nil
-	}
+func (c *Container) registerClient() error {
 
 	conf, err := createMicaClientConf(c)
 	if err != nil {

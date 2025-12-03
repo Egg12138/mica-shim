@@ -49,7 +49,7 @@ var (
 	SandboxNotFound   = new(notFound, "sandbox is nil")
 	SandboxDown       = new(unexpectedStatus, "sandbox is not running")
 	IOClosed          = new(ioClose, "io closed")
-	NotRunning        = new(unexpectedStatus, "container is not running")
+	ContainerDown     = new(unexpectedStatus, "container is not running")
 
 	PedestalMismatched = new(invalid, "host pedestal type mismatch with image pedestal type")
 	ErrOutputParse     = new(parseFailed, "failed to parse command output")

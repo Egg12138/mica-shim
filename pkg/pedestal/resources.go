@@ -133,8 +133,8 @@ func BaremetalReservedCPUs() uint32 {
 	return baremetalReservedC.Load()
 }
 
-// SetExclusiveDom0CPU toggles whether Dom0 CPUs stay exclusive (Xen only).
-func SetExclusiveDom0CPU(enabled bool) {
+// EnableDom0CPUExclusive toggles whether Dom0 CPUs stay exclusive (Xen only).
+func EnableDom0CPUExclusive(enabled bool) {
 	exclusiveDom0Flag.Store(enabled)
 }
 

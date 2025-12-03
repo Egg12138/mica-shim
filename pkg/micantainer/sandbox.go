@@ -43,8 +43,8 @@ type SandboxConfig struct {
 	ContainerConfigs   map[string]*ContainerConfig
 	Annotations        map[string]string
 	SharedMemorySize   uint64
-	SandboxResources   SandboxResourceSizing
-	EnableVCPUsPining  bool
+	EnableVCPUsPinning bool
+	SharedCPUPool      bool
 	StaticResourceMgmt bool
 	HugePageSupport    bool
 	InfraOnly          bool
@@ -62,17 +62,6 @@ func (sc *SandboxConfig) valid() bool {
 	}
 
 	return true
-}
-
-type SandboxResourceSizing struct {
-	// The number of CPUs required for the sandbox workload(s)
-	WorkloadCPUs uint32
-	// The base number of CPUs for the VM that are assigned as overhead
-	BaseCPUs uint32
-	// The amount of memory required for the sandbox workload(s)
-	WorkloadMemMB uint32
-	// The base amount of memory required for that RTOS Client that is assigned as overhead
-	BaseMemMB uint32
 }
 
 type StateString string
@@ -193,16 +182,6 @@ func (s *Sandbox) Annotation(key string) (string, error) {
 	return value, nil
 }
 
-func (s *Sandbox) DaemonState() *libmica.MicaDaemonState {
-	state, err := libmica.DaemonState()
-	if err != nil && !errors.Is(err, er.MicadNotRunning) {
-		log.Warnf("failed to fetch daemon state: %v", err)
-		return nil
-	}
-	log.Pretty("%v", state)
-	return state
-}
-
 func (s *Sandbox) Monitor() {
 }
 
@@ -271,7 +250,6 @@ func (s *Sandbox) Start(ctx context.Context) error {
 		}
 	}
 
-	log.Info("2.")
 	if err := s.StoreSandbox(ctx); err != nil {
 		return err
 	}
@@ -598,7 +576,7 @@ func (s *Sandbox) WaitContainerExit(ctx context.Context, containerID string) (in
 
 	state := c.checkState()
 	if state == StateDown {
-		return ok0, er.ContainerNotFound
+		return ok0, er.ContainerDown
 	}
 
 	if state == StateStopped {
@@ -719,11 +697,18 @@ func (s *Sandbox) StoreSandbox(ctx context.Context) error {
 		Config: *s.config,
 	}
 
-	// Get network config if needed
-	if dummyNetwork, ok := s.network.(*DummyNetwork); ok {
+	// NOTICE: remove unnecessary runtime reflection, make codes clean and faster
+	switch netCfg := s.network.(type) {
+	case *NetworkConfig:
+		serializable.Network = *netCfg
+	case *DummyNetwork:
 		serializable.Network = NetworkConfig{
-			NetworkID:      dummyNetwork.NetID(),
-			NetworkCreated: dummyNetwork.NetworkIsCreated(),
+			NetworkID:      netCfg.NetID(),
+			NetworkCreated: netCfg.NetworkIsCreated(),
+		}
+	default:
+		if s.config != nil {
+			serializable.Network = s.config.NetworkConfig
 		}
 	}
 
@@ -766,6 +751,8 @@ func (s *Sandbox) cleanSandboxStorage() error {
 	return nil
 
 }
+
+// TODO: not finished well
 func (s *Sandbox) removeNetwork() error {
 	log.Infof("remove network for sandbox %s", s.id)
 	if s.config == nil {
@@ -779,14 +766,18 @@ func (s *Sandbox) removeNetwork() error {
 }
 
 func (s *Sandbox) stopClients(ctx context.Context) error {
-	if err := s.resManager.stopClients(ctx, s); err != nil {
-		log.Errorf("failed to stop sandbox %s: %v", s.id, err)
-		return err
+	log.Infof("stopping client os in sandbox %s", s.id)
+	for _, c := range s.containers {
+		if err := c.stop(ctx, true); err != nil {
+			log.Errorf("failed to stop container %s: %v", c.id, err)
+			return err
+		}
 	}
 	return nil
 }
 
 // DummySandboxConfig creates a minimal sandbox config for quick development
+// Note: Workload resources are calculated dynamically from containers.
 func DummySandboxConfig(cid string, spec *specs.Spec) (*SandboxConfig, error) {
 	return &SandboxConfig{
 		ID:       cid,
@@ -794,14 +785,8 @@ func DummySandboxConfig(cid string, spec *specs.Spec) (*SandboxConfig, error) {
 		Annotations: map[string]string{
 			"org.openeuler.micran.test": "true",
 		},
-		ContainerConfigs: make(map[string]*ContainerConfig),
-		SharedMemorySize: 64 * 1024 * 1024, // 64MB
-		SandboxResources: SandboxResourceSizing{
-			WorkloadCPUs:  1,
-			BaseCPUs:      1,
-			WorkloadMemMB: 128,
-			BaseMemMB:     64,
-		},
+		ContainerConfigs:   make(map[string]*ContainerConfig),
+		SharedMemorySize:   64 * 1024 * 1024, // 64MB
 		StaticResourceMgmt: false,
 	}, nil
 }
@@ -820,7 +805,6 @@ func newSandbox(ctx context.Context, config SandboxConfig) (sb *Sandbox, retErr 
 	if !config.valid() {
 		return nil, fmt.Errorf("invalid sandbox configuration")
 	}
-	network := DummyNetwork{}
 	s := &Sandbox{
 		ctx:        ctx,
 		config:     &config,
@@ -831,10 +815,15 @@ func newSandbox(ctx context.Context, config SandboxConfig) (sb *Sandbox, retErr 
 			Ped:     HostPedType.String(),
 			Version: defs.SandboxVersion,
 		},
-		network:    &network,
-		resManager: *NewAgent(),
+		resManager: *NewResMgmt(),
 		wg:         &sync.WaitGroup{},
 		annotaLock: &sync.RWMutex{},
+	}
+
+	if s.config != nil {
+		s.network = &s.config.NetworkConfig
+	} else {
+		s.network = &DummyNetwork{}
 	}
 
 	if err := s.Restore(); err != nil {
@@ -922,7 +911,12 @@ func (s *Sandbox) Restore() error {
 		s.state.Version = ss.State.Version
 		s.state.State = ss.State.State
 		s.config = &ss.Config
-		s.network = &ss.Network
+		if s.config != nil {
+			s.config.NetworkConfig = ss.Network
+			s.network = &s.config.NetworkConfig
+		} else {
+			s.network = &DummyNetwork{}
+		}
 	}
 
 	return nil
@@ -1033,7 +1027,7 @@ func (s *Sandbox) checkVCPUsPinning(ctx context.Context) error {
 		return fmt.Errorf("no sandbox config found")
 	}
 
-	if !s.config.EnableVCPUsPining {
+	if !s.config.EnableVCPUsPinning {
 		return nil
 	}
 
@@ -1050,16 +1044,19 @@ func (s *Sandbox) checkVCPUsPinning(ctx context.Context) error {
 
 	match := true
 
-	if outOfRange, overrange := CpusetRangeValid(cpuList); outOfRange {
+	if valid, outOfRangeCPUs := CpusetRangeValid(cpuList); !valid {
 		match = false
-		log.Debugf("these cpus are out of range: %v", overrange)
+		log.Debugf("these cpus are out of range: %v", outOfRangeCPUs)
 		// TODO: handle the overrange cpus
 	}
 
-	numVCPUs, numCPUs := int(s.resManager.VcpuNum), len(cpuList)
-	if numCPUs != numVCPUs {
-		match = false
-		log.Debugf("the number of cpusets %d is not equal to the number of vcpus %d", numCPUs, numVCPUs)
+	// Only enforce CPU count equality in shared CPU pool mode
+	if s.config.SharedCPUPool {
+		numVCPUs, numCPUs := int(s.resManager.VcpuNum), len(cpuList)
+		if numCPUs != numVCPUs {
+			match = false
+			log.Debugf("the number of cpusets %d is not equal to the number of vcpus %d", numCPUs, numVCPUs)
+		}
 	}
 
 	if !match {
@@ -1189,13 +1186,55 @@ func (s *Sandbox) loadContainersToSandbox(ctx context.Context) error {
 // repin vcpus in vcpuList to the cpupool
 func (s *Sandbox) pinVCPU(cpuSet cpuset.CPUSet) error {
 	var result *multierror.Error
-	pcpuList := cpuSet.ToSlice()
+
+	if s.config.SharedCPUPool {
+		// Shared CPU pool mode: pin all containers to the same union CPU set
+		pcpuList := cpuSet.ToSlice()
+		for cid, c := range s.containers {
+			log.Infof("try to pin container %s vcpu affinity to shared cpuset %v", cid, pcpuList)
+			if err := c.setVcpuAffinity(cpuSet); err != nil {
+				result = multierror.Append(result, err)
+			} else {
+				s.resManager.ContainerCpuSets[cid] = cpuSet
+			}
+		}
+
+		ret := result.ErrorOrNil()
+		if ret == nil {
+			// Keep sandbox VCPU statistic in sync with containers' vCPUs.
+			if total, err := calculateSandboxVCPUs(s); err == nil {
+				s.resManager.VcpuNum = total
+			} else {
+				s.resManager.VcpuNum = uint32(cpuSet.Size())
+			}
+			s.resManager.setNewPCpuList(pcpuList)
+		}
+		return ret
+	}
+
+	// Independent CPU pinning mode: each container uses its own cpuset
+	allContainerCPUs := cpuset.NewCPUSet()
 	for cid, c := range s.containers {
-		log.Infof("try to pin container %s vcpu affinity to cpuset %v", cid, pcpuList)
-		if err := c.setVcpuAffinity(cpuSet); err != nil {
+		var containerCPUSet cpuset.CPUSet
+		if c.config != nil && c.config.Resources != nil && c.config.Resources.CPU != nil && c.config.Resources.CPU.Cpus != "" {
+			parsed, err := cpuset.Parse(c.config.Resources.CPU.Cpus)
+			if err != nil {
+				result = multierror.Append(result, fmt.Errorf("failed to parse cpuset for container %s: %v", cid, err))
+				continue
+			}
+			containerCPUSet = parsed
+		} else {
+			// No cpuset specified, skip pinning for this container
+			log.Debugf("container %s has no cpuset specified, skipping CPU pinning", cid)
+			continue
+		}
+
+		log.Infof("try to pin container %s vcpu affinity to its own cpuset %v", cid, containerCPUSet.ToSlice())
+		if err := c.setVcpuAffinity(containerCPUSet); err != nil {
 			result = multierror.Append(result, err)
 		} else {
-			s.resManager.ContainerCpuSets[cid] = cpuSet
+			s.resManager.ContainerCpuSets[cid] = containerCPUSet
+			allContainerCPUs = allContainerCPUs.Union(containerCPUSet)
 		}
 	}
 
@@ -1205,9 +1244,9 @@ func (s *Sandbox) pinVCPU(cpuSet cpuset.CPUSet) error {
 		if total, err := calculateSandboxVCPUs(s); err == nil {
 			s.resManager.VcpuNum = total
 		} else {
-			s.resManager.VcpuNum = uint32(cpuSet.Size())
+			s.resManager.VcpuNum = uint32(allContainerCPUs.Size())
 		}
-		s.resManager.setNewPCpuList(pcpuList)
+		s.resManager.setNewPCpuList(allContainerCPUs.ToSlice())
 	}
 	return ret
 }

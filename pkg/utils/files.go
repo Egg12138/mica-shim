@@ -65,6 +65,25 @@ func ResolvePath(path string) (string, error) {
 	return resolved, nil
 }
 
+// EnsureRegularFilePath validates that path exists and points to a regular file.
+// It returns the resolved absolute path for downstream use.
+func EnsureRegularFilePath(path string) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("path must be specified")
+	}
+
+	resolved, err := ResolvePath(path)
+	if err != nil {
+		return "", err
+	}
+
+	if !IsRegular(resolved) {
+		return "", fmt.Errorf("expected regular file: %s", resolved)
+	}
+
+	return resolved, nil
+}
+
 // getAllParentPaths returns all the parent directories of a path, including itself but excluding root directory "/".
 // For example, "/foo/bar/biz" returns {"/foo", "/foo/bar", "/foo/bar/biz"}
 func getAllParentPaths(path string) []string {

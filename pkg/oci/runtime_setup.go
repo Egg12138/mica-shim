@@ -59,8 +59,6 @@ var (
 
 type RuntimeConfig struct {
 	Debug        bool
-	SandboxCPUs  uint32
-	SandboxMemMB uint32
 	// TODO: enable Linux host act as a container
 	HostLinuxContainer bool
 	MaxClinetNum       uint32
@@ -152,21 +150,6 @@ func (r *RuntimeConfig) SetDebug(debugStr string) {
 	r.Debug = debug
 }
 
-func (r *RuntimeConfig) SetSandboxCPUs(cpuString string) {
-	cpu, err := strconv.ParseUint(cpuString, 10, 32)
-	if err != nil {
-		log.Debugf("failed to parse sandbox cpus %v into uint32", cpuString, err)
-	}
-	r.SandboxCPUs = uint32(cpu)
-}
-
-func (r *RuntimeConfig) SetSandboxMemMB(memString string) {
-	mem, err := strconv.ParseUint(memString, 10, 32)
-	if err != nil {
-		log.Debugf("failed to parse sandbox memory %v into uint32", memString, err)
-	}
-	r.SandboxMemMB = uint32(mem)
-}
 
 func (r *RuntimeConfig) SetMaxContainerVCPUs(cpuString string) {
 	vcpu, err := strconv.ParseUint(cpuString, 10, 32)
@@ -224,7 +207,7 @@ func (r *RuntimeConfig) SetExclusiveDom0CPU(flag string) {
 		return
 	}
 	r.ExclusiveDom0CPU = enabled
-	pedestal.SetExclusiveDom0CPU(enabled)
+	pedestal.EnableDom0CPUExclusive(enabled)
 }
 
 func (r *RuntimeConfig) SetPauseImage(pauseImage string) {
@@ -291,10 +274,6 @@ func (cfg *RuntimeConfig) ParseRuntimeConfigFromAnno(annotations map[string]stri
 		switch key {
 		case defs.RuntimeDebug:
 			cfg.SetDebug(value)
-		case defs.RuntimePrefix + "sandbox.cpus":
-			cfg.SetSandboxCPUs(value)
-		case defs.RuntimePrefix + "sandbox.memory":
-			cfg.SetSandboxMemMB(value)
 		case defs.RuntimePrefix + "max_container_cpus":
 			cfg.SetMaxContainerVCPUs(value)
 		case defs.RuntimePrefix + "max_container_memory":

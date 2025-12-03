@@ -7,8 +7,6 @@ import (
 	"micrun/pkg/libmica"
 	"micrun/pkg/pedestal"
 	"micrun/pkg/utils"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -320,30 +318,9 @@ func formatResourceForLog(res *pedestal.EssentialResource) string {
 }
 
 func ensureFirmwarePath(firmwarePath string) error {
-	if firmwarePath == "" {
-		return fmt.Errorf("firmware path is empty")
-	}
-
-	if _, err := os.Stat(firmwarePath); err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("firmware file does not exist: %s", firmwarePath)
-		}
-		return fmt.Errorf("failed to access firmware file %s: %v", firmwarePath, err)
-	}
-
-	info, err := os.Stat(firmwarePath)
+	absPath, err := utils.EnsureRegularFilePath(firmwarePath)
 	if err != nil {
-		return fmt.Errorf("failed to stat firmware file %s: %v", firmwarePath, err)
-	}
-
-	if info.IsDir() {
-		return fmt.Errorf("firmware path is a directory, not a file: %s", firmwarePath)
-	}
-
-	absPath, err := filepath.Abs(firmwarePath)
-	if err != nil {
-		log.Debugf("could not get absolute path for %s: %v", firmwarePath, err)
-		absPath = firmwarePath
+		return err
 	}
 
 	log.Debugf("firmware path validated: %s", absPath)

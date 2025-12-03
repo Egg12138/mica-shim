@@ -100,11 +100,6 @@ func createSandboxContainer(ctx context.Context, s *shimService, containerType c
 	}
 
 	s.config = runtimeConfig
-	if containerType == cntr.PodSandbox {
-		s.config.SandboxCPUs, s.config.SandboxMemMB = oci.CalculateSandboxSizing(ociSpec)
-	} else {
-		s.config.SandboxCPUs, s.config.SandboxMemMB = oci.CalculateContainerSizing(ociSpec)
-	}
 
 	if containerType != cntr.PodSandbox {
 		log.Debug("rootfs mounted for single container, showing rootfs contents:")
@@ -225,7 +220,7 @@ func loadRuntimeConfig(s *shimService, r *taskAPI.CreateTaskRequest, annotations
 	// Apply annotations on top, as they have higher precedence.
 	stack.ApplyAnnotations(annotations)
 	cfg := stack.Config()
-	pedestal.SetExclusiveDom0CPU(cfg.ExclusiveDom0CPU)
+	pedestal.EnableDom0CPUExclusive(cfg.ExclusiveDom0CPU)
 
 	s.config = cfg
 	return s.config, nil
