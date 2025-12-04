@@ -231,7 +231,7 @@ func loadSandbox(ctx context.Context, id string) (sandbox *Sandbox, err error) {
 		return nil, er.EmptySandboxID
 	}
 
-	ss, err := RestoreSandbox(ctx, id)
+	ss, err := restoreSandbox(ctx, id)
 	if err != nil {
 		log.Debugf("Failed to restore sandbox from disk: %v.", err)
 		return nil, err
@@ -1166,58 +1166,11 @@ func (c *Container) setupMemory() error {
 	return nil
 }
 
-const num2CapRatio = 100
-
-// getContainerCPULimit returns the effective CPU limit for a container.
-func (cfg *ContainerConfig) getContainerCPULimit() int {
-	// TODO: The runtime cannot detect the max number of CPUs Xen can handle.
-	systemCPUs := ped.HostCPUCounts().Physical
-
-	if systemCPUs <= 1 {
-		return num2CapRatio * 1
-	}
-
-	if cfg != nil {
-		cpu := cfg.cpuSpec()
-		var (
-			periodVal uint64
-			quotaVal  int64
-			sharesVal uint64
-			cpusetVal string
-		)
-		if cpu != nil {
-			if cpu.Period != nil {
-				periodVal = *cpu.Period
-			}
-			if cpu.Quota != nil {
-				quotaVal = *cpu.Quota
-			}
-			if cpu.Shares != nil {
-				sharesVal = *cpu.Shares
-			}
-			cpusetVal = cpu.Cpus
-		}
-		log.Debugf("container cpu config: limit=%d period=%d quota=%d shares=%d cpuset=%s",
-			cfg.cpuCapacity(), periodVal, quotaVal, sharesVal, cpusetVal)
-		if limit := cfg.cpuCapacity(); limit > 0 {
-			return min(int(limit), int(num2CapRatio*systemCPUs))
-		}
-	}
-
-	// As a fallback, use all available CPUs, but reserve one for the host.
-	defaultLimit := int(systemCPUs)
-	if defaultLimit > 1 {
-		defaultLimit -= 1
-	}
-
-	return defaultLimit
-}
-
-func (c *Container) GetClientCPU() (string, error) {
+func (c *Container) GetClientCPU() string {
 	if c.cpuUnset() {
-		return "", nil
+		return ""
 	}
-	return c.config.cpuMask(), nil
+	return c.config.cpuMask()
 }
 
 // SaveState persists the container's state to disk at two locations for redundancy.

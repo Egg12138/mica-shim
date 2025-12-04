@@ -1,10 +1,15 @@
 package micantainer
 
 import (
+	defs "micrun/definitions"
+
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
-const miB = 1024 * 1024
+const (
+	miB          = 1024 * 1024
+	num2CapRatio = 100
+)
 
 func (cfg *ContainerConfig) ensureResources() *specs.LinuxResources {
 	if cfg == nil {
@@ -38,6 +43,7 @@ func (cfg *ContainerConfig) ensureMemory() *specs.LinuxMemory {
 	return res.Memory
 }
 
+// cpuSpec returns the parsed cpu spec
 func (cfg *ContainerConfig) cpuSpec() *specs.LinuxCPU {
 	if cfg == nil || cfg.Resources == nil {
 		return nil
@@ -60,11 +66,12 @@ func (cfg *ContainerConfig) cpuCapacity() uint32 {
 	if *cpu.Quota <= 0 {
 		return 0
 	}
-	capacity := *cpu.Quota / int64(*cpu.Period)
+	// Multiply before dividing to preserve fractional CPU capacity (per design doc).
+	capacity := (*cpu.Quota * int64(num2CapRatio)) / int64(*cpu.Period)
 	if capacity <= 0 {
 		return 0
 	}
-	return uint32(capacity * num2CapRatio)
+	return uint32(capacity)
 }
 
 func (cfg *ContainerConfig) cpuShares() uint64 {
@@ -81,6 +88,18 @@ func (cfg *ContainerConfig) cpuMask() string {
 		return ""
 	}
 	return cpu.Cpus
+}
+
+func (cfg *ContainerConfig) containerMaxMemMB() uint32 {
+	lim := cfg.memoryLimitMB()
+	if lim != 0 {
+		return lim
+	}
+	lim = cfg.memoryReservationMB()
+	if lim != 0 {
+		return lim
+	}
+	return defs.DefaultMinMemMB
 }
 
 func (cfg *ContainerConfig) memoryLimitMB() uint32 {

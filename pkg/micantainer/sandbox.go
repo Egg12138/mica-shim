@@ -826,7 +826,7 @@ func newSandbox(ctx context.Context, config SandboxConfig) (sb *Sandbox, retErr 
 		s.network = &DummyNetwork{}
 	}
 
-	if err := s.Restore(); err != nil {
+	if err := s.restore(); err != nil {
 		log.Debugf("failed to restore sandbox %s: %v", s.id, err)
 	}
 	return s, nil
@@ -892,8 +892,8 @@ func createSandboxFromConfig(ctx context.Context, config *SandboxConfig) (_ *San
 	return s, nil
 }
 
-func (s *Sandbox) Restore() error {
-	ss, err := RestoreSandbox(s.ctx, s.id)
+func (s *Sandbox) restore() error {
+	ss, err := restoreSandbox(s.ctx, s.id)
 
 	if err != nil {
 		log.Warnf("failed to restore sandbox state: %v", err)
@@ -931,8 +931,8 @@ type SandboxStorage struct {
 	// Containers map[string]*Container `json:"containers"`
 }
 
-// RestoreSandbox loads an existing sandbox from storage, by sandbox id
-func RestoreSandbox(ctx context.Context, id string) (*SandboxStorage, error) {
+// restoreSandbox loads an existing sandbox from storage, by sandbox id
+func restoreSandbox(ctx context.Context, id string) (*SandboxStorage, error) {
 	// Load sandbox configuration from storage
 	sandboxDir := filepath.Join(defs.SandboxDataDir, id)
 	configPath := filepath.Join(sandboxDir, defs.SandboxStateFile)
@@ -1017,11 +1017,13 @@ func (s *Sandbox) initContainers(ctx context.Context) error {
 	return nil
 }
 
-// TODO: universe pinning vCPUs for different pedestal in Libmica
-// if pinning:
-// * Container:VCPU = 1:N; VCPU:PCU = 1:1; Container CpuSet ∈ CpuPool (CpuPool = MergedCPUSet)
-// if not pinning:
-// * Container:VCPU = 1:N; VCPU:PCU = N:M (affinity not set); Container CpuSet ∈ CpuPool (CpuPool = MergedCPUSet)
+// TODO: universal pinning policy for different pedestals in Libmica.
+// Pinning currently just constrains each container's VCPUs to the cpus derived
+// from OCI cpusets: either all containers share the merged pool (SharedCPUPool)
+// or each container uses its own cpuset.
+// Without pinning we skip affinity
+// updates entirely and let the pedestal schedule VCPUs freely.
+// NOTICE: we do not "bind a vcpu" to a pcpu, instead we just set "vcpu set" to a pcpu set if pinning
 func (s *Sandbox) checkVCPUsPinning(ctx context.Context) error {
 	if s.config == nil {
 		return fmt.Errorf("no sandbox config found")
@@ -1078,7 +1080,7 @@ func (s *Sandbox) checkVCPUsPinning(ctx context.Context) error {
 // merge all cpusets of containers in the sandbox
 // ocispec load memory nodes part and cpus part of cpuset in field of Linux.Resource.CPU.{Mems, Cpus}
 // string format cpuset is expected by mica
-// ref: kata-containers/src/runtime/virtcontainers/sandbox.go
+// memResult is unused
 func (s *Sandbox) getSandboxCpusetStr() (string, string, error) {
 	if s.config == nil {
 		return "", "", nil

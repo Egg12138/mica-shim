@@ -52,15 +52,34 @@ func linuxResourceToEssential(spec *specs.Spec, convertShares bool) *EssentialRe
 	}
 
 	if cpu := spec.Linux.Resources.CPU; cpu != nil {
+		var vcpuNum uint32
+		cpus, cpuSetVCpuNum := validateCPUSet(cpu.Cpus)
+		if cpus != "" && cpuSetVCpuNum > 0 {
+			res.ClientCpuSet = cpus
+			vcpuNum = cpuSetVCpuNum
+		}
+		if vcpuNum > 0 {
+			*res.Vcpu = uint32(vcpuNum)
+		}
+
 		if cpu.Quota != nil && *cpu.Quota > 0 && cpu.Period != nil && *cpu.Period > 0 {
 			res.CpuPeriod = cpu.Period
 			res.CpuQuota = cpu.Quota
-			cpuCapacity := *cpu.Quota / int64(*cpu.Period)
-			if cpuCapacity > 0 {
-				*res.CpuCpacity = uint32(100 * cpuCapacity)
+			rawCapacity := uint32((*cpu.Quota * 100) / int64(*cpu.Period))
+			if rawCapacity > 0 {
+				if vcpuNum > 0 {
+					maxByCpuset := vcpuNum * 100
+					if rawCapacity > maxByCpuset {
+						rawCapacity = maxByCpuset
+					}
+				}
+				*res.CpuCpacity = rawCapacity
 			}
 		} else {
 			log.Debugf("cpu quota/period pair = < %v:%v > is incomplete", cpu.Quota, cpu.Period)
+			if vcpuNum > 0 {
+				*res.CpuCpacity = vcpuNum * 100
+			}
 		}
 
 		if cpu.Shares != nil && *cpu.Shares > 0 {
@@ -76,15 +95,6 @@ func linuxResourceToEssential(spec *specs.Spec, convertShares bool) *EssentialRe
 			res.CPUWeight = &weight
 		} else {
 			res.CPUWeight = nil
-		}
-
-		cpus, vcpuNum := validateCPUSet(cpu.Cpus)
-		if cpus != "" && vcpuNum > 0 {
-			res.ClientCpuSet = cpus
-		}
-
-		if vcpuNum > 0 {
-			*res.Vcpu = uint32(vcpuNum)
 		}
 	} else {
 		res.CPUWeight = nil

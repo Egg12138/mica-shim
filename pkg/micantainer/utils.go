@@ -45,17 +45,14 @@ func startClient(ctx context.Context, sandbox SandboxTraits, c *Container) error
 	return nil
 }
 
-// 1. search bundle/.../<clientOSname>.elf
+// 1. search in bundle/.../<clientOSname>.elf
 // 2. if missing, log and search for binary in bundle recursively
 // TODO: Only copy values, the evaluation procedure is in the caller function
 func createMicaClientConf(container *Container) (libmica.MicaClientConf, error) {
 	config := container.config
 	pedType := HostPedType
-	cpus, err := container.GetClientCPU()
+	cpus := container.GetClientCPU()
 	conf := libmica.MicaClientConf{}
-	if err != nil {
-		return conf, fmt.Errorf("failed to get client cpu: %w", err)
-	}
 	cpuCap := int(config.cpuCapacity())
 	// Pre-calculate effective values for clarity.
 	// Use VCPUNum prepared in ContainerConfig; it already reflects cpuset policy
@@ -65,13 +62,8 @@ func createMicaClientConf(container *Container) (libmica.MicaClientConf, error) 
 		vcpus = 1
 	}
 	// memoryMB (initial) should prefer the configured limit, falling back to the minimum (reservation) when unset.
-	memMB := int(config.memoryLimitMB())
-	if memMB == 0 {
-		memMB = int(config.memoryReservationMB())
-	}
-	if memMB == 0 {
-		memMB = 32
-	}
+	// NOTICE: may no need
+	memMB := int(config.containerMaxMemMB())
 	if err := ensureFirmwarePath(config.ImageAbsPath); err != nil {
 		return libmica.MicaClientConf{}, fmt.Errorf("firmware validation failed: %w", err)
 	}
@@ -93,23 +85,30 @@ func createMicaClientConf(container *Container) (libmica.MicaClientConf, error) 
 	return conf, nil
 }
 
-// Removed per-request: rely on ContainerConfig.VCPUNum as single source of truth.
-
-// if not pinning, vcpus coordinates with workload.
-// Hence vcpu number for sandbox equal to sum of containers' ceil of CPU Cpucapacity
-// 如果 milliCPUs = 0; 意味着所有的sandbox里的容器都没有 cpu quota限制，此时应该分配给sandbox 多少vcpus
-// 是一个问题：
-//   - 如果有一个容器设置了cpuset，对于该容器而言，调度器不会再允许它运行在所有CPU上了。
-//   - 如果有多个容器都设置了cpuset，我们可以考虑它们的cpuset并集为一个 cpu pool, 整个sandbox的vcpu
+// pCPU = physical CPU 实际的CPU （核数）, 未来需要考虑更复杂的异构场景，但这里先不考虑，只要确保话别说死就行
+// - 如果有一个容器设置了cpuset(AFFINITY)，对于该容器而言，调度器不会再允许它运行在cpuset之外的pcpu上了
+// - 如果一个sandbox中有多个容器都设置了cpuset，我们可以考虑它们的cpuset并集为一个 cpu pool, (shared_cpu_pool option)
 //
-// 只能运行在这个 cpu pool 中。目前这是一个仅在 MicRan 中保留的概念，未来我们会完成对pedestal
-// cpu pool 的兼容, 那么sandbox 为容器workload 申请的 vcpu number = Size(cpuSetUnion)
-//   - 如果cpuset也完全没有设置，那么我们认为这是一个best effort sandbox
+// 如果启用了 shared_cpu_pool:
+// sandbox 内的 所有容器都只能运行在这个 cpu pool 的pcpu上。
+// 目前这是一个仅在 MicRan 中保留的概念，未来**或许**我们会完成对pedestal
+// cpu pool 的实际操控, 那么sandbox 为容器workload 申请的 vcpu number = Size(cpuSetUnion)
+// 并且这个 sandbox 管理 cpupool 的点子未必合适，因为机器上可能有多个sandbox, sandbox 管理的 cpuppol 的范围有可能重合，比如
+// sandbox1: (0,1,2,) sandbox2: (1,2,3) 这种情况
 //
-// 在算力上，应该设置capcapacity为=0,使pedestal不限制cpu用量
+// 看代码的人，你可能会有疑问：为什么要考虑VCPU的数量呢？hypervisor的affinity明明只是限定 pcpu set到若干vcpu上，从性能上看vcpu肯定是越小越好的
+// 是因为这或许可以 **反映出** RTOS 内部能看到的 VCPU 的数量和实际分给它的 PCPU 数量的对应关系，这是一个**面向PPT**的设计(vcpu_pcpu_binding option)
+// 最好的做法应该是默认VCPU = 1，必须要在 runtime config 或者 annotation 中打开某个开关（还没加) 才启用 VCPU = Size(cpuSetUnion) 也就是 Num of pCPUs
+// 那么VCPU和PCPU数量的对应关系是这样的：
+// 1. 启用了某种 面向PPT(vcpu_pcpu_binding) 设计： VCPUs :PCPUs = 1:1
+// 2. 通常情况下
+// > for sandbox: VCPUs : PCPUs = 1:N, N = Size(cpuSetUnion) or = Sum(cpuCapacity),
+// > for container: VCPUs : PCPUs = 1:M, M = Size(cpuSet) or = cpuCapacity
+//
+// 在算力上，应该设置capcapacity为=0,使pedestal(hypervisor)不限制cpu用量
 // calculateSandboxVCPUs returns the total VCPU count for the sandbox.
 // Without a resource pool, this is a statistic that should reflect the sum
-// of each container's configured vCPUs.
+// of each container's configured vCPUs in the sandbox.
 func calculateSandboxVCPUs(s *Sandbox) (uint32, error) {
 	if s == nil || s.config == nil {
 		return 0, fmt.Errorf("sandbox or sandbox config is nil")

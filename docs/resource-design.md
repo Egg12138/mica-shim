@@ -1,5 +1,114 @@
 # Resource Design
 
+## cgriyo
+
+这是一个非常专业且深入的底层问题。要准确回答这个问题，我们需要厘清 **Kubernetes (K8s)**、**Containerd (shimv2)**、**OCI Spec** 以及 **runc (libcontainer/cgroup)** 之间的职责边界。
+
+以下是对 `runc` 行为、CPU 资源调度及计算公式的深度分析：
+
+---
+
+### 1. Runc 的默认行为与 VCPU 数量
+**结论：Runc 本身不“思考” VCPU 的数量，它只是 Cgroups 的执行者。**
+
+* **默认行为（无限制）：** 如果 OCI Spec（容器配置文件）中没有指定 CPU 限制，`runc` 不会去探测 VCPU 数量来人为设定限制。此时，容器内的进程可以使用宿主机（或 VM）上**所有**可用的 CPU 核心。
+* **VCPU 的角色：** 对于 `runc` 而言，它看到的是 Linux 内核呈现的“逻辑核心”。无论是在物理机上还是在虚拟机（VM）里，内核识别到的核心数就是 `runc` 能调用的上限。
+* **Shimv2 的角色：** `shimv2` (如 `io.containerd.runc.v2`) 的作用是将 containerd 的请求转化为 `runc` 命令。它本身不决定策略，只是忠实传递 K8s 计算好并写入 `config.json` (OCI Spec) 的参数。
+
+---
+
+### 2. Runc 对 Cpuset (Pinning) 和 Quota/Period 的处理
+
+`runc` 完全依赖 Linux Cgroups (v1 或 v2) 来实现资源隔离。
+
+#### A. Cpuset (Pinning)
+* **是否生效：** 是的。
+* **机制：** 当 OCI Spec 中指定了 `linux.resources.cpu.cpus` 时，`runc` 会将其写入 Cgroup 的 `cpuset.cpus` 文件。
+* **效果：** 这是一个**硬亲和性（Hard Affinity）**设置。容器内的进程**只能**被调度器安排在指定的这些核心上运行，绝对不会漂移到其他核心。
+
+#### B. Quota/Period (算力时间)
+* **是否生效：** 是的。
+* **机制：** `runc` 会读取 OCI Spec 中的 `quota` 和 `period`，并写入 Cgroup：
+    * **Cgroup v1:** 写入 `cpu.cfs_quota_us` 和 `cpu.cfs_period_us`。
+    * **Cgroup v2:** 写入 `cpu.max` (格式为 `quota period`)。
+* **效果：** 这是 CFS (Completely Fair Scheduler) 的带宽控制。它决定了在一段 `period` 时间内，该容器能消耗多少 CPU 时间片。
+
+---
+
+### 3. OCI Spec 中的字段与共存关系
+
+#### Q: `cpulimit` 和 `cpu quota`, `period` 会同时在 oci.spec 中被指定吗？
+
+**准确回答：不会，因为 OCI Spec 中根本没有 `cpulimit` 这个字段。**
+
+这里有一个常见的概念混淆：
+* **Kubernetes 层：** 用户定义 `resources.limits.cpu` (俗称 CPU Limit)。
+* **转换层 (Kubelet/Containerd)：** K8s 会根据 Limit 值计算出 `quota`。通常 `period` 默认为 100ms (100000us)。
+    * 例如：Limit = 0.5 core -> Quota = 50000, Period = 100000。
+* **OCI Spec 层 (Runc 看到的)：** `config.json` 文件中只有标准的 Linux Cgroup 参数字段：
+    * `linux.resources.cpu.quota`
+    * `linux.resources.cpu.period`
+    * `linux.resources.cpu.shares` (对应 K8s 的 requests)
+    * `linux.resources.cpu.cpus` (对应 cpuset)
+
+**Runc 的对待方式：**
+Runc 只认 OCI 标准字段。它看到 `quota` 和 `period` 就会去设置 CFS 带宽控制；看到 `cpus` 就会去设置 Cpuset。这两者可以在 OCI Spec 中**共存**，Runc 会同时设置它们。
+
+---
+
+### 4. 最终生效的 CPU 算力时间由什么决定？
+
+这是一个多层约束问题。实际生效的算力受 **CFS Bandwidth (Quota)** 和 **Cpuset (物理/逻辑核数)** 的**双重约束**。
+
+#### 你的算式分析与修正
+
+$$\text{最终生效的 CPU 算力} = \min(\text{可用核心数}, \frac{\text{quota}}{\text{period}}, \text{物理核心数}) \times 100\%$$
+
+**这个算式基本正确，但需要更精确的定义：**
+
+1.  **Quota/Period 比例 (逻辑上限)：**
+    这是 CFS 允许的时间片总量。例如 `Quota=200ms`, `Period=100ms`，意味着容器可以在 100ms 的周期内使用 200ms 的 CPU 时间。这等同于 **2.0 个 CPU 的算力**。
+
+2.  **Cpuset (物理瓶颈)：**
+    如果容器被 `cpuset` 限制只能在 Core 0 上运行（共 1 个核），即便 Quota 允许它跑 2.0 个核的量，实际上它**物理上最多只能跑到 1.0 个核**（即 100% 单核占用）。
+
+3.  **可用核心数 (系统瓶颈)：**
+    如果宿主机负载极高，其他进程占满了 CPU，容器即使有 Quota 和 Cpuset，也抢不到时间片。但这属于“运行时状态”，不属于“配置上限”。
+
+**修正后的精确逻辑（配置上限）：**
+
+$$\text{理论最大算力 (Cores)} = \min\left( \frac{\text{quota}}{\text{period}}, \text{Count}(\text{cpuset.cpus}) \right)$$
+
+**如果未指定 cpuset，则：**
+$$\text{理论最大算力 (Cores)} = \min\left( \frac{\text{quota}}{\text{period}}, \text{Host Total Cores} \right)$$
+
+---
+
+### 5. 核心问题：Cpuset 会影响实际的算力占用时间吗？
+
+**答案：非常会，而且是决定性的物理天花板。**
+
+请看以下场景示例：
+
+* **场景 A (无瓶颈)：**
+    * Quota/Period = 2.0 (允许使用 2 核)
+    * Cpuset = `0-3` (绑定到 4 个核)
+    * **结果：** 容器可以跑满 2.0 个核的算力。限制因素是 **Quota**。
+
+* **场景 B (Cpuset 成为瓶颈)：**
+    * Quota/Period = 2.0 (允许使用 2 核)
+    * Cpuset = `0` (只绑定到核 0)
+    * **结果：** 容器死活只能跑到 1.0 个核（核 0 的 100%）。虽然 CFS 给了它 200ms 的票，但它只有一个窗口（核）去兑换，物理上无法在 100ms 周期内通过单核消费 200ms。限制因素是 **Cpuset**。
+
+### 总结
+
+1.  **Runc 行为：** 忠实执行 OCI Spec，根据 Spec 设置 Cgroup 的 `cpu.cfs_quota/period` 和 `cpuset.cpus`。
+2.  **OCI 字段：** `cpulimit` 不存在于 Spec 中，只有 `quota` 和 `period`。它们与 `cpuset` 可以共存。
+3.  **最终算力决定因素：** 是 **CFS Quota 计算出的逻辑核数** 与 **Cpuset 绑定的物理核数** 之间的**最小值**。
+4.  **Cpuset 影响：** `cpuset` 设定了硬性的物理执行单元数量，它会作为“物理天花板”截断 Quota 允许的逻辑算力。
+
+
+
 ## containerd 资源管理
 
 我们来看这样一个例子：

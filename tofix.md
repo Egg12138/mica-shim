@@ -177,6 +177,11 @@ type PedTraits interface {
 - [ ] 资源管理的新旧处理、nil处理需要更优雅的管理
 - [ ] kubeedge
 
+# tests
+
+当前 tests 基本是大模型生成的，并且没有完整的调用流验证，我们需要设计一套完善的测试
+
+
 # performance
 
 
@@ -187,30 +192,18 @@ type PedTraits interface {
 - [ ] metrics 收集的信息目前基于二进制parse，性能非常差，有损失
 - [ ] 内存用量和micaExecutor中的记录需要定期校准
 - [ ] 去除 基于字符串runtime转换的 runtimeConfig parsing，直接走marshal/unmarshal
+- [ ] golang runtime optimization
+- [ ] tiny: iSulad + rust-MicRun + fast mica
 
 # mica furthor
 
 by priority
 
+## codes
+
+pretty + more interfaces set
+
 * mica status
-
-## functions
-
-1. RTOS watcher 最重要的是，要知道什么时候死掉！
-1. 状态接口
-1. 更多状态信息，规范自定
-1. 错误处理, 有意义的 `MICA_FAILURE`
-1. 讨论: 开放一套 micad server API, 可以是 restful API 或 rpc? endpoint就通过 原有的socket 如何？
->  API: Statistics (), Status of client
->  增设 mcs/mica/service 
->  这样可以不用把micrun直接嵌到 micad 中，
->  而且或许支持其他的mica前端或者调用者(或许有呢？
-1. 对 rtos shell,  当 pty detached 时传入命令
-1. 文件系统 linux2RTOS, 覆盖多数场景
-1. vif, tap
-1. pause 
-1. xen X-api introduction
-
 ## risks obscure
 
 1. 启动服务的速度

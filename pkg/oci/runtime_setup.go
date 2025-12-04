@@ -30,6 +30,7 @@ const (
 	KeyMinMemory        = "container_minmem"      // default base memory for container
 	KeyMaxMemory        = "container_maxmem"      // default max memory for container
 	KeyDefaultFirmware  = "firmware_path"         // default firmware path when annotation not set
+	KeySharedCPUPool    = "shared_cpu_pool"       // default=false, shared CPU pool for Xen cpupool management
 )
 
 // final fallbacks:
@@ -54,6 +55,7 @@ var (
 		KeyMaxMemory,
 		KeyMinMemory,
 		KeyDefaultFirmware,
+		KeySharedCPUPool,
 	}
 )
 
@@ -71,6 +73,7 @@ type RuntimeConfig struct {
 	MinContainerMemMB        uint32
 	HugePageSupport          bool
 	StaticResourceManagement bool
+	SharedCPUPool            bool // Shared CPU pool for Xen cpupool management
 
 	// MICA-specific configurations
 	ImagePath   string
@@ -137,6 +140,7 @@ func (r *RuntimeConfig) convertRawConfig(raw map[string]string) {
 	r.SetMiniVCPUNum(raw[KeySandboxMinVCPU])
 	r.SetHugePageSupport(raw[KeyHugePage])
 	r.SetExclusiveDom0CPU(raw[KeyExclusiveDom0CPU])
+	r.SetSharedCPUPool(raw[KeySharedCPUPool])
 	r.SetStateDir(raw[KeyStateDir])
 	r.SetDefaultFirmwarePath(raw[KeyDefaultFirmware])
 }
@@ -260,6 +264,18 @@ func (r *RuntimeConfig) SetStateDir(stateDir string) {
 	// Note: This field doesn't exist in RuntimeConfig yet, but the key is defined
 	// For now, we'll just log it since it's a path configuration
 	log.Debugf("setting state dir to: %v", stateDir)
+}
+
+func (r *RuntimeConfig) SetSharedCPUPool(sharedCPUPoolStr string) {
+	if strings.TrimSpace(sharedCPUPoolStr) == "" {
+		return
+	}
+	sharedCPUPool, err := strconv.ParseBool(sharedCPUPoolStr)
+	if err != nil {
+		log.Debugf("failed to parse shared_cpu_pool %q into bool", sharedCPUPoolStr)
+		return
+	}
+	r.SharedCPUPool = sharedCPUPool
 }
 
 // ParseRuntimeConfigFromAnno parses runtime configuration from annotations.
