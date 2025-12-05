@@ -10,5 +10,5 @@ const (
 )
 
 var (
-	PreservedOS = [...]string{"zephyr", "uniproton", "linux"}
+	TrustyOS = [...]string{"zephyr", "uniproton", "liteos", "linux"}
 )

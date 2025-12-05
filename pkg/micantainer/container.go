@@ -339,7 +339,7 @@ func newContainer(ctx context.Context, s *Sandbox, cc *ContainerConfig) (*Contai
 
 // start begins the execution of the container.
 func (c *Container) start(ctx context.Context) error {
-	currentState, err := c.ensureClientPresence()
+	currentState, err := c.ensurePresence()
 	if err != nil {
 		return err
 	}
@@ -605,7 +605,7 @@ func (c *Container) create(ctx context.Context) error {
 
 	c.taskInfo = *rtosTask
 
-	if _, err := c.ensureClientPresence(); err != nil {
+	if _, err := c.ensurePresence(); err != nil {
 		return err
 	}
 
@@ -645,7 +645,7 @@ func (c *Container) doStop(force bool) error {
 // stop stops the container.
 // for semantic continuation, register client at micad even if client is not here
 func (c *Container) stop(ctx context.Context, force bool) error {
-	if _, err := c.ensureClientPresence(); err != nil {
+	if _, err := c.ensurePresence(); err != nil {
 		return err
 	}
 
@@ -673,7 +673,7 @@ func (c *Container) kill() error {
 	if c.sandbox.state.State != StateReady && c.sandbox.state.State != StateRunning {
 		return fmt.Errorf("sandbox is not running or ready, can not signal container")
 	}
-	currentState, err := c.ensureClientPresence()
+	currentState, err := c.ensurePresence()
 	if err != nil {
 		return err
 	}
@@ -699,7 +699,7 @@ func (c *Container) delete(ctx context.Context) error {
 	if c.sandbox == nil {
 		return fmt.Errorf("container sandbox reference is nil")
 	}
-	currentState, err := c.ensureClientPresence()
+	currentState, err := c.ensurePresence()
 	if err != nil {
 		return err
 	}
@@ -729,7 +729,7 @@ func (c *Container) delete(ctx context.Context) error {
 
 // pause pauses the container's execution.
 func (c *Container) pause(ctx context.Context) error {
-	currentState, err := c.ensureClientPresence()
+	currentState, err := c.ensurePresence()
 	if err != nil {
 		return err
 	}
@@ -750,7 +750,7 @@ func (c *Container) resume(ctx context.Context) error {
 	if c.sandbox == nil {
 		return fmt.Errorf("container sandbox reference is nil")
 	}
-	currentState, err := c.ensureClientPresence()
+	currentState, err := c.ensurePresence()
 	if err != nil {
 		return err
 	}
@@ -916,7 +916,7 @@ func (c *Container) Signal(ctx context.Context, signal syscall.Signal) error {
 	if c.sandbox.notOperational() {
 		return fmt.Errorf("sandbox is not running or ready, can not signal container")
 	}
-	currentState, err := c.ensureClientPresence()
+	currentState, err := c.ensurePresence()
 	if err != nil {
 		return err
 	}
@@ -929,7 +929,7 @@ func (c *Container) Signal(ctx context.Context, signal syscall.Signal) error {
 
 // validOS checks if the OS is in the list of preserved OSes.
 func validOS(os string) bool {
-	ret := utils.InList(defs.PreservedOS[:], os)
+	ret := utils.InList(defs.TrustyOS[:], os)
 	return ret
 }
 
@@ -947,18 +947,32 @@ func validComponent(component string) bool {
 
 	// check for arm64 xen client image
 	if hostArch == "arm64" {
-		if fh, err := os.Open(component); err == nil {
-			defer fh.Close()
-			buf := make([]byte, 0x40)
-			if n, _ := fh.Read(buf); n >= 0x3C {
-				if bytes.Contains(buf, []byte("ARMd")) {
-					return true
-				}
-			}
+		if isArm64XenImg(component) {
+			return true
 		}
 	}
 
 	return true
+}
+
+func isArm64XenImg(firmware string) bool {
+	if runtime.GOARCH != "arm64" {
+		return false
+	}
+
+	fh, err := os.Open(firmware)
+	defer fh.Close()
+	if err == nil {
+		// check magic number
+		buf := make([]byte, 0x40)
+		if n, _ := fh.Read(buf); n > 0x3C {
+			if bytes.Contains(buf, []byte("ARMd")) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // validFirmware checks if the firmware file is valid.
@@ -979,10 +993,10 @@ func (c *Container) validMicaContainer() bool {
 		return true
 	}
 
-	osValid := validOS(c.GetOS())
-	fwValid := validFirmware(c.GetFirmwarePath())
+	osValid := validOS(c.os())
+	fwValid := validFirmware(c.getFirmware())
 	if HostPedType == ped.Xen {
-		binFile := validBinfile(c.GetPedestalConf())
+		binFile := validBinfile(c.getPedConf())
 		fwValid = binFile && fwValid
 	}
 	judge := osValid && fwValid
@@ -1036,13 +1050,13 @@ func (c *Container) checkState() StateString {
 }
 
 // register client when container is missing and the container is not a infra container
-func (c *Container) ensureClientPresence() (StateString, error) {
+func (c *Container) ensurePresence() (StateString, error) {
 	state := c.checkState()
 	if state != StateDown {
 		return state, nil
 	}
 
-	if c.clientShouldExist() && !libmica.ClientNotExist(c.id) {
+	if c.shouldPresent() && !libmica.ClientNotExist(c.id) {
 		if err := c.registerClient(); err != nil {
 			return StateDown, err
 		}
@@ -1056,7 +1070,7 @@ func (c *Container) ensureClientPresence() (StateString, error) {
 	return state, nil
 }
 
-func (c *Container) clientShouldExist() bool {
+func (c *Container) shouldPresent() bool {
 	if c == nil || c.config == nil || c.config.IsInfra {
 		return false
 	}
@@ -1289,20 +1303,6 @@ func (c *Container) stats() (*ContainerStats, error) {
 	return st, nil
 }
 
-// wait4exit waits for the container's task to exit.
-// TODO: For now, taskId is always a dummy because one client has one task.
-// TALK: Is it possible to apply a new task to the client OS in the future, perhaps via Xen?
-func (c *Container) wait4exit() (int32, error) {
-	currentState := c.checkState()
-	if currentState == StateStopped {
-		return ok0, nil
-	}
-	if c.notOperational() && currentState != StatePaused {
-		return ok0, errors.New("container is not ready or running, cannot wait for exit")
-	}
-	return ok0, nil
-}
-
 // setVcpuAffinity sets the VCPU affinity for the container.
 func (c *Container) setVcpuAffinity(cpuSet cpuset.CPUSet) error {
 	var result *multierror.Error
@@ -1347,31 +1347,20 @@ func (c *Container) winresize(height, width uint32) error {
 }
 
 // firmware is the elf file of rtos
-func (c *Container) GetFirmwarePath() string {
+func (c *Container) getFirmware() string {
 	return c.config.ImageAbsPath
 }
 
-func (c *Container) GetPedestalConf() string {
+func (c *Container) getPedConf() string {
 	return c.config.PedestalConf
 }
 
-func (c *Container) GetOS() string {
+func (c *Container) os() string {
 	return c.config.OS
 }
 
 func (c *Container) cpuUnset() bool {
 	return c.config.cpuMask() == ""
-}
-
-func (c *Container) GetPedGuestBootBin() string {
-	if HostPedType == ped.Xen {
-		return c.config.PedestalConf
-	}
-	return ""
-}
-
-func (c *Container) GetPedestalType() ped.PedType {
-	return c.config.PedestalType
 }
 
 func (c *Container) updateExitNotifier(state StateString) {

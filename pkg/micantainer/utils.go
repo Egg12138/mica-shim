@@ -29,7 +29,7 @@ func initContainerTaskInSandbox(sandbox SandboxTraits, config *ContainerConfig) 
 }
 
 func startClient(ctx context.Context, sandbox SandboxTraits, c *Container) error {
-	if _, err := c.ensureClientPresence(); err != nil {
+	if _, err := c.ensurePresence(); err != nil {
 		return err
 	}
 

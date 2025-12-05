@@ -12,7 +12,6 @@ import (
 	"micrun/pkg/utils"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/containerd/cgroups"
 	"github.com/containerd/containerd/api/types/task"
@@ -109,26 +108,6 @@ func preparePodSocketAddr(ctx context.Context, bundle string, opts shimv2.StartO
 		return sockAddr, nil
 	}
 	return "", nil
-}
-
-// Detect if the container is a pause container.
-func isPauseContainer(spec *specs.Spec) bool {
-	if spec.Process == nil || len(spec.Process.Args) == 0 {
-		log.Debugf("spec.Process is nil or empty: %v", spec.Process)
-		return false
-	}
-
-	pausePatterns := getPausePatterns()
-
-	for _, arg := range spec.Process.Args {
-		for _, pattern := range pausePatterns {
-			if strings.Contains(arg, pattern) {
-				return true
-			}
-		}
-	}
-
-	return false
 }
 
 // TODO:

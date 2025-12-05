@@ -509,7 +509,7 @@ func (s *Sandbox) StatusContainer(id string) (ContainerStatus, error) {
 	}
 
 	if c, ok := s.containers[id]; ok {
-		if _, err := c.ensureClientPresence(); err != nil {
+		if _, err := c.ensurePresence(); err != nil {
 			return cs, err
 		}
 
