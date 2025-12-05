@@ -21,7 +21,6 @@ type ContainerTraits interface {
 	GetAnnotations() map[string]string
 	GetPid() int
 	Sandbox() SandboxTraits
-	TaskInfo() RTOSTask
 	GetMemoryLimit() uint64
 	Status() StateString
 	State() *ContainerState

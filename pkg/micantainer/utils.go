@@ -2,11 +2,13 @@ package micantainer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	log "micrun/logger"
 	"micrun/pkg/libmica"
 	"micrun/pkg/pedestal"
 	"micrun/pkg/utils"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -32,7 +34,7 @@ func startClient(ctx context.Context, sandbox SandboxTraits, c *Container) error
 	}
 
 	start := time.Now()
-	if err := libmica.Start(c.ID()); err != nil {
+	if err := libmica.Start(c.id); err != nil {
 		log.Errorf("startClient: Start failed: %v", err)
 		return err
 	}
@@ -329,4 +331,15 @@ func ensureFirmwarePath(firmwarePath string) error {
 func copyUint32(v uint32) *uint32 {
 	val := v
 	return &val
+}
+
+func extractExitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode()
+	}
+	return 255
 }
