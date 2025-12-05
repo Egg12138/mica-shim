@@ -9,8 +9,6 @@ import (
 
 // EssentialResource contains essential resource specifications for a client.
 type EssentialResource struct {
-	CpuQuota  *int64
-	CpuPeriod *uint64
 	// mica conf: CPUCapacity.
 	CpuCpacity *uint32
 	// mica conf: CPUWeight.
@@ -19,31 +17,23 @@ type EssentialResource struct {
 	ClientCpuSet string
 	// mica conf: vcpu.
 	Vcpu *uint32
-	// mica conf: Memory.
+	// mica conf: Memory. the max memory client does can use, not memory threshold
 	MemoryMaxMB *uint32
-	// The initial max available memory for DomU client
+	// The reserved memory size for rtos
 	MemoryMinMB uint32
 	// Virtual network interface.
 	VIF []string
 }
 
 // default value of essential resource struct, not about runtime config.
-const (
-	defaultPeriod = 10000
-	defaultQuota  = 0
-	defaultVcpus  = 1
-)
+const defaultVcpus = 1
 
 func InitResource() *EssentialResource {
 	res := EssentialResource{}
-	period := uint64(defaultPeriod)
-	quota := int64(defaultQuota)
 	vcpu := uint32(defaultVcpus)
 	capacity := uint32(0)
 	maxmem := uint32(defs.DefaultMinMemMB)
 	cpuWeight := uint32(0)
-	res.CpuPeriod = &period
-	res.CpuQuota = &quota
 	res.Vcpu = &vcpu
 	res.CpuCpacity = &capacity
 	res.CPUWeight = &cpuWeight

@@ -168,7 +168,7 @@ type RootFs struct {
 	Mounted bool
 }
 
-type helperExit struct {
+type helperCh struct {
 	code int
 	err  error
 }
@@ -207,8 +207,8 @@ type Container struct {
 	taskInfo      RTOSTask
 	exitNotifier  chan struct{}
 	exitOnce      sync.Once
-	helperCmd     *exec.Cmd
-	helperExitCh  chan helperExit
+	infraCmd      *exec.Cmd
+	infraExitCh   chan helperCh
 }
 
 func (ct ContainerType) IsRegularContainer() bool {
@@ -382,7 +382,7 @@ func (c *Container) start(ctx context.Context) error {
 }
 
 func (c *Container) startInfraProcess(ctx context.Context) error {
-	if c.helperCmd != nil {
+	if c.infraCmd != nil {
 		return nil
 	}
 
@@ -416,7 +416,7 @@ func (c *Container) startInfraProcess(ctx context.Context) error {
 		netPath = c.sandbox.config.NetworkConfig.NetworkID
 	}
 
-	args, err := buildNsenterArgs(spec, rootfs, netPath)
+	args, err := genNsenterArgs(spec, rootfs, netPath)
 	if err != nil {
 		return err
 	}
@@ -445,10 +445,10 @@ func (c *Container) startInfraProcess(ctx context.Context) error {
 		return fmt.Errorf("failed to start sandbox pause helper: %w", err)
 	}
 
-	c.helperCmd = cmd
-	c.helperExitCh = make(chan helperExit, 1)
+	c.infraCmd = cmd
+	c.infraExitCh = make(chan helperCh, 1)
 
-	go c.monitorHelperExit(cmd)
+	go c.monitorInfraExit(cmd)
 
 	c.config.Pid = cmd.Process.Pid
 	if c.sandbox != nil && c.sandbox.config != nil {
@@ -464,15 +464,15 @@ func (c *Container) startInfraProcess(ctx context.Context) error {
 	return nil
 }
 
-func (c *Container) monitorHelperExit(cmd *exec.Cmd) {
+func (c *Container) monitorInfraExit(cmd *exec.Cmd) {
 	err := cmd.Wait()
 	exitCode := extractExitCode(err)
-	if c.helperExitCh != nil {
-		c.helperExitCh <- helperExit{code: exitCode, err: nil}
-		close(c.helperExitCh)
+	if c.infraExitCh != nil {
+		c.infraExitCh <- helperCh{code: exitCode, err: nil}
+		close(c.infraExitCh)
 	}
-	c.helperCmd = nil
-	c.helperExitCh = nil
+	c.infraCmd = nil
+	c.infraExitCh = nil
 	if c.config != nil {
 		c.config.Pid = 0
 	}
@@ -481,18 +481,7 @@ func (c *Container) monitorHelperExit(cmd *exec.Cmd) {
 	}
 }
 
-func extractExitCode(err error) int {
-	if err == nil {
-		return 0
-	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		return exitErr.ExitCode()
-	}
-	return 255
-}
-
-func buildNsenterArgs(spec specs.Spec, rootfs, fallbackNetPath string) ([]string, error) {
+func genNsenterArgs(spec specs.Spec, rootfs, fallbackNetPath string) ([]string, error) {
 	if spec.Process == nil || len(spec.Process.Args) == 0 {
 		return nil, fmt.Errorf("invalid sandbox process definition")
 	}
@@ -630,10 +619,10 @@ func (c *Container) create(ctx context.Context) error {
 // doStop performs the actual stop operation on the client.
 func (c *Container) doStop(force bool) error {
 	if c.config != nil && c.config.IsInfra {
-		if c.helperCmd == nil || c.helperCmd.Process == nil {
+		if c.infraCmd == nil || c.infraCmd.Process == nil {
 			return nil
 		}
-		if err := c.helperCmd.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) && !errors.Is(err, syscall.ESRCH) {
+		if err := c.infraCmd.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) && !errors.Is(err, syscall.ESRCH) {
 			return err
 		}
 		return nil
@@ -835,12 +824,10 @@ func (c *Container) update(ctx context.Context, resources specs.LinuxResources) 
 
 		if period != nil && *period != 0 {
 			updatedCPUPeriod = period
-			*pedRes.CpuPeriod = *period
 		}
 
 		if quota != nil && *quota != 0 {
 			updatedCPUQuota = quota
-			*pedRes.CpuQuota = *quota
 		}
 
 		if cpus != "" {

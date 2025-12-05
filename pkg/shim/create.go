@@ -396,7 +396,7 @@ func createPodContainerInSandbox(ctx context.Context, sandbox cntr.SandboxTraits
 		}
 	}
 
-	containerConfig, err := oci.ContainerConfig(containerID, bundlePath, ocispec, cntr.PodContainer, disableOutput, defaultFirmware, runtimeConfig)
+	containerConfig, err := oci.ParseContainerCfg(containerID, bundlePath, ocispec, cntr.PodContainer, disableOutput, defaultFirmware, runtimeConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create container config: %w", err)
 	}

@@ -303,14 +303,12 @@ func TestMicaExecutor_ReadResource(t *testing.T) {
 				Id: "test-container",
 			},
 			want: &pedestal.EssentialResource{
-				CpuPeriod:     func() *uint64 { v := uint64(10000); return &v }(),
-				CpuQuota:      func() *int64 { v := int64(0); return &v }(),
-				CpuCpacity:    func() *uint32 { v := uint32(50); return &v }(), // From records.cpuCapacity
-				Vcpu:          func() *uint32 { v := uint32(4); return &v }(),
-				CPUWeight:     func() *uint32 { v := uint32(1024); return &v }(),
-				MemoryMaxMB: func() *uint32 { v := uint32(256); return &v }(),
-				ClientCpuSet:  "0-3,5",
-				MemoryMinMB:   0,
+				CpuCpacity:   func() *uint32 { v := uint32(50); return &v }(), // From records.cpuCapacity
+				Vcpu:         func() *uint32 { v := uint32(4); return &v }(),
+				CPUWeight:    func() *uint32 { v := uint32(1024); return &v }(),
+				MemoryMaxMB:  func() *uint32 { v := uint32(256); return &v }(),
+				ClientCpuSet: "0-3,5",
+				MemoryMinMB:  0,
 			},
 		},
 		{
@@ -326,8 +324,6 @@ func TestMicaExecutor_ReadResource(t *testing.T) {
 				Id: "test-container-zero",
 			},
 			want: &pedestal.EssentialResource{
-				CpuPeriod:    func() *uint64 { v := uint64(10000); return &v }(),
-				CpuQuota:     func() *int64 { v := int64(0); return &v }(),
 				CpuCpacity:   func() *uint32 { v := uint32(0); return &v }(),
 				Vcpu:         func() *uint32 { v := uint32(1); return &v }(), // default from InitResource
 				ClientCpuSet: "",
@@ -347,14 +343,12 @@ func TestMicaExecutor_ReadResource(t *testing.T) {
 				Id: "test-container-partial",
 			},
 			want: &pedestal.EssentialResource{
-				CpuPeriod:     func() *uint64 { v := uint64(10000); return &v }(),
-				CpuQuota:      func() *int64 { v := int64(0); return &v }(),
-				CpuCpacity:    func() *uint32 { v := uint32(75); return &v }(), // From records.cpuCapacity
-				Vcpu:          func() *uint32 { v := uint32(2); return &v }(),
-				CPUWeight:     nil, // not set because cpuWeight is 0
-				MemoryMaxMB: nil, // not set because memory is 0
-				ClientCpuSet:  "1,2",
-				MemoryMinMB:   0,
+				CpuCpacity:   func() *uint32 { v := uint32(75); return &v }(), // From records.cpuCapacity
+				Vcpu:         func() *uint32 { v := uint32(2); return &v }(),
+				CPUWeight:    nil, // not set because cpuWeight is 0
+				MemoryMaxMB:  nil, // not set because memory is 0
+				ClientCpuSet: "1,2",
+				MemoryMinMB:  0,
 			},
 		},
 		{
@@ -370,14 +364,12 @@ func TestMicaExecutor_ReadResource(t *testing.T) {
 				Id: "test-container-null",
 			},
 			want: &pedestal.EssentialResource{
-				CpuPeriod:     func() *uint64 { v := uint64(10000); return &v }(),
-				CpuQuota:      func() *int64 { v := int64(0); return &v }(),
-				CpuCpacity:    func() *uint32 { v := uint32(25); return &v }(), // From records.cpuCapacity
-				Vcpu:          func() *uint32 { v := uint32(1); return &v }(),
-				CPUWeight:     func() *uint32 { v := uint32(512); return &v }(),
-				MemoryMaxMB: func() *uint32 { v := uint32(128); return &v }(),
-				ClientCpuSet:  "0-7", // null bytes trimmed
-				MemoryMinMB:   0,
+				CpuCpacity:   func() *uint32 { v := uint32(25); return &v }(), // From records.cpuCapacity
+				Vcpu:         func() *uint32 { v := uint32(1); return &v }(),
+				CPUWeight:    func() *uint32 { v := uint32(512); return &v }(),
+				MemoryMaxMB:  func() *uint32 { v := uint32(128); return &v }(),
+				ClientCpuSet: "0-7", // null bytes trimmed
+				MemoryMinMB:  0,
 			},
 		},
 	}
@@ -385,24 +377,6 @@ func TestMicaExecutor_ReadResource(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := tt.executor.ReadResource()
-
-			// Compare CpuPeriod
-			if got.CpuPeriod == nil || tt.want.CpuPeriod == nil {
-				if got.CpuPeriod != tt.want.CpuPeriod {
-					t.Errorf("ReadResource().CpuPeriod = %v, want %v", got.CpuPeriod, tt.want.CpuPeriod)
-				}
-			} else if *got.CpuPeriod != *tt.want.CpuPeriod {
-				t.Errorf("ReadResource().CpuPeriod = %v, want %v", *got.CpuPeriod, *tt.want.CpuPeriod)
-			}
-
-			// Compare CpuQuota
-			if got.CpuQuota == nil || tt.want.CpuQuota == nil {
-				if got.CpuQuota != tt.want.CpuQuota {
-					t.Errorf("ReadResource().CpuQuota = %v, want %v", got.CpuQuota, tt.want.CpuQuota)
-				}
-			} else if *got.CpuQuota != *tt.want.CpuQuota {
-				t.Errorf("ReadResource().CpuQuota = %v, want %v", *got.CpuQuota, *tt.want.CpuQuota)
-			}
 
 			// Compare CpuCpacity
 			if got.CpuCpacity == nil || tt.want.CpuCpacity == nil {

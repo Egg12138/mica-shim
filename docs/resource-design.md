@@ -1098,3 +1098,95 @@ type SharedResourceCounter struct {
 - `memory_swap_limit_in_bytes`: Xen环境下忽略，baremetal可支持
 
 这个映射策略充分考虑了micran项目的特殊性，将Linux容器的资源概念转换为适合RTOS运行环境的资源分配策略。
+
+## Micran 资源映射实现细节
+
+### 核心映射关系
+
+| Linux cgroup 参数 | Micran 映射目标 | 转换规则 |
+|------------------|----------------|----------|
+| `cpu.shares` | `CPUWeight` | Xen: `W(S) = max(1, min(⌊S/R⌋, 65535)); R=4`<br>其他: 直接使用 `cpu.shares` 值 |
+| `cpu.quota`/`cpu.period` | `CpuCpacity` (百分比容量) | `capacity = (quota × 100) / period` |
+| `cpuset.cpus` | `ClientCpuSet` + `Vcpu` | 直接传递CPU亲和性，从cpuset计算vCPU数量 |
+
+### cpuset 对 CPU 容量的影响
+
+Micran 遵循与 `runc` 相同的语义：**最终生效的 CPU 算力受 cpuset 和 quota/period 的双重约束**。
+
+计算公式：
+```
+effective_capacity = min(
+    (quota × 100) / period,   # quota/period 转换的百分比容量
+    cpuset_size × 100          # cpuset 核心数 × 100%
+)
+```
+
+实现位置：`pkg/pedestal/planner.go` 中的 `linuxResourceToEssential()` 函数。
+
+### 处理优先级和语义
+
+1. **cpuset 优先解析**：首先解析 `cpuset.cpus` 获取 `vcpuNum`（cpuset 中的核心数）
+2. **quota/period 计算**：计算原始容量 `rawCapacity = (quota × 100) / period`
+3. **容量限制应用**：如果 `vcpuNum > 0`，则 `effectiveCapacity = min(rawCapacity, vcpuNum × 100)`
+4. **默认值处理**：
+   - 无 quota/period 但有 cpuset：`capacity = vcpuNum × 100`
+   - 无 cpuset 但有 quota/period：`capacity = rawCapacity`
+   - 两者都无：`capacity = 0`（无限制）
+
+### 代码实现示例
+
+```go
+func linuxResourceToEssential(spec *specs.Spec, convertShares bool) *EssentialResource {
+    // 1. 解析 cpuset 获取 vcpuNum
+    cpus, cpuSetVCpuNum := validateCPUSet(cpu.Cpus)
+    if cpus != "" && cpuSetVCpuNum > 0 {
+        res.ClientCpuSet = cpus
+        vcpuNum = cpuSetVCpuNum
+    }
+
+    // 2. 处理 quota/period，应用 cpuset 限制
+    if cpu.Quota != nil && *cpu.Quota > 0 && cpu.Period != nil && *cpu.Period > 0 {
+        rawCapacity := uint32((*cpu.Quota * 100) / int64(*cpu.Period))
+        if rawCapacity > 0 {
+            if vcpuNum > 0 {
+                maxByCpuset := vcpuNum * 100
+                if rawCapacity > maxByCpuset {
+                    rawCapacity = maxByCpuset
+                }
+            }
+            *res.CpuCpacity = rawCapacity
+        }
+    } else if vcpuNum > 0 {
+        // 无有效 quota/period，但有 cpuset
+        *res.CpuCpacity = vcpuNum * 100
+    }
+
+    // 3. 处理 shares 转换
+    if cpu.Shares != nil && *cpu.Shares > 0 {
+        if convertShares {
+            weight := ShareToWeight(*cpu.Shares)
+            res.CPUWeight = &weight
+        } else {
+            share := uint32(*cpu.Shares)
+            res.CPUWeight = &share
+        }
+    }
+}
+```
+
+### 测试验证
+
+测试用例覆盖场景：
+1. **cpuset 限制更严格**：quota=200% (2.0核)，cpuset="0" (1核) → capacity=100%
+2. **quota 限制更严格**：quota=50% (0.5核)，cpuset="0-3" (4核) → capacity=50%
+3. **只有 cpuset**：无 quota/period，cpuset="0-1" (2核) → capacity=200%
+4. **只有 quota**：quota=150% (1.5核)，无 cpuset → capacity=150%
+
+### 与 runc 的语义对齐
+
+通过上述实现，Micran 实现了与 `runc` 相同的资源限制语义：
+- **cpuset**：作为物理天花板，限制容器可用的 CPU 核心数
+- **quota/period**：作为逻辑上限，限制容器可使用的 CPU 时间片
+- **最终限制**：取两者的最小值，确保配置的物理可实现性
+
+这种设计保证了从 Kubernetes/containerd 传递的资源限制在 RTOS 环境中得到正确、安全的映射。

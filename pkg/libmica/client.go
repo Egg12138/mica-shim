@@ -364,14 +364,6 @@ func micaCtlImpl(cmd MicaCommand, id string, opts ...string) error {
 		return fmt.Errorf("client id %q exceeds mica limit (%d characters)", id, MaxNameLen)
 	}
 
-	// workaround: pause => stop
-	switch cmd {
-	case MPause:
-		cmd = MStop
-	case MResume:
-		cmd = MStart
-	}
-
 	// Debug branch for MUpdate: use xl commands instead of micad set command
 	if cmd == MUpdate && defs.WorkaroundUpdate {
 		log.Debug("calling xl to update resource for debug")
@@ -384,6 +376,16 @@ func micaCtlImpl(cmd MicaCommand, id string, opts ...string) error {
 
 	clientSocketPath := filepath.Join(defs.MicaStateDir, id+".socket")
 	s := newMicaSocket(clientSocketPath)
+
+	// workaround: pause => stop
+	switch cmd {
+	case MPause:
+		cmd = MStop
+	case MResume:
+		cmd = MStart
+	case MStatus:
+		s = newMicaSocket(defs.MicaCreatSocketPath)
+	}
 	msg := string(cmd)
 	return s.handleMsg([]byte(msg))
 }

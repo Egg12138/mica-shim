@@ -11,9 +11,6 @@ import (
 
 // ******* container configs ops *******
 
-
-
-
 // ParseOCIResources parses both CPU and Memory resource limits from OCI spec in a single pass
 func (r *ContainerConfig) ParseOCIResources(spec *specs.Spec) error {
 	if r.IsInfra {
@@ -64,17 +61,9 @@ func (r *ContainerConfig) ParseOCIResources(spec *specs.Spec) error {
 		}
 
 		cpu := r.Resources.CPU
-		var periodVal uint64
-		var quotaVal int64
 		var sharesVal uint64
 		var cpusetVal string
 		if cpu != nil {
-			if cpu.Period != nil {
-				periodVal = *cpu.Period
-			}
-			if cpu.Quota != nil {
-				quotaVal = *cpu.Quota
-			}
 			if cpu.Shares != nil {
 				sharesVal = *cpu.Shares
 			}
@@ -83,14 +72,12 @@ func (r *ContainerConfig) ParseOCIResources(spec *specs.Spec) error {
 		log.Debugf(`
 			EssentialResource:
 			CpuCapacity = %d
-			CpuPeriod = %d
-			CpuQuota = %d
 			CpuShares = %d
 			VCPUNum = %d
 			CpusetCpus = %s
 			MemoryLimit = %d
 		}
-		`, r.cpuCapacity(), periodVal, quotaVal, sharesVal, r.VCPUNum, cpusetVal, r.memoryLimitMB())
+		`, r.cpuCapacity(), sharesVal, r.VCPUNum, cpusetVal, r.memoryLimitMB())
 	}
 
 	if spec.Linux != nil && spec.Linux.Resources != nil && spec.Linux.Resources.Memory != nil {
@@ -101,7 +88,6 @@ func (r *ContainerConfig) ParseOCIResources(spec *specs.Spec) error {
 
 	return nil
 }
-
 
 func cloneLinuxCPU(src *specs.LinuxCPU) *specs.LinuxCPU {
 	if src == nil {

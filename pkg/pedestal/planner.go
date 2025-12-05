@@ -63,8 +63,6 @@ func linuxResourceToEssential(spec *specs.Spec, convertShares bool) *EssentialRe
 		}
 
 		if cpu.Quota != nil && *cpu.Quota > 0 && cpu.Period != nil && *cpu.Period > 0 {
-			res.CpuPeriod = cpu.Period
-			res.CpuQuota = cpu.Quota
 			rawCapacity := uint32((*cpu.Quota * 100) / int64(*cpu.Period))
 			if rawCapacity > 0 {
 				if vcpuNum > 0 {
