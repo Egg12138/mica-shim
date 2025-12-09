@@ -126,10 +126,6 @@ flowchart TD
     B --> C
     C --> D
     D --> E
-    BC & PC --> F
-    E -- Annotations --> F
-    F --"dispatch annotations"--> I & J
-    LM["libmica"]
     J --> LM
     EC[MICRUN_CONF_DIR] --"micrun configurations"--> F
     N -- "Built-in annotations" --> E

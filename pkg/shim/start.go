@@ -10,8 +10,7 @@ import (
 
 // startContainer starts a container or sandbox within the shim service.
 //
-// For sandboxes (CanBeSandbox): calls sandbox.Start() and launches a watchSandbox goroutine
-// to monitor the entire sandbox lifecycle.
+// For sandboxes (CanBeSandbox): calls sandbox.Start()
 //
 // For pod containers: calls sandbox.StartContainer() to start a specific container.
 //
@@ -22,12 +21,6 @@ import (
 // Launches waitContainerExit goroutine to monitor container termination
 // and handle cleanup. On any error, sends exit code 255 to exitCh for cleanup.
 func startContainer(ctx context.Context, s *shimService, c *container) (retErr error) {
-
-	defer func() {
-		if retErr != nil {
-			c.exitCh <- 255
-		}
-	}()
 
 	if c.cType == "" {
 		err := fmt.Errorf("the contaienr %s type is empty", c.id)
@@ -47,7 +40,6 @@ func startContainer(ctx context.Context, s *shimService, c *container) (retErr e
 			return err
 		}
 
-		go watchSandbox(ctx, s)
 	} else {
 		_, err := s.sandbox.StartContainer(ctx, c.id)
 		if err != nil {
@@ -83,7 +75,7 @@ func startContainer(ctx context.Context, s *shimService, c *container) (retErr e
 		// explicit teardown signal (Kill/Delete). Non-sandbox workloads retain
 		// the original behaviour.
 		if !c.cType.IsCriSandbox() {
-			c.signalExit()
+			c.ioExit()
 		}
 	}
 

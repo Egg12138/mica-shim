@@ -34,7 +34,6 @@ type container struct {
 	exitOnce    sync.Once
 	stdinPipe   io.WriteCloser
 	stdinCloser chan struct{}
-	exitCh      chan uint32
 	id          string
 	stdin       string
 	stdout      string // All output from the RTOS console is directed here.
@@ -114,7 +113,6 @@ func newContainer(s *shimService, r *taskAPI.CreateTaskRequest, cType cntr.Conta
 		s:           s,
 		spec:        ocispec,
 		exitIOch:    make(chan struct{}),
-		exitCh:      make(chan uint32, 1),
 		stdinCloser: make(chan struct{}),
 		id:          r.ID,
 		stdin:       r.Stdin,
@@ -132,7 +130,7 @@ func newContainer(s *shimService, r *taskAPI.CreateTaskRequest, cType cntr.Conta
 	return c, nil
 }
 
-func (c *container) signalExit() {
+func (c *container) ioExit() {
 	log.Debugf("received exit signal")
 	if c == nil {
 		return
@@ -443,7 +441,7 @@ func waitContainerExit(ctx context.Context, s *shimService, c *container) (int32
 	// cannot yet detect client OS exit.
 	defaultTimeout := 30 * time.Second
 	ptyAutoClose, ptyAutoCloseSet := getBoolAnnotation(c.spec, defs.PtyAutoClose, true) // Default to true for backward compatibility
-	mockExitTimeout, timeoutSet := getDurationAnnotation(c.spec, defs.PtyAutoCloseTimeout, defaultTimeout)
+	ptyTimeout, timeoutSet := getDurationAnnotation(c.spec, defs.PtyAutoCloseTimeout, defaultTimeout)
 
 	// If pty_auto_disconnect is explicitly set to false, disable auto disconnect even if timeout is provided
 	// If timeout is explicitly set but pty_auto_disconnect is not set, enable auto disconnect
@@ -454,18 +452,21 @@ func waitContainerExit(ctx context.Context, s *shimService, c *container) (int32
 		ptyAutoClose = true
 	}
 
+	// TODO: finish mica RTOS notifier
+	ptyAutoClose = true
+
 	if c.cType.IsCriSandbox() || !ptyAutoClose {
-		// Pod infra containers must remain alive until the runtime explicitly
+		// Pod infra(e.g. pause) containers must remain alive until the runtime explicitly
 		// tears them down (e.g. via Kill/Delete). Block here until we receive
 		// that signal.
-		<-c.exitIOch
+		<-c.exitIOch // block until MicRun knows client exited
 		log.Debugf("received explicit exit signal for infra container %s.", c.id)
 	} else if ptyAutoClose {
 		select {
 		case <-c.exitIOch:
 			log.Debugf("The container %s IO streams closed.", c.id)
-		case <-time.After(mockExitTimeout):
-			log.Debugf("Auto-disconnect %s terminal after %v timeout.", c.id, mockExitTimeout)
+		case <-time.After(ptyTimeout):
+			log.Debugf("Auto-disconnect %s terminal after %v timeout.", c.id, ptyTimeout)
 		}
 	}
 
@@ -475,15 +476,6 @@ func waitContainerExit(ctx context.Context, s *shimService, c *container) (int32
 	s.mu.Lock()
 	// Update container status and exit information.
 	if c.cType.CanBeSandbox() {
-		// Signal monitor goroutine to stop cleanly (non-blocking to avoid deadlock)
-		if s.monitor != nil {
-			select {
-			case s.monitor <- nil:
-				log.Debugf("Successfully signaled monitor from waitContainerExit")
-			default:
-				log.Debugf("Monitor channel full or closed in waitContainerExit, skipping signal")
-			}
-		}
 
 		if s.sandbox != nil {
 			sandboxID := s.sandbox.SandboxID()
@@ -513,7 +505,6 @@ func waitContainerExit(ctx context.Context, s *shimService, c *container) (int32
 		exec.markExited(uint32(ret))
 	}
 
-	c.exitCh <- uint32(ret)
 	log.Debugf("The container %s status is StatusStopped.", c.id)
 	s.mu.Unlock()
 

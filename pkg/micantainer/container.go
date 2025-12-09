@@ -447,6 +447,17 @@ func (c *Container) startInfraProcess(ctx context.Context) error {
 	c.infraCmd = cmd
 	c.infraExitCh = make(chan helperCh, 1)
 
+	// Start consumer for infra container exit events before producer
+	go func() {
+		select {
+		case exit := <-c.infraExitCh:
+			log.Warnf("infra container %s exited with code %d", c.id, exit.code)
+			// TODO: Handle infra container exit, e.g., restart or notify sandbox
+		case <-ctx.Done():
+			return
+		}
+	}()
+
 	go c.monitorInfraExit(cmd)
 
 	c.config.Pid = cmd.Process.Pid
@@ -1375,8 +1386,8 @@ func (c *Container) updateExitNotifier(state StateString) {
 	default:
 		if c.exitNotifier == nil {
 			c.exitNotifier = make(chan struct{})
+			c.exitOnce = sync.Once{}
 		}
-		c.exitOnce = sync.Once{}
 	}
 }
 

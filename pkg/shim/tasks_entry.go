@@ -122,9 +122,6 @@ func (s *shimService) Start(ctx context.Context, r *taskAPI.StartRequest) (*task
 		return nil, er.ContainerNotFound
 	}
 
-	s.eventSendMu.Lock()
-	defer s.eventSendMu.Unlock()
-
 	respPid := shimPid
 	// wannna start a exec process in a container
 	if r.ExecID != "" {
@@ -258,18 +255,6 @@ func (s *shimService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*ta
 			log.Debugf("Sandbox already deleted in Delete method for container %s", c.id)
 		} else {
 			sandboxID := s.sandbox.SandboxID()
-
-			// Signal monitor goroutine to stop cleanly (non-blocking to avoid deadlock)
-			if s.monitor != nil {
-				log.Debugf("Signaling monitor to stop for sandbox %s", sandboxID)
-				select {
-				case s.monitor <- nil:
-					log.Debugf("Successfully signaled monitor")
-				default:
-					log.Debugf("Monitor channel full or closed, skipping signal")
-				}
-				s.monitor = nil
-			}
 
 			// Stop and delete the entire sandbox
 			if err := s.sandbox.Stop(ctx, true); err != nil {
@@ -428,7 +413,7 @@ func (s *shimService) Kill(ctx context.Context, r *taskAPI.KillRequest) (*ptypes
 				log.Debugf("Sandbox already deleted in Kill for container %s", c.id)
 			}
 			c.status = task.Status_STOPPED
-			c.signalExit()
+			c.ioExit()
 			return emptyResponse, nil
 		}
 		log.Debugf("in sandbox <%s>, trying to kill container %s", s.id, c.id)
@@ -449,7 +434,7 @@ func (s *shimService) Kill(ctx context.Context, r *taskAPI.KillRequest) (*ptypes
 			return nil, err
 		}
 		c.status = task.Status_UNKNOWN
-		c.signalExit()
+		c.ioExit()
 		log.Pretty("killed contaienr %v", killed.Status())
 		return emptyResponse, nil
 	case syscall.SIGSTOP, syscall.SIGCONT:
@@ -698,7 +683,6 @@ func (s *shimService) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*taskAP
 	}
 
 	// Capture current status and the exit channel, then release the lock while waiting
-	exitCh := c.exitCh
 	exited := c.status == task.Status_STOPPED
 	exitStatus := c.exit
 	exitAt := c.exitTime
@@ -709,8 +693,7 @@ func (s *shimService) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*taskAP
 		select {
 		case <-ctx.Done():
 			return nil, fmt.Errorf("wait canceled: %w", ctx.Err())
-		case <-exitCh:
-			// Proceed to read updated exit status and time
+			// more channel watcher
 		}
 	}
 

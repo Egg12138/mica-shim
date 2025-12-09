@@ -50,17 +50,14 @@ type shimService struct {
 	ss func()
 	// events:
 	events chan any
-	// TODO: future -> implement sandbox monitor
-	monitor chan error
-	ec      chan exit
+	ec     chan exit
 	// configs
 	config    *oci.RuntimeConfig
 	namespace string
 	// sandbox container id
 	id string
 	// sync:
-	mu          sync.Mutex
-	eventSendMu sync.Mutex
+	mu sync.Mutex
 }
 
 var (
@@ -96,7 +93,6 @@ func New(ctx context.Context, id string, publisher shimv2.Publisher, shutdown fu
 		events:     make(chan any, channelSize),
 		ec:         make(chan exit, channelSize),
 		ss:         shutdown,
-		monitor:    make(chan error),
 	}
 
 	log.Debugf("starting service background goroutines exit listener")

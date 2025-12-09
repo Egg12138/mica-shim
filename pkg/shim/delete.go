@@ -17,8 +17,6 @@ func deleteContainer(ctx context.Context, s *shimService, c *container) error {
 	if c == nil {
 		return nil
 	}
-	// reduntantly signalExit()?
-	c.signalExit()
 
 	// Forcibly delete pod containers.
 	if !c.cType.CanBeSandbox() {
@@ -45,6 +43,7 @@ func deleteContainer(ctx context.Context, s *shimService, c *container) error {
 		if err := mount.UnmountAll(innerRootfs, 0); err != nil {
 			return err
 		}
+		c.mounted = false
 	}
 
 	delete(s.containers, c.id)

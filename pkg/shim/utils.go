@@ -15,7 +15,6 @@ import (
 
 	"github.com/containerd/cgroups"
 	"github.com/containerd/containerd/api/types/task"
-	"github.com/containerd/containerd/mount"
 	shimv2 "github.com/containerd/containerd/runtime/v2/shim"
 	protobuf_types "github.com/gogo/protobuf/types"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
@@ -146,49 +145,6 @@ func marshalStats(ctx, stat *cntr.ContainerStats) (*protobuf_types.Any, error) {
 	return nil, nil
 }
 
-func watchSandbox(ctx context.Context, s *shimService) {
-	if s.monitor == nil {
-		return
-	}
-
-	err := <-s.monitor
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// Check if sandbox still exists (may have been deleted already)
-	if s.sandbox == nil {
-		log.Debugf("sandbox already deleted, skipping cleanup")
-		return
-	}
-
-	sandboxID := s.sandbox.SandboxID()
-	log.Errorf("sandbox %s received an error or stop monitor", sandboxID)
-	if err == nil {
-		return
-	}
-
-	log.Debugf("trying to clean up containers resource inside sandbox %s", sandboxID)
-	err = s.sandbox.Stop(ctx, true)
-	if err != nil {
-		log.Warnf("stop sandbox failed: %v", err)
-	}
-	err = s.sandbox.Delete(ctx)
-	if err != nil {
-		log.Warnf("delete sandbox failed: %v", err)
-	}
-
-	for _, c := range s.containers {
-		if !c.mounted {
-			continue
-		}
-		rootfs := filepath.Join(c.bundle, "rootfs")
-		log.Debugf("container %s umounting rootfs", c.id)
-		if err := mount.UnmountAll(rootfs, 0); err != nil {
-			log.Warn("failed to cleanup rootfs mount")
-		}
-	}
-}
 
 func (s *shimService) getContainerStatus(id string) (task.Status, error) {
 	if s.sandbox == nil {
