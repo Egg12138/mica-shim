@@ -106,8 +106,7 @@ func createMicaClientConf(container *Container) (libmica.MicaClientConf, error) 
 // 2. 通常情况下
 // > for sandbox: VCPUs : PCPUs = 1:N, N = Size(cpuSetUnion) or = Sum(cpuCapacity),
 // > for container: VCPUs : PCPUs = 1:M, M = Size(cpuSet) or = cpuCapacity
-//
-// 在算力上，应该设置capcapacity为=0,使pedestal(hypervisor)不限制cpu用量
+// 在算力上，如果设置capcapacity为=0,这意味着pedestal(hypervisor)不限制cpu用量
 // calculateSandboxVCPUs returns the total VCPU count for the sandbox.
 // Without a resource pool, this is a statistic that should reflect the sum
 // of each container's configured vCPUs in the sandbox.

@@ -7,7 +7,6 @@ import (
 	log "micrun/logger"
 	utils "micrun/pkg/utils"
 	"os"
-	"sync"
 	"syscall"
 
 	"github.com/containerd/containerd/api/events"
@@ -28,26 +27,6 @@ const (
 )
 
 var emptyResponse = &ptypes.Empty{}
-
-// Exec bridging state for IO. We keep specs from Exec() and state created in Start().
-type execIOSpec struct {
-	stdin    string
-	stdout   string
-	stderr   string
-	terminal bool
-}
-
-type execIOState struct {
-	tty         *ttyIO
-	stdinCloser chan struct{}
-}
-
-var (
-	execSpecsMu  sync.Mutex
-	execSpecs    = make(map[string]execIOSpec)
-	execStatesMu sync.Mutex
-	execStates   = make(map[string]execIOState)
-)
 
 // Create creates a new containerd task and sets up the RTOS client.
 // The init process satisfies containerd's requirements and acts as an agent for future needs.
@@ -123,66 +102,25 @@ func (s *shimService) Start(ctx context.Context, r *taskAPI.StartRequest) (*task
 	}
 
 	respPid := shimPid
-	// wannna start a exec process in a container
 	if r.ExecID != "" {
-		execProc, exists := c.execs[r.ExecID]
-		if !exists {
-			return nil, errdefs.ToGRPCf(errdefs.ErrNotFound, "exec %s not found in container %s", r.ExecID, r.ID)
-		}
-		if c.status != task.Status_RUNNING {
-			return nil, errdefs.ToGRPCf(errdefs.ErrFailedPrecondition, "container %s must be running to start exec %s", r.ID, r.ExecID)
-		}
-
-		// Bridge exec stdio to the container PTY
-		key := r.ID + "|" + r.ExecID
-		execSpecsMu.Lock()
-		spec, ok := execSpecs[key]
-		execSpecsMu.Unlock()
-		if ok {
-			if s.sandbox == nil {
-				log.Debugf("Sandbox is nil, cannot get IOStream for exec %s/%s", r.ID, r.ExecID)
-			} else {
-				stdin, stdout, _, err := s.sandbox.IOStream(c.id, c.id)
-				if err != nil {
-					log.Debugf("exec io: IOStream failed for %s/%s: %v", r.ID, r.ExecID, err)
-				} else {
-					tty, err := newTtyIO(ctx, c.id, spec.stdin, spec.stdout, spec.stderr, spec.terminal)
-					if err != nil {
-						log.Debugf("exec io: newTtyIO failed for %s/%s: %v", r.ID, r.ExecID, err)
-					} else {
-						stdinCloser := make(chan struct{})
-						go ioCopy(c.exitIOch, stdinCloser, tty, stdin, stdout)
-						execStatesMu.Lock()
-						execStates[key] = execIOState{tty: tty, stdinCloser: stdinCloser}
-						execStatesMu.Unlock()
-					}
-				}
-			}
-		} else {
-			log.Debugf("exec io: no iospec recorded for %s/%s", r.ID, r.ExecID)
-		}
-
-		execProc.markStarted(shimPid)
+		log.Debugf("container %s has no exec process", r.ID)
 		s.send(&events.TaskExecStarted{
 			ContainerID: c.id,
 			ExecID:      r.ExecID,
-			Pid:         shimPid,
+			Pid:         respPid,
 		})
 	} else {
 		log.Infof("starting container %s", c.id)
-		err := startContainer(ctx, s, c)
-		if err != nil {
+		if err := startContainer(ctx, s, c); err != nil {
 			return nil, errdefs.ToGRPC(err)
 		}
-		pid := c.pid
-		if pid == 0 {
-			pid = shimPid
+		if c.pid != 0 {
+			respPid = c.pid
 		}
 		s.send(&events.TaskStart{
 			ContainerID: c.id,
-			Pid:         pid,
+			Pid:         respPid,
 		})
-		respPid = pid
 	}
 
 	return &taskAPI.StartResponse{
@@ -214,39 +152,7 @@ func (s *shimService) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*ta
 	}
 
 	if r.ExecID != "" {
-		execProc, exists := c.execs[r.ExecID]
-		if !exists {
-			return &taskAPI.DeleteResponse{
-				ExitStatus: okExitCode,
-				ExitedAt:   timestamppb.Now(),
-				Pid:        shimPid,
-			}, nil
-		}
-
-		changed := execProc.markExited(okExitCode)
-		exitStatus := execProc.exitStatus
-		exitTime := execProc.exitTime
-		pid := execProc.pid
-		if pid == 0 {
-			pid = shimPid
-		}
-		delete(c.execs, r.ExecID)
-
-		if changed {
-			s.send(&events.TaskExit{
-				ContainerID: r.ID,
-				ID:          r.ExecID,
-				Pid:         pid,
-				ExitStatus:  exitStatus,
-				ExitedAt:    timestamppb.New(exitTime),
-			})
-		}
-
-		return &taskAPI.DeleteResponse{
-			ExitStatus: exitStatus,
-			ExitedAt:   timestamppb.New(exitTime),
-			Pid:        pid,
-		}, nil
+		return nil, errdefs.ToGRPCf(errdefs.ErrNotImplemented, "exec processes are not supported for container %s", r.ID)
 	}
 
 	if c.cType.CanBeSandbox() {
@@ -385,10 +291,8 @@ func (s *shimService) Kill(ctx context.Context, r *taskAPI.KillRequest) (*ptypes
 		return nil, er.ContainerNotFound
 	}
 
-	// reject kill request for some exec process in a container due to micran 1:1:1 model
-	// if r.All = true, we can pass the signal to the container
-	if r.ExecID != "" && !r.All {
-		log.Debugf("container %s has no exec process %s", r.ID, r.ExecID)
+	if r.ExecID != "" {
+		log.Debugf("exec processes are not supported for container %s, ignoring Kill request", r.ID)
 		return emptyResponse, nil
 	}
 
@@ -462,41 +366,9 @@ func (s *shimService) Kill(ctx context.Context, r *taskAPI.KillRequest) (*ptypes
 	return emptyResponse, nil
 }
 
-// TODO: Pass command line string to pty
+// TODO: Pass the exec command line string to pty, and fetch the output
 func (s *shimService) Exec(ctx context.Context, r *taskAPI.ExecProcessRequest) (*ptypes.Empty, error) {
-	if r.ExecID == "" {
-		return nil, errdefs.ToGRPCf(errdefs.ErrInvalidArgument, "missing exec id for container %s", r.ID)
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	c, found := s.containers[r.ID]
-	if c == nil || !found {
-		return nil, er.ContainerNotFound
-	}
-	if _, exists := c.execs[r.ExecID]; exists {
-		return nil, errdefs.ToGRPCf(errdefs.ErrAlreadyExists, "exec %s already exists in container %s", r.ExecID, r.ID)
-	}
-	c.execs[r.ExecID] = newExecProcess(r.ExecID)
-
-	// Record exec stdio spec so Start() can bridge to the container PTY.
-	key := r.ID + "|" + r.ExecID
-	execSpecsMu.Lock()
-	execSpecs[key] = execIOSpec{
-		stdin:    r.Stdin,
-		stdout:   r.Stdout,
-		stderr:   r.Stderr,
-		terminal: r.Terminal,
-	}
-	execSpecsMu.Unlock()
-
-	log.Debugf("registered exec %s for container %s", r.ExecID, r.ID)
-	s.send(&events.TaskExecAdded{
-		ContainerID: r.ID,
-		ExecID:      r.ExecID,
-	})
-	return emptyResponse, nil
+	return nil, errdefs.ToGRPCf(errdefs.ErrNotImplemented, "exec processes are not supported")
 }
 
 // NOTICE: Always consider resizepty request is to container, whatever r.ExecID is.
@@ -529,54 +401,8 @@ func (s *shimService) CloseIO(ctx context.Context, r *taskAPI.CloseIORequest) (*
 		return nil, er.ContainerNotFound
 	}
 
-	// Exec IO shares the container PTY; mark exec completion when IO is closed.
 	if r.ExecID != "" {
-		// Optionally close exec's stdin bridge and wait for drain
-		if r.Stdin {
-			key := r.ID + "|" + r.ExecID
-			execStatesMu.Lock()
-			state, ok := execStates[key]
-			execStatesMu.Unlock()
-			if ok && state.tty != nil && state.tty.io != nil && state.tty.io.Stdin() != nil {
-				if err := state.tty.io.Stdin().Close(); err != nil {
-					log.Debugf("exec io: closing stdin for %s/%s failed: %v", r.ID, r.ExecID, err)
-				}
-			}
-			if ok && state.stdinCloser != nil {
-				select {
-				case <-state.stdinCloser:
-				case <-ctx.Done():
-				}
-			}
-		}
-
-		if execProc, exists := c.execs[r.ExecID]; exists {
-			changed := execProc.markExited(okExitCode)
-			pid := execProc.pid
-			if pid == 0 {
-				pid = shimPid
-			}
-			exitStatus := execProc.exitStatus
-			exitTime := execProc.exitTime
-			if changed {
-				s.send(&events.TaskExit{
-					ContainerID: r.ID,
-					ID:          r.ExecID,
-					Pid:         pid,
-					ExitStatus:  exitStatus,
-					ExitedAt:    timestamppb.New(exitTime),
-				})
-			}
-			// cleanup exec io state/spec
-			key := r.ID + "|" + r.ExecID
-			execStatesMu.Lock()
-			delete(execStates, key)
-			execStatesMu.Unlock()
-			execSpecsMu.Lock()
-			delete(execSpecs, key)
-			execSpecsMu.Unlock()
-		}
-		return emptyResponse, nil
+		return nil, errdefs.ToGRPCf(errdefs.ErrNotImplemented, "exec processes are not supported for container %s", r.ID)
 	}
 
 	if !r.Stdin {
@@ -653,39 +479,16 @@ func (s *shimService) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*taskAP
 		s.mu.Unlock()
 		return nil, er.ContainerNotFound
 	}
-
 	if r.ExecID != "" {
-		execProc, exists := c.execs[r.ExecID]
-		if !exists {
-			s.mu.Unlock()
-			return nil, errdefs.ToGRPCf(errdefs.ErrNotFound, "exec %s not found in container %s", r.ExecID, r.ID)
-		}
-		waitCh := execProc.waitCh
-		exited := execProc.status == task.Status_STOPPED
-		exitStatus := execProc.exitStatus
-		exitAt := execProc.exitTime
 		s.mu.Unlock()
-
-		if !exited {
-			select {
-			case <-ctx.Done():
-				return nil, fmt.Errorf("wait canceled: %w", ctx.Err())
-			case <-waitCh:
-				exitStatus = execProc.exitStatus
-				exitAt = execProc.exitTime
-			}
-		}
-
-		return &taskAPI.WaitResponse{
-			ExitStatus: exitStatus,
-			ExitedAt:   timestamppb.New(exitAt),
-		}, nil
+		return nil, errdefs.ToGRPCf(errdefs.ErrNotImplemented, "exec processes are not supported for container %s", r.ID)
 	}
 
 	// Capture current status and the exit channel, then release the lock while waiting
 	exited := c.status == task.Status_STOPPED
 	exitStatus := c.exit
 	exitAt := c.exitTime
+	exitIOch := c.exitIOch
 	s.mu.Unlock()
 
 	// If not already exited, wait for exit or context cancellation
@@ -693,7 +496,7 @@ func (s *shimService) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*taskAP
 		select {
 		case <-ctx.Done():
 			return nil, fmt.Errorf("wait canceled: %w", ctx.Err())
-			// more channel watcher
+		case <-exitIOch:
 		}
 	}
 
