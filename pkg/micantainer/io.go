@@ -11,7 +11,6 @@ import (
 	er "micrun/errors"
 	log "micrun/logger"
 	"micrun/pkg/libmica"
-	ped "micrun/pkg/pedestal"
 )
 
 type iostream struct {
@@ -49,7 +48,7 @@ func newIOStream(s *Sandbox, c *Container, proc string) *iostream {
 }
 
 // BUG: mica create ttydevice not by container id
-func (s *iostream) ensureDevice(legacyPty bool) error {
+func (s *iostream) ensureDevice() error {
 	if s.container != nil && s.container.config != nil && s.container.config.IsInfra {
 		return nil
 	}
@@ -77,16 +76,7 @@ func (s *iostream) ensureDevice(legacyPty bool) error {
 		return er.EmptyContainerID
 	}
 
-	if legacyPty {
-		f, err := openConsolePTYFallback(s.container.id)
-		if err != nil {
-			return fmt.Errorf("console PTY fallback failed for %s: %w", clientID, err)
-		}
-		s.pty = f
-		return nil
-	}
-
-	// Prefer client-name based symlink provided by micad (ttyRPMSG_<name> -> /dev/pts/N).
+	// Prefer client-name based symlink provided by micad (ttyRPMSG_<name>_0 -> /dev/pts/N).
 	symlink := fmt.Sprintf(libmica.PTYDevPattern, clientID)
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -129,11 +119,7 @@ func (s *stdinStream) Write(data []byte) (n int, err error) {
 	if defs.IsMock {
 		return len(data), nil
 	}
-	legacyPty := true // default
-	if s.container != nil && s.container.config != nil {
-		legacyPty = s.container.config.LegacyPty
-	}
-	if err := s.ensureDevice(legacyPty); err != nil {
+	if err := s.ensureDevice(); err != nil {
 		return 0, err
 	}
 	return s.pty.Write(data)
@@ -163,11 +149,7 @@ func (s *stdoutStream) Read(data []byte) (n int, err error) {
 	if defs.IsMock {
 		return 0, io.EOF
 	}
-	legacyPty := true // default
-	if s.container != nil && s.container.config != nil {
-		legacyPty = s.container.config.LegacyPty
-	}
-	if err := s.ensureDevice(legacyPty); err != nil {
+	if err := s.ensureDevice(); err != nil {
 		return 0, err
 	}
 	return s.pty.Read(data)
@@ -180,17 +162,4 @@ func (s *stderrStream) Read(data []byte) (n int, err error) {
 
 	// same as stdout for now
 	return (&stdoutStream{s.iostream}).Read(data)
-}
-
-func openConsolePTYFallback(containerID string) (*os.File, error) {
-	path, err := ped.ConsolePTYPathForDomain(containerID)
-	if err != nil {
-		return nil, err
-	}
-
-	f, err := os.OpenFile(path, os.O_RDWR, 0)
-	if err != nil {
-		return nil, fmt.Errorf("opening console PTY %s: %w", path, err)
-	}
-	return f, nil
 }

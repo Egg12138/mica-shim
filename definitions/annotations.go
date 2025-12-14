@@ -59,8 +59,6 @@ const (
 	ContainerMinMemMB = ContainerPrefix + "min_memory_mb"
 	// ContainerMaxVcpuNum allows overriding the runtime max_vcpu_num for micad create messages.
 	ContainerMaxVcpuNum = ContainerPrefix + "max_vcpu_num"
-	// legacy PTY mode: true(default) => external console, false => use micad's rpmsg pty
-	LegacyPty = ContainerPrefix + "legacy_pty"
 )
 
 const (

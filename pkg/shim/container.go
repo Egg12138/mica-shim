@@ -2,6 +2,7 @@
 package shim
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -165,6 +166,41 @@ var (
 	_ IO = &binaryIO{}
 	_ IO = &fileIO{}
 )
+
+// ctrlCWriter intercepts Ctrl+C (0x03) on stdin and triggers host-side kill.
+func newCtrlCWriter(dst io.WriteCloser, kill func(string)) io.WriteCloser {
+	if dst == nil || kill == nil {
+		return dst
+	}
+	return &ctrlCWriter{
+		dst:  dst,
+		kill: kill,
+	}
+}
+
+type ctrlCWriter struct {
+	dst      io.WriteCloser
+	kill     func(string)
+	killOnce sync.Once
+}
+
+func (w *ctrlCWriter) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if bytes.IndexByte(p, 0x03) >= 0 {
+		w.killOnce.Do(func() {
+			w.kill("ctrl_c")
+			_ = w.dst.Close()
+		})
+		return len(p), nil
+	}
+	return w.dst.Write(p)
+}
+
+func (w *ctrlCWriter) Close() error {
+	return w.dst.Close()
+}
 
 // pipeIO implements IO for FIFO pipes.
 type pipeIO struct {

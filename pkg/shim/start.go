@@ -3,6 +3,9 @@ package shim
 import (
 	"context"
 	"fmt"
+	"sync"
+	"time"
+
 	log "micrun/logger"
 
 	"github.com/containerd/containerd/api/types/task"
@@ -65,7 +68,25 @@ func startContainer(ctx context.Context, s *shimService, c *container) (retErr e
 		}
 		c.ttyio = tty
 
-		go ioCopy(c.exitIOch, c.stdinCloser, tty, stdin, stdout)
+		killOnce := sync.Once{}
+		killOnCtrlC := func(reason string) {
+			killOnce.Do(func() {
+				log.Infof("Ctrl+C detected for container %s, host kills it (reason=%s)", c.id, reason)
+				killCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if _, killErr := s.sandbox.KillContainer(killCtx, c.id); killErr != nil {
+					log.Warnf("failed to kill container %s on Ctrl+C: %v", c.id, killErr)
+				}
+				c.ioExit()
+			})
+		}
+
+		stdinTarget := stdin
+		if stdinTarget != nil {
+			stdinTarget = newCtrlCWriter(stdinTarget, killOnCtrlC)
+		}
+
+		go ioCopy(c.exitIOch, c.stdinCloser, tty, stdinTarget, stdout)
 	} else {
 		// Close stdin closer so CloseIO can unblock even when the container never
 		// had an input fifo.

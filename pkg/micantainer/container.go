@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -18,6 +17,9 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-multierror"
+	"github.com/opencontainers/runc/libcontainer"
+	"github.com/opencontainers/runc/libcontainer/configs"
+	"github.com/opencontainers/runc/libcontainer/specconv"
 	"github.com/opencontainers/runtime-spec/specs-go"
 
 	defs "micrun/definitions"
@@ -136,9 +138,6 @@ type ContainerConfig struct {
 	// MemoryThresholdMB is the pedestal maximum allocable memory in MiB.
 	MemoryThresholdMB uint32 `json:"memory_threshold"`
 
-	// LegacyPty specifies whether to use legacy PTY mode (true) or micad's rpmsg PTY (false)
-	LegacyPty bool `json:"legacy_pty"`
-
 	// Cmdline is the boot command line for the guest.
 	Cmdline string `json:"cmdline"`
 }
@@ -167,11 +166,6 @@ type RootFs struct {
 	Mounted bool
 }
 
-type helperCh struct {
-	code int
-	err  error
-}
-
 // ContainerType is a string representing the type of a container.
 type ContainerType string
 
@@ -193,21 +187,22 @@ const (
 // Container represents a single container instance, encapsulating its configuration,
 // state, and relationship with a sandbox.
 type Container struct {
-	ctx           context.Context
-	me            libmica.MicaExecutor
-	config        *ContainerConfig
-	id            string
-	sandbox       *Sandbox
-	sandboxId     string
-	mounts        []Mount
-	rootfs        RootFs
-	containerPath string // The path relative to the root bundle: <sandboxID>/<containerID>.
-	state         ContainerState
-	taskInfo      RTOSTask
-	exitNotifier  chan struct{}
-	exitOnce      sync.Once
-	infraCmd      *exec.Cmd
-	infraExitCh   chan helperCh
+	ctx            context.Context
+	me             libmica.MicaExecutor
+	config         *ContainerConfig
+	id             string
+	sandbox        *Sandbox
+	sandboxId      string
+	mounts         []Mount
+	rootfs         RootFs
+	containerPath  string // The path relative to the root bundle: <sandboxID>/<containerID>.
+	state          ContainerState
+	taskInfo       RTOSTask
+	exitNotifier   chan struct{}
+	exitOnce       sync.Once
+	pauseContainer libcontainer.Container
+	pauseProcess   *libcontainer.Process
+	pauseStateRoot string
 }
 
 func (ct ContainerType) IsRegularContainer() bool {
@@ -354,6 +349,9 @@ func (c *Container) start(ctx context.Context) error {
 		if err := c.state.ValidTransition(currentState, StateRunning); err != nil {
 			return err
 		}
+		if err := c.startInfraProcess(ctx); err != nil {
+			return err
+		}
 		return c.setContainerState(ctx, StateRunning)
 	}
 
@@ -381,13 +379,19 @@ func (c *Container) start(ctx context.Context) error {
 }
 
 func (c *Container) startInfraProcess(ctx context.Context) error {
-	if c.infraCmd != nil {
-		return nil
+	if c.pauseContainer != nil {
+		if status, err := c.pauseContainer.Status(); err == nil && status == libcontainer.Running {
+			if state, err := c.pauseContainer.State(); err == nil {
+				c.config.Pid = state.InitProcessPid
+				c.updateNetnsHolder(state.InitProcessPid)
+			}
+			return nil
+		}
 	}
 
 	cwd, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("failed to get cwd: %v", err)
+		return fmt.Errorf("failed to get cwd: %w", err)
 	}
 
 	bundle, err := utils.ValidBundle(c.id, cwd)
@@ -399,190 +403,140 @@ func (c *Container) startInfraProcess(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to load sandbox spec: %w", err)
 	}
-
-	nsenterPath, err := exec.LookPath("nsenter")
-	if err != nil {
-		return fmt.Errorf("nsenter not found: %w", err)
+	if spec.Process == nil || len(spec.Process.Args) == 0 {
+		return fmt.Errorf("invalid sandbox spec, missing process args")
 	}
 
-	rootfs := filepath.Join(bundle, "rootfs")
-	if c.config.Rootfs.Target != "" {
-		rootfs = c.config.Rootfs.Target
+	stateRoot := filepath.Join(defs.MicranContainerStateDir, "libcontainer")
+	if err := os.MkdirAll(stateRoot, 0o755); err != nil {
+		return fmt.Errorf("failed to ensure libcontainer state root: %w", err)
+	}
+
+	opts := specconv.CreateOpts{
+		Spec:       spec,
+		CgroupName: c.id,
+	}
+	config, err := specconv.CreateLibcontainerConfig(&opts)
+	if err != nil {
+		return fmt.Errorf("failed to build libcontainer config: %w", err)
 	}
 
 	netPath := ""
 	if c.sandbox != nil && c.sandbox.config != nil {
 		netPath = c.sandbox.config.NetworkConfig.NetworkID
 	}
+	if netPath != "" {
+		config.Namespaces.Add(configs.NEWNET, netPath)
+	}
 
-	args, err := genNsenterArgs(spec, rootfs, netPath)
+	container, err := c.createOrLoadPauseContainer(stateRoot, config)
 	if err != nil {
 		return err
 	}
+	c.pauseContainer = container
+	c.pauseStateRoot = stateRoot
 
-	cmd := exec.CommandContext(ctx, nsenterPath, args...)
-
-	env := assembleHelperEnv(spec)
-	cmd.Env = env
-
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setsid:    true,
-		Pdeathsig: syscall.SIGKILL,
-	}
-
-	devNull, err := os.OpenFile("/dev/null", os.O_RDWR, 0)
+	status, err := container.Status()
 	if err != nil {
-		return fmt.Errorf("failed to open /dev/null: %w", err)
+		return fmt.Errorf("failed to query libcontainer status: %w", err)
 	}
-	defer devNull.Close()
-
-	cmd.Stdin = devNull
-	cmd.Stdout = devNull
-	cmd.Stderr = devNull
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("failed to start sandbox pause helper: %w", err)
-	}
-
-	c.infraCmd = cmd
-	c.infraExitCh = make(chan helperCh, 1)
-
-	// Start consumer for infra container exit events before producer
-	go func() {
-		select {
-		case exit := <-c.infraExitCh:
-			log.Warnf("infra container %s exited with code %d", c.id, exit.code)
-			// TODO: Handle infra container exit, e.g., restart or notify sandbox
-		case <-ctx.Done():
-			return
+	if status == libcontainer.Running {
+		state, err := container.State()
+		if err != nil {
+			return fmt.Errorf("failed to query libcontainer state: %w", err)
 		}
-	}()
-
-	go c.monitorInfraExit(cmd)
-
-	c.config.Pid = cmd.Process.Pid
-	if c.sandbox != nil && c.sandbox.config != nil {
-		prev := c.sandbox.config.NetworkConfig.HolderPid
-		c.sandbox.config.NetworkConfig.HolderPid = cmd.Process.Pid
-		if c.sandbox.config.NetworkConfig.NetworkCreated && prev > 0 && prev != cmd.Process.Pid {
-			if err := netns.Cleanup(c.sandbox.id, prev); err != nil && !errors.Is(err, os.ErrProcessDone) {
-				log.Warnf("failed to cleanup previous netns holder %d: %v", prev, err)
-			}
-		}
+		c.config.Pid = state.InitProcessPid
+		c.updateNetnsHolder(state.InitProcessPid)
+		return nil
 	}
+
+	process := &libcontainer.Process{
+		Args:   spec.Process.Args,
+		Env:    spec.Process.Env,
+		Cwd:    spec.Process.Cwd,
+		Stdin:  strings.NewReader(""),
+		Stdout: io.Discard,
+		Stderr: io.Discard,
+		Init:   true,
+	}
+
+	if err := container.Run(process); err != nil {
+		return fmt.Errorf("failed to start pause container: %w", err)
+	}
+
+	pid, err := process.Pid()
+	if err != nil {
+		return fmt.Errorf("failed to retrieve pause PID: %w", err)
+	}
+
+	c.pauseProcess = process
+	c.config.Pid = pid
+	c.updateNetnsHolder(pid)
+	go c.monitorInfraExit(process)
 
 	return nil
 }
 
-func (c *Container) monitorInfraExit(cmd *exec.Cmd) {
-	err := cmd.Wait()
-	exitCode := extractExitCode(err)
-	if c.infraExitCh != nil {
-		c.infraExitCh <- helperCh{code: exitCode, err: nil}
-		close(c.infraExitCh)
+func (c *Container) createOrLoadPauseContainer(stateRoot string, config *configs.Config) (libcontainer.Container, error) {
+	container, err := libcontainer.Create(stateRoot, c.id, config)
+	if err != nil {
+		if errors.Is(err, libcontainer.ErrExist) {
+			return libcontainer.Load(stateRoot, c.id)
+		}
+		return nil, err
 	}
-	c.infraCmd = nil
-	c.infraExitCh = nil
+	return container, nil
+}
+
+func (c *Container) updateNetnsHolder(pid int) {
+	if c.sandbox == nil || c.sandbox.config == nil {
+		return
+	}
+	netcfg := &c.sandbox.config.NetworkConfig
+	prev := netcfg.HolderPid
+	if pid > 0 {
+		netcfg.HolderPid = pid
+		netcfg.NetworkID = fmt.Sprintf("/proc/%d/ns/net", pid)
+	}
+	if netcfg.NetworkCreated && prev > 0 && prev != pid {
+		if err := netns.Cleanup(c.sandbox.id, prev); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			log.Warnf("failed to cleanup previous netns holder %d: %v", prev, err)
+		}
+	}
+}
+
+func (c *Container) pauseStateDir() string {
+	if c.pauseStateRoot == "" {
+		return ""
+	}
+	return filepath.Join(c.pauseStateRoot, c.id)
+}
+
+func (c *Container) cleanupPauseState() {
+	if dir := c.pauseStateDir(); dir != "" {
+		_ = os.RemoveAll(dir)
+	}
+	c.pauseStateRoot = ""
+	c.pauseProcess = nil
+	c.pauseContainer = nil
+}
+
+func (c *Container) monitorInfraExit(proc *libcontainer.Process) {
+	ps, err := proc.Wait()
+	exitCode := 0
+	if err != nil {
+		log.Warnf("infra container %s exited: %v", c.id, err)
+	} else if ps != nil {
+		exitCode = ps.ExitCode()
+	}
+	log.Warnf("infra container %s exited with code %d", c.id, exitCode)
 	if c.config != nil {
 		c.config.Pid = 0
 	}
 	if c.sandbox != nil && c.sandbox.config != nil {
 		c.sandbox.config.NetworkConfig.HolderPid = 0
 	}
-}
-
-func genNsenterArgs(spec specs.Spec, rootfs, fallbackNetPath string) ([]string, error) {
-	if spec.Process == nil || len(spec.Process.Args) == 0 {
-		return nil, fmt.Errorf("invalid sandbox process definition")
-	}
-
-	args := make([]string, 0)
-	nsSeen := make(map[specs.LinuxNamespaceType]struct{})
-	if spec.Linux != nil {
-		for _, ns := range spec.Linux.Namespaces {
-			if ns.Path == "" {
-				continue
-			}
-			switch ns.Type {
-			case specs.NetworkNamespace:
-				args = append(args, "--net="+ns.Path)
-				nsSeen[specs.NetworkNamespace] = struct{}{}
-			case specs.IPCNamespace:
-				args = append(args, "--ipc="+ns.Path)
-			case specs.UTSNamespace:
-				args = append(args, "--uts="+ns.Path)
-			case specs.PIDNamespace:
-				args = append(args, "--pid="+ns.Path)
-			case specs.UserNamespace:
-				args = append(args, "--user="+ns.Path)
-			case specs.MountNamespace:
-				args = append(args, "--mount="+ns.Path)
-			}
-		}
-	}
-
-	if fallbackNetPath != "" {
-		if _, ok := nsSeen[specs.NetworkNamespace]; !ok {
-			args = append(args, "--net="+fallbackNetPath)
-		}
-	}
-
-	if rootfs != "" {
-		args = append(args, "--root="+rootfs)
-	}
-	if spec.Process.Cwd != "" {
-		args = append(args, "--wd="+spec.Process.Cwd)
-	}
-
-	args = append(args, "--")
-	args = append(args, spec.Process.Args...)
-	return args, nil
-}
-
-func assembleHelperEnv(spec specs.Spec) []string {
-	env := append([]string{}, os.Environ()...)
-
-	if spec.Process != nil && len(spec.Process.Env) > 0 {
-		env = mergeEnv(env, spec.Process.Env)
-	}
-
-	if !envHasKey(env, "PATH") {
-		env = append(env, "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
-	}
-	return env
-}
-
-func envHasKey(env []string, key string) bool {
-	prefix := key + "="
-	for _, e := range env {
-		if strings.HasPrefix(e, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-func mergeEnv(base, override []string) []string {
-	result := append([]string{}, base...)
-	index := make(map[string]int, len(result))
-	for i, kv := range result {
-		if pos := strings.Index(kv, "="); pos >= 0 {
-			index[kv[:pos]] = i
-		}
-	}
-
-	for _, kv := range override {
-		if pos := strings.Index(kv, "="); pos >= 0 {
-			key := kv[:pos]
-			if idx, ok := index[key]; ok {
-				result[idx] = kv
-			} else {
-				index[key] = len(result)
-				result = append(result, kv)
-			}
-		}
-	}
-	return result
+	c.cleanupPauseState()
 }
 
 func loadSpecFromBundle(bundle string) (specs.Spec, error) {
@@ -629,12 +583,14 @@ func (c *Container) create(ctx context.Context) error {
 // doStop performs the actual stop operation on the client.
 func (c *Container) doStop(force bool) error {
 	if c.config != nil && c.config.IsInfra {
-		if c.infraCmd == nil || c.infraCmd.Process == nil {
+		if c.pauseContainer == nil {
 			return nil
 		}
-		if err := c.infraCmd.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) && !errors.Is(err, syscall.ESRCH) {
+		if err := c.pauseContainer.Destroy(); err != nil {
 			return err
 		}
+		c.config.Pid = 0
+		c.cleanupPauseState()
 		return nil
 	}
 	currentState := c.checkState()
@@ -720,7 +676,12 @@ func (c *Container) delete(ctx context.Context) error {
 		return fmt.Errorf("sandbox is not ready, paused, or stopped, cannot delete container")
 	}
 
-	if c.config == nil || !c.config.IsInfra {
+	if c.config != nil && c.config.IsInfra {
+		if c.pauseContainer != nil {
+			_ = c.pauseContainer.Destroy()
+		}
+		c.cleanupPauseState()
+	} else {
 		if err := libmica.Remove(c.id); err != nil {
 			log.Debugf("Failed to remove container %s.", err)
 			return err
